@@ -90,9 +90,18 @@ export function QueryInput({ value, onChange, packets, placeholder }: QueryInput
     const beforeCursor = value.slice(0, cursorPos)
     const afterCursor = value.slice(cursorPos)
 
-    // Find the start of the current word/token
-    const match = beforeCursor.match(/[\w\-."']*$/)
-    const wordStart = match ? cursorPos - match[0].length : cursorPos
+    // Check if this is an operator suggestion (=, !=, contains)
+    const isOperator = ['=', '!=', 'contains'].includes(suggestion.text)
+
+    let wordStart: number
+    if (isOperator) {
+      // For operators, just append after current position
+      wordStart = cursorPos
+    } else {
+      // For fields/values, replace the current word
+      const match = beforeCursor.match(/[\w\-."']*$/)
+      wordStart = match ? cursorPos - match[0].length : cursorPos
+    }
 
     const newValue = value.slice(0, wordStart) + suggestion.insertText + afterCursor
     onChange(newValue)

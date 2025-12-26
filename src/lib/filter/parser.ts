@@ -262,36 +262,56 @@ export function getSuggestions(
   const tokens = tokenize(beforeCursor)
   const lastToken = tokens[tokens.length - 1]
   const secondLastToken = tokens[tokens.length - 2]
+  const thirdLastToken = tokens[tokens.length - 3]
 
-  // Determine context
-  const isAfterOperator =
-    lastToken?.type === 'operator' ||
-    (secondLastToken?.type === 'operator' && lastToken?.type === 'value')
-
-  const isAfterValue = lastToken?.type === 'value' && secondLastToken?.type === 'operator'
-  const isAfterField = lastToken?.type === 'field'
+  // Check if cursor is after whitespace (not in the middle of a token)
+  const endsWithSpace = beforeCursor.length > 0 && /\s$/.test(beforeCursor)
 
   // Extract dynamic values from packets
   const dynamicValues = extractDynamicValues(packets)
 
-  // Suggest values after operator
-  if (isAfterOperator && secondLastToken?.type === 'field') {
+  // Case 1: After complete expression with space (e.g., "type=UPDATE |") - suggest logical operators
+  if (endsWithSpace && lastToken?.type === 'value' && secondLastToken?.type === 'operator') {
+    return [
+      { text: 'and', description: 'AND condition', insertText: 'and ' },
+      { text: 'or', description: 'OR condition', insertText: 'or ' },
+    ]
+  }
+
+  // Case 2: Right after operator (e.g., "type=|") - suggest all values
+  if (lastToken?.type === 'operator' && secondLastToken?.type === 'field') {
     const field = secondLastToken.value as FilterFieldName
     const values = getFieldValues(field, dynamicValues)
-    const currentValue = lastToken?.type === 'value' ? lastToken.value.toLowerCase() : ''
 
-    return values
-      .filter((v) => v.toLowerCase().includes(currentValue))
-      .slice(0, 10)
-      .map((v) => ({
+    return values.slice(0, 10).map((v) => ({
+      text: v,
+      description: `${field} = ${v}`,
+      insertText: v.includes(' ') ? `"${v}"` : v,
+    }))
+  }
+
+  // Case 3: Typing value after operator (e.g., "type=up|") - filter values
+  if (lastToken?.type === 'value' && secondLastToken?.type === 'operator' && thirdLastToken?.type === 'field') {
+    const field = thirdLastToken.value as FilterFieldName
+    const values = getFieldValues(field, dynamicValues)
+    const currentValue = lastToken.value.toLowerCase()
+
+    const filtered = values.filter((v) => v.toLowerCase().includes(currentValue))
+
+    if (filtered.length > 0) {
+      return filtered.slice(0, 10).map((v) => ({
         text: v,
         description: `${field} = ${v}`,
         insertText: v.includes(' ') ? `"${v}"` : v,
       }))
+    }
+
+    // No matching values - no suggestions (user is typing a custom value)
+    return []
   }
 
-  // Suggest operators after field
-  if (isAfterField) {
+  // Case 4: After field (e.g., "type|") - suggest operators
+  if (lastToken?.type === 'field') {
     return [
       { text: '=', description: 'Equals', insertText: '=' },
       { text: '!=', description: 'Not equals', insertText: '!=' },
@@ -299,19 +319,20 @@ export function getSuggestions(
     ]
   }
 
-  // Suggest logical operators after complete expression
-  if (isAfterValue) {
-    return [
-      { text: 'and', description: 'AND condition', insertText: ' and ' },
-      { text: 'or', description: 'OR condition', insertText: ' or ' },
-    ]
+  // Case 5: After logical operator (e.g., "type=OPEN and |") - suggest fields
+  if (lastToken?.type === 'logical') {
+    return Object.entries(FILTER_FIELDS).map(([key, info]) => ({
+      text: key,
+      description: info.description,
+      insertText: key,
+    }))
   }
 
-  // Suggest fields at start or after logical operator
+  // Default: Suggest fields (start of query or partial field name)
   const currentWord = lastToken?.type === 'value' ? lastToken.value.toLowerCase() : ''
 
   return Object.entries(FILTER_FIELDS)
-    .filter(([key]) => key.includes(currentWord))
+    .filter(([key]) => key.toLowerCase().includes(currentWord))
     .map(([key, info]) => ({
       text: key,
       description: info.description,
