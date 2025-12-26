@@ -1,0 +1,16 @@
+name: bgpshark-test
+
+topology:
+  nodes:
+    srl1:
+      kind: nokia_srlinux
+      image: ghcr.io/nokia/srlinux:24.10.1
+      startup-config: srl1.cfg
+
+    srl2:
+      kind: nokia_srlinux
+      image: ghcr.io/nokia/srlinux:24.10.1
+      startup-config: srl2.cfg
+
+  links:
+    - endpoints: ["srl1:e1-1", "srl2:e1-1"]
