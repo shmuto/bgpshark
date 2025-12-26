@@ -1,4 +1,4 @@
-import type { BgpUpdateMessage } from '../lib/bgp/types'
+import type { BgpUpdateMessage } from '../../lib/bgp/types'
 
 interface UpdateMessageViewProps {
   message: BgpUpdateMessage

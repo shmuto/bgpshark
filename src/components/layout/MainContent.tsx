@@ -1,6 +1,6 @@
-import type { BgpPacket } from '../lib/bgp/types'
-import { PacketList } from './PacketList'
-import { PacketDetail } from './PacketDetail'
+import type { BgpPacket } from '../../lib/bgp/types'
+import { PacketList } from '../common/PacketList'
+import { PacketDetail } from '../message/PacketDetail'
 
 interface MainContentProps {
   packets: BgpPacket[]

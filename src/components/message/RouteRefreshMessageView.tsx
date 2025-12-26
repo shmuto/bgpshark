@@ -1,4 +1,4 @@
-import type { BgpRouteRefreshMessage } from '../lib/bgp/types'
+import type { BgpRouteRefreshMessage } from '../../lib/bgp/types'
 
 interface RouteRefreshMessageViewProps {
   message: BgpRouteRefreshMessage

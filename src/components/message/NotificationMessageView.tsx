@@ -1,5 +1,5 @@
-import type { BgpNotificationMessage } from '../lib/bgp/types'
-import { HexDump } from './HexDump'
+import type { BgpNotificationMessage } from '../../lib/bgp/types'
+import { HexDump } from '../common/HexDump'
 
 interface NotificationMessageViewProps {
   message: BgpNotificationMessage

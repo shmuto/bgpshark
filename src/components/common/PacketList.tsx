@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import type { BgpPacket, BgpMessage } from '../lib/bgp/types'
+import type { BgpPacket, BgpMessage } from '../../lib/bgp/types'
 
 interface PacketListProps {
   packets: BgpPacket[]

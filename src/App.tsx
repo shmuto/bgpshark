@@ -1,7 +1,4 @@
-import { Header } from './components/Header'
-import { FileDropzone } from './components/FileDropzone'
-import { MainContent } from './components/MainContent'
-import { WarningBanner } from './components/WarningBanner'
+import { Header, MainContent, FileDropzone, WarningBanner } from './components'
 import { useBgpAnalyzer } from './hooks/useBgpAnalyzer'
 
 function App() {

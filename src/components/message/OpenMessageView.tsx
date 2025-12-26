@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { BgpOpenMessage, BgpCapability, ParsedCapability } from '../lib/bgp/types'
+import type { BgpOpenMessage, BgpCapability, ParsedCapability } from '../../lib/bgp/types'
 
 interface OpenMessageViewProps {
   message: BgpOpenMessage

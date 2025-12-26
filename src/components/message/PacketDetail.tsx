@@ -1,10 +1,10 @@
-import type { BgpPacket } from '../lib/bgp/types'
+import type { BgpPacket } from '../../lib/bgp/types'
 import { OpenMessageView } from './OpenMessageView'
 import { NotificationMessageView } from './NotificationMessageView'
 import { KeepaliveMessageView } from './KeepaliveMessageView'
 import { UpdateMessageView } from './UpdateMessageView'
 import { RouteRefreshMessageView } from './RouteRefreshMessageView'
-import { HexDump } from './HexDump'
+import { HexDump } from '../common/HexDump'
 
 interface PacketDetailProps {
   packet: BgpPacket
