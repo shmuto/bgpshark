@@ -1,4 +1,5 @@
 export { FileDropzone } from './FileDropzone'
 export { PacketList } from './PacketList'
+export { QueryInput } from './QueryInput'
 export { WarningBanner } from './WarningBanner'
 export { HexDump } from './HexDump'
