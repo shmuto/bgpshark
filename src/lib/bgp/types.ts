@@ -1,0 +1,220 @@
+/**
+ * BGP Message Types (RFC 4271)
+ */
+export const BgpMessageType = {
+  OPEN: 1,
+  UPDATE: 2,
+  NOTIFICATION: 3,
+  KEEPALIVE: 4,
+  ROUTE_REFRESH: 5,
+} as const
+
+export type BgpMessageTypeValue = (typeof BgpMessageType)[keyof typeof BgpMessageType]
+
+export type BgpMessageTypeName = 'OPEN' | 'UPDATE' | 'NOTIFICATION' | 'KEEPALIVE' | 'ROUTE_REFRESH'
+
+/**
+ * BGP Message header (19 bytes)
+ */
+export interface BgpMessageHeader {
+  marker: Uint8Array // 16 bytes, all 0xFF
+  length: number // 2 bytes
+  type: number // 1 byte
+}
+
+/**
+ * BGP Packet with metadata
+ */
+export interface BgpPacket {
+  timestamp: Date
+  srcIp: string
+  dstIp: string
+  srcPort: number
+  dstPort: number
+  message: BgpMessage
+  rawData: Uint8Array
+  parseWarnings: string[]
+}
+
+/**
+ * Union of all BGP message types
+ */
+export type BgpMessage =
+  | BgpOpenMessage
+  | BgpUpdateMessage
+  | BgpNotificationMessage
+  | BgpKeepaliveMessage
+  | BgpRouteRefreshMessage
+
+/**
+ * BGP OPEN Message (RFC 4271 Section 4.2)
+ */
+export interface BgpOpenMessage {
+  type: 'OPEN'
+  version: number
+  myAs: number // 2-byte AS (4-byte AS from capability)
+  holdTime: number
+  bgpIdentifier: string // Router ID in dotted-decimal
+  optParamLength: number
+  capabilities: BgpCapability[]
+  fourByteAs?: number // From 4-byte AS capability
+}
+
+/**
+ * BGP UPDATE Message (RFC 4271 Section 4.3)
+ * Phase 1: Basic parsing only
+ */
+export interface BgpUpdateMessage {
+  type: 'UPDATE'
+  withdrawnRoutesLength: number
+  totalPathAttrLength: number
+  // Detailed parsing in Phase 2
+}
+
+/**
+ * BGP NOTIFICATION Message (RFC 4271 Section 4.5)
+ */
+export interface BgpNotificationMessage {
+  type: 'NOTIFICATION'
+  errorCode: number
+  errorSubcode: number
+  errorCodeName: string
+  errorSubcodeName: string
+  data: Uint8Array
+  hint: string
+}
+
+/**
+ * BGP KEEPALIVE Message (RFC 4271 Section 4.4)
+ */
+export interface BgpKeepaliveMessage {
+  type: 'KEEPALIVE'
+}
+
+/**
+ * BGP ROUTE-REFRESH Message (RFC 2918)
+ */
+export interface BgpRouteRefreshMessage {
+  type: 'ROUTE_REFRESH'
+  afi: number
+  safi: number
+  afiName: string
+  safiName: string
+}
+
+/**
+ * BGP Capability (RFC 5492)
+ */
+export interface BgpCapability {
+  code: number
+  name: string
+  length: number
+  rawValue: Uint8Array
+  parsed?: ParsedCapability
+}
+
+/**
+ * Parsed capability details
+ */
+export type ParsedCapability =
+  | MultiprotocolCapability
+  | FourOctetAsCapability
+  | RouteRefreshCapability
+  | GracefulRestartCapability
+  | AddPathCapability
+  | ExtendedNextHopCapability
+  | EnhancedRouteRefreshCapability
+  | UnknownCapability
+
+/**
+ * Multiprotocol Extensions (RFC 4760)
+ */
+export interface MultiprotocolCapability {
+  type: 'MULTIPROTOCOL'
+  afi: number
+  afiName: string
+  safi: number
+  safiName: string
+}
+
+/**
+ * 4-byte AS Number (RFC 6793)
+ */
+export interface FourOctetAsCapability {
+  type: 'FOUR_OCTET_AS'
+  asNumber: number
+}
+
+/**
+ * Route Refresh (RFC 2918)
+ */
+export interface RouteRefreshCapability {
+  type: 'ROUTE_REFRESH'
+}
+
+/**
+ * Graceful Restart (RFC 4724)
+ */
+export interface GracefulRestartCapability {
+  type: 'GRACEFUL_RESTART'
+  restartFlags: number
+  restartTime: number
+  addressFamilies: Array<{
+    afi: number
+    afiName: string
+    safi: number
+    safiName: string
+    flags: number
+  }>
+}
+
+/**
+ * ADD-PATH (RFC 7911)
+ */
+export interface AddPathCapability {
+  type: 'ADD_PATH'
+  addressFamilies: Array<{
+    afi: number
+    afiName: string
+    safi: number
+    safiName: string
+    sendReceive: 'receive' | 'send' | 'both'
+  }>
+}
+
+/**
+ * Extended Next Hop Encoding (RFC 8950)
+ */
+export interface ExtendedNextHopCapability {
+  type: 'EXTENDED_NEXT_HOP'
+  entries: Array<{
+    nlriAfi: number
+    nlriAfiName: string
+    nlriSafi: number
+    nlriSafiName: string
+    nexthopAfi: number
+    nexthopAfiName: string
+  }>
+}
+
+/**
+ * Enhanced Route Refresh (RFC 7313)
+ */
+export interface EnhancedRouteRefreshCapability {
+  type: 'ENHANCED_ROUTE_REFRESH'
+}
+
+/**
+ * Unknown/Unsupported Capability
+ */
+export interface UnknownCapability {
+  type: 'UNKNOWN'
+}
+
+/**
+ * BGP Parse Result
+ */
+export interface BgpParseResult {
+  packets: BgpPacket[]
+  warnings: string[]
+}
