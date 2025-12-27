@@ -2,12 +2,19 @@ import { BinaryReader } from './reader'
 import type {
   PcapGlobalHeader,
   RawPacket,
+  GenericPacket,
   PcapParseResult,
   TcpFlags,
 } from './types'
 import { LinkLayerType, EtherType, IpProtocol } from './types'
 
 const BGP_PORT = 179
+const ICMP_PROTOCOL = 1
+
+interface ParsedPacketResult {
+  bgpPacket: RawPacket | null
+  genericPacket: GenericPacket | null
+}
 
 // pcapng block types
 const BLOCK_TYPE = {
@@ -47,6 +54,7 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
   const warnings: string[] = []
   const errors: string[] = []
   const packets: RawPacket[] = []
+  const allPackets: GenericPacket[] = []
   const interfaces: InterfaceInfo[] = []
 
   try {
@@ -54,6 +62,7 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
 
     let isLittleEndian = true
     let currentSection = false
+    let packetIndex = 0
 
     while (reader.remaining() >= 8) {
       const blockType = reader.readUint32()
@@ -162,18 +171,24 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
           // Calculate timestamp
           const timestamp = calculateTimestamp(timestampHigh, timestampLow, iface.tsResol)
 
+          packetIndex++
+
           // Parse packet
-          const rawPacket = parsePacketData(
+          const result = parsePacketData(
             packetData,
             iface.linkType,
             timestamp,
             capturedLength,
             originalLength,
+            packetIndex,
             warnings
           )
 
-          if (rawPacket) {
-            packets.push(rawPacket)
+          if (result.bgpPacket) {
+            packets.push(result.bgpPacket)
+          }
+          if (result.genericPacket) {
+            allPackets.push(result.genericPacket)
           }
           break
         }
@@ -195,17 +210,23 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
           const paddedLength = (packetLength + 3) & ~3
           reader.skip(paddedLength - packetLength)
 
-          const rawPacket = parsePacketData(
+          packetIndex++
+
+          const result = parsePacketData(
             packetData,
             iface.linkType,
             new Date(0), // No timestamp in Simple Packet Block
             packetLength,
             originalLength,
+            packetIndex,
             warnings
           )
 
-          if (rawPacket) {
-            packets.push(rawPacket)
+          if (result.bgpPacket) {
+            packets.push(result.bgpPacket)
+          }
+          if (result.genericPacket) {
+            allPackets.push(result.genericPacket)
           }
           break
         }
@@ -236,7 +257,7 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
       isNanosecond: false,
     }
 
-    return { globalHeader, packets, warnings, errors }
+    return { globalHeader, packets, allPackets, warnings, errors }
   } catch (e) {
     errors.push(`Fatal error: ${e instanceof Error ? e.message : String(e)}`)
     return createEmptyResult(errors, warnings)
@@ -255,8 +276,22 @@ function createEmptyResult(errors: string[], warnings: string[]): PcapParseResul
       isNanosecond: false,
     },
     packets: [],
+    allPackets: [],
     warnings,
     errors,
+  }
+}
+
+function getProtocolName(protocol: number): GenericPacket['protocol'] {
+  switch (protocol) {
+    case IpProtocol.TCP:
+      return 'TCP'
+    case IpProtocol.UDP:
+      return 'UDP'
+    case ICMP_PROTOCOL:
+      return 'ICMP'
+    default:
+      return 'OTHER'
   }
 }
 
@@ -284,43 +319,45 @@ function parsePacketData(
   timestamp: Date,
   capturedLength: number,
   originalLength: number,
+  frameIndex: number,
   _warnings: string[]
-): RawPacket | null {
+): ParsedPacketResult {
+  const result: ParsedPacketResult = { bgpPacket: null, genericPacket: null }
   const reader = new BinaryReader(data, false)
 
   // Parse link layer
   let etherType: number
 
   if (linkType === LinkLayerType.ETHERNET) {
-    if (reader.remaining() < 14) return null
+    if (reader.remaining() < 14) return result
     reader.skip(12) // MACs
     reader.setLittleEndian(false)
     etherType = reader.readUint16()
 
     // Handle VLAN
     while (etherType === EtherType.VLAN || etherType === EtherType.QINQ) {
-      if (reader.remaining() < 4) return null
+      if (reader.remaining() < 4) return result
       reader.skip(2)
       etherType = reader.readUint16()
     }
   } else if (linkType === LinkLayerType.SLL) {
-    if (reader.remaining() < 16) return null
+    if (reader.remaining() < 16) return result
     reader.skip(14)
     reader.setLittleEndian(false)
     etherType = reader.readUint16()
   } else {
-    return null
+    return result
   }
 
-  if (etherType !== EtherType.IPV4) return null
+  if (etherType !== EtherType.IPV4) return result
 
   // Parse IPv4
-  if (reader.remaining() < 20) return null
+  if (reader.remaining() < 20) return result
   reader.setLittleEndian(false)
 
   const versionIhl = reader.readUint8()
   const ihl = (versionIhl & 0x0f) * 4
-  if (ihl < 20) return null
+  if (ihl < 20) return result
 
   reader.skip(1) // DSCP
   const totalLength = reader.readUint16()
@@ -333,56 +370,109 @@ function parsePacketData(
 
   if (ihl > 20) reader.skip(ihl - 20)
 
-  if (protocol !== IpProtocol.TCP) return null
+  const ipPayloadLength = totalLength - ihl
 
-  // Parse TCP
-  if (reader.remaining() < 20) return null
+  if (protocol === IpProtocol.TCP) {
+    // Parse TCP
+    if (reader.remaining() < 20) return result
 
-  const srcPort = reader.readUint16()
-  const dstPort = reader.readUint16()
+    const srcPort = reader.readUint16()
+    const dstPort = reader.readUint16()
 
-  if (srcPort !== BGP_PORT && dstPort !== BGP_PORT) return null
+    reader.skip(8) // Seq, Ack
+    const dataOffsetFlags = reader.readUint16()
+    const dataOffset = ((dataOffsetFlags >> 12) & 0x0f) * 4
+    const flagsByte = dataOffsetFlags & 0x3f
 
-  reader.skip(8) // Seq, Ack
-  const dataOffsetFlags = reader.readUint16()
-  const dataOffset = ((dataOffsetFlags >> 12) & 0x0f) * 4
-  const flagsByte = dataOffsetFlags & 0x3f
+    const flags: TcpFlags = {
+      fin: (flagsByte & 0x01) !== 0,
+      syn: (flagsByte & 0x02) !== 0,
+      rst: (flagsByte & 0x04) !== 0,
+      psh: (flagsByte & 0x08) !== 0,
+      ack: (flagsByte & 0x10) !== 0,
+      urg: (flagsByte & 0x20) !== 0,
+    }
 
-  const flags: TcpFlags = {
-    fin: (flagsByte & 0x01) !== 0,
-    syn: (flagsByte & 0x02) !== 0,
-    rst: (flagsByte & 0x04) !== 0,
-    psh: (flagsByte & 0x08) !== 0,
-    ack: (flagsByte & 0x10) !== 0,
-    urg: (flagsByte & 0x20) !== 0,
-  }
+    reader.skip(6) // Window, Checksum, Urgent
 
-  reader.skip(6) // Window, Checksum, Urgent
+    if (dataOffset > 20) {
+      const optLen = dataOffset - 20
+      if (reader.remaining() >= optLen) {
+        reader.skip(optLen)
+      }
+    }
 
-  if (dataOffset > 20) {
-    const optLen = dataOffset - 20
-    if (reader.remaining() >= optLen) {
-      reader.skip(optLen)
+    const payloadLength = totalLength - ihl - dataOffset
+    const actualPayload = Math.max(0, Math.min(payloadLength, reader.remaining()))
+
+    // Add to generic packets
+    result.genericPacket = {
+      frameIndex,
+      timestamp,
+      capturedLength,
+      originalLength,
+      srcIp,
+      dstIp,
+      protocol: 'TCP',
+      protocolNumber: IpProtocol.TCP,
+      srcPort,
+      dstPort,
+      tcpFlags: flags,
+      payloadLength: actualPayload,
+    }
+
+    // Add to BGP packets only if port 179 and has payload
+    if ((srcPort === BGP_PORT || dstPort === BGP_PORT) && actualPayload > 0) {
+      const tcpPayload = reader.readBytes(actualPayload)
+      result.bgpPacket = {
+        frameIndex,
+        timestamp,
+        capturedLength,
+        originalLength,
+        srcIp,
+        dstIp,
+        srcPort,
+        dstPort,
+        tcpPayload,
+        tcpFlags: flags,
+      }
+    }
+  } else if (protocol === IpProtocol.UDP) {
+    // Parse UDP
+    if (reader.remaining() < 8) return result
+
+    const srcPort = reader.readUint16()
+    const dstPort = reader.readUint16()
+    const udpLength = reader.readUint16()
+    reader.skip(2) // Checksum
+
+    result.genericPacket = {
+      frameIndex,
+      timestamp,
+      capturedLength,
+      originalLength,
+      srcIp,
+      dstIp,
+      protocol: 'UDP',
+      protocolNumber: IpProtocol.UDP,
+      srcPort,
+      dstPort,
+      payloadLength: udpLength - 8,
+    }
+  } else {
+    // Other protocols (ICMP, etc.)
+    result.genericPacket = {
+      frameIndex,
+      timestamp,
+      capturedLength,
+      originalLength,
+      srcIp,
+      dstIp,
+      protocol: getProtocolName(protocol),
+      protocolNumber: protocol,
+      payloadLength: ipPayloadLength,
     }
   }
 
-  const payloadLength = totalLength - ihl - dataOffset
-  if (payloadLength <= 0) return null
-
-  const actualPayload = Math.min(payloadLength, reader.remaining())
-  if (actualPayload === 0) return null
-
-  const tcpPayload = reader.readBytes(actualPayload)
-
-  return {
-    timestamp,
-    capturedLength,
-    originalLength,
-    srcIp,
-    dstIp,
-    srcPort,
-    dstPort,
-    tcpPayload,
-    tcpFlags: flags,
-  }
+  return result
 }

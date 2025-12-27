@@ -26,6 +26,7 @@ export interface BgpMessageHeader {
  * BGP Packet with metadata
  */
 export interface BgpPacket {
+  frameIndex: number // 1-based index in pcap file
   timestamp: Date
   srcIp: string
   dstIp: string
@@ -62,13 +63,133 @@ export interface BgpOpenMessage {
 
 /**
  * BGP UPDATE Message (RFC 4271 Section 4.3)
- * Phase 1: Basic parsing only
  */
 export interface BgpUpdateMessage {
   type: 'UPDATE'
   withdrawnRoutesLength: number
+  withdrawnRoutes: BgpPrefix[]
   totalPathAttrLength: number
-  // Detailed parsing in Phase 2
+  pathAttributes: BgpPathAttribute[]
+  nlri: BgpPrefix[]
+}
+
+/**
+ * BGP Prefix (NLRI or Withdrawn)
+ */
+export interface BgpPrefix {
+  prefix: string
+  length: number
+}
+
+/**
+ * BGP Path Attribute
+ */
+export interface BgpPathAttribute {
+  flags: {
+    optional: boolean
+    transitive: boolean
+    partial: boolean
+    extendedLength: boolean
+  }
+  typeCode: number
+  typeName: string
+  length: number
+  rawValue: Uint8Array
+  parsed?: ParsedPathAttribute
+}
+
+/**
+ * Parsed Path Attribute types
+ */
+export type ParsedPathAttribute =
+  | OriginAttribute
+  | AsPathAttribute
+  | NextHopAttribute
+  | MedAttribute
+  | LocalPrefAttribute
+  | AtomicAggregateAttribute
+  | AggregatorAttribute
+  | CommunitiesAttribute
+  | LargeCommunitiesAttribute
+  | MpReachNlriAttribute
+  | MpUnreachNlriAttribute
+  | UnknownAttribute
+
+export interface OriginAttribute {
+  type: 'ORIGIN'
+  value: 'IGP' | 'EGP' | 'INCOMPLETE'
+}
+
+export interface AsPathAttribute {
+  type: 'AS_PATH'
+  segments: AsPathSegment[]
+}
+
+export interface AsPathSegment {
+  type: 'AS_SET' | 'AS_SEQUENCE' | 'AS_CONFED_SEQUENCE' | 'AS_CONFED_SET'
+  asNumbers: number[]
+}
+
+export interface NextHopAttribute {
+  type: 'NEXT_HOP'
+  address: string
+}
+
+export interface MedAttribute {
+  type: 'MULTI_EXIT_DISC'
+  value: number
+}
+
+export interface LocalPrefAttribute {
+  type: 'LOCAL_PREF'
+  value: number
+}
+
+export interface AtomicAggregateAttribute {
+  type: 'ATOMIC_AGGREGATE'
+}
+
+export interface AggregatorAttribute {
+  type: 'AGGREGATOR'
+  asNumber: number
+  address: string
+}
+
+export interface CommunitiesAttribute {
+  type: 'COMMUNITIES'
+  communities: string[]
+}
+
+export interface LargeCommunitiesAttribute {
+  type: 'LARGE_COMMUNITIES'
+  communities: Array<{
+    globalAdmin: number
+    localData1: number
+    localData2: number
+  }>
+}
+
+export interface MpReachNlriAttribute {
+  type: 'MP_REACH_NLRI'
+  afi: number
+  afiName: string
+  safi: number
+  safiName: string
+  nextHop: string
+  nlri: BgpPrefix[]
+}
+
+export interface MpUnreachNlriAttribute {
+  type: 'MP_UNREACH_NLRI'
+  afi: number
+  afiName: string
+  safi: number
+  safiName: string
+  withdrawnRoutes: BgpPrefix[]
+}
+
+export interface UnknownAttribute {
+  type: 'UNKNOWN'
 }
 
 /**

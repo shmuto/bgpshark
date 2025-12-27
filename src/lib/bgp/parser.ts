@@ -9,6 +9,9 @@ import {
 } from './types'
 import { parseOpenMessage } from './open'
 import { parseNotificationMessage } from './notification'
+import { parseUpdateMessage } from './update'
+import { getAfiName, getSafiName } from './constants'
+const updateParseWarnings: string[] = []
 
 const BGP_HEADER_LENGTH = 19
 const BGP_MIN_MESSAGE_LENGTH = 19
@@ -30,6 +33,7 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
 
       for (const message of messages) {
         packets.push({
+          frameIndex: raw.frameIndex,
           timestamp: raw.timestamp,
           srcIp: raw.srcIp,
           dstIp: raw.dstIp,
@@ -151,8 +155,12 @@ function parseBgpMessageBody(type: number, reader: BinaryReader): BgpMessage | n
     case BgpMessageType.OPEN:
       return parseOpenMessage(reader)
 
-    case BgpMessageType.UPDATE:
-      return parseUpdateMessage(reader)
+    case BgpMessageType.UPDATE: {
+      // parseUpdateMessage expects raw bytes, not a BinaryReader
+      const updateData = reader.readBytes(reader.remaining())
+      updateParseWarnings.length = 0 // Clear previous warnings
+      return parseUpdateMessage(updateData, updateParseWarnings)
+    }
 
     case BgpMessageType.NOTIFICATION:
       return parseNotificationMessage(reader)
@@ -169,28 +177,9 @@ function parseBgpMessageBody(type: number, reader: BinaryReader): BgpMessage | n
 }
 
 /**
- * Parse UPDATE message (basic parsing for Phase 1)
- */
-function parseUpdateMessage(reader: BinaryReader): BgpMessage {
-  const withdrawnRoutesLength = reader.readUint16()
-  reader.skip(withdrawnRoutesLength)
-
-  const totalPathAttrLength = reader.readUint16()
-  // Skip remaining (path attributes and NLRI)
-
-  return {
-    type: 'UPDATE',
-    withdrawnRoutesLength,
-    totalPathAttrLength,
-  }
-}
-
-/**
  * Parse ROUTE-REFRESH message
  */
 function parseRouteRefreshMessage(reader: BinaryReader): BgpMessage {
-  const { getAfiName, getSafiName } = require('./constants')
-
   const afi = reader.readUint16()
   reader.skip(1) // Reserved
   const safi = reader.readUint8()

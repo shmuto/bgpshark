@@ -26,8 +26,9 @@ function createBgpMessage(type: number, body: number[]): Uint8Array {
 /**
  * Create a raw packet for testing
  */
-function createRawPacket(tcpPayload: Uint8Array): RawPacket {
+function createRawPacket(tcpPayload: Uint8Array, frameIndex = 1): RawPacket {
   return {
+    frameIndex,
     timestamp: new Date('2024-01-01T00:00:00Z'),
     capturedLength: tcpPayload.length,
     originalLength: tcpPayload.length,
@@ -279,6 +280,7 @@ describe('parseBgpFromPackets', () => {
     test('preserves packet metadata', () => {
       const payload = createBgpMessage(4, [])
       const rawPacket: RawPacket = {
+        frameIndex: 42,
         timestamp: new Date('2024-06-15T12:30:00Z'),
         capturedLength: payload.length,
         originalLength: payload.length,

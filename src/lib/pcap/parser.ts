@@ -3,6 +3,7 @@ import {
   type PcapGlobalHeader,
   type PcapPacketHeader,
   type RawPacket,
+  type GenericPacket,
   type PcapParseResult,
   type TcpFlags,
   PcapMagic,
@@ -13,6 +14,21 @@ import {
 
 const BGP_PORT = 179
 
+const ICMP_PROTOCOL = 1
+
+function getProtocolName(protocol: number): GenericPacket['protocol'] {
+  switch (protocol) {
+    case IpProtocol.TCP:
+      return 'TCP'
+    case IpProtocol.UDP:
+      return 'UDP'
+    case ICMP_PROTOCOL:
+      return 'ICMP'
+    default:
+      return 'OTHER'
+  }
+}
+
 /**
  * Parse pcap file buffer
  */
@@ -20,6 +36,7 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
   const warnings: string[] = []
   const errors: string[] = []
   const packets: RawPacket[] = []
+  const allPackets: GenericPacket[] = []
 
   try {
     const reader = new BinaryReader(buffer, true)
@@ -28,7 +45,7 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
     const globalHeader = parseGlobalHeader(reader)
     if (!globalHeader) {
       errors.push('Invalid pcap file: unrecognized magic number')
-      return { globalHeader: createEmptyGlobalHeader(), packets, warnings, errors }
+      return { globalHeader: createEmptyGlobalHeader(), packets, allPackets, warnings, errors }
     }
 
     // Set endianness based on magic number
@@ -43,7 +60,7 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
         `Unsupported link layer type: ${globalHeader.linkType}. ` +
           `Only Ethernet (1) and SLL (113) are supported.`
       )
-      return { globalHeader, packets, warnings, errors }
+      return { globalHeader, packets, allPackets, warnings, errors }
     }
 
     // Parse packets
@@ -78,50 +95,93 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
           continue // Skip non-IPv4 or malformed
         }
 
-        // Only process TCP
-        if (ipResult.protocol !== IpProtocol.TCP) {
-          continue
-        }
+        const timestamp = new Date(
+          packetHeader.timestampSeconds * 1000 +
+            Math.floor(packetHeader.timestampMicroseconds / 1000)
+        )
 
-        // Parse TCP header
-        const tcpResult = parseTcpHeader(packetReader, ipResult.payloadLength, warnings, packetIndex)
-        if (!tcpResult) {
-          continue
-        }
+        // Handle TCP
+        if (ipResult.protocol === IpProtocol.TCP) {
+          const tcpResult = parseTcpHeader(packetReader, ipResult.payloadLength, warnings, packetIndex)
+          if (!tcpResult) {
+            continue
+          }
 
-        // Filter for BGP port 179
-        if (tcpResult.srcPort !== BGP_PORT && tcpResult.dstPort !== BGP_PORT) {
-          continue
-        }
+          // Add to allPackets
+          allPackets.push({
+            frameIndex: packetIndex,
+            timestamp,
+            capturedLength: packetHeader.capturedLength,
+            originalLength: packetHeader.originalLength,
+            srcIp: ipResult.srcIp,
+            dstIp: ipResult.dstIp,
+            protocol: 'TCP',
+            protocolNumber: IpProtocol.TCP,
+            srcPort: tcpResult.srcPort,
+            dstPort: tcpResult.dstPort,
+            tcpFlags: tcpResult.flags,
+            payloadLength: tcpResult.payload.length,
+          })
 
-        // Skip packets with no payload (SYN, ACK only, etc.)
-        if (tcpResult.payload.length === 0) {
-          continue
+          // Only add to BGP packets if port 179 and has payload
+          if (
+            (tcpResult.srcPort === BGP_PORT || tcpResult.dstPort === BGP_PORT) &&
+            tcpResult.payload.length > 0
+          ) {
+            packets.push({
+              frameIndex: packetIndex,
+              timestamp,
+              capturedLength: packetHeader.capturedLength,
+              originalLength: packetHeader.originalLength,
+              srcIp: ipResult.srcIp,
+              dstIp: ipResult.dstIp,
+              srcPort: tcpResult.srcPort,
+              dstPort: tcpResult.dstPort,
+              tcpPayload: tcpResult.payload,
+              tcpFlags: tcpResult.flags,
+            })
+          }
+        } else if (ipResult.protocol === IpProtocol.UDP) {
+          // Handle UDP
+          const udpResult = parseUdpHeader(packetReader, warnings, packetIndex)
+          if (udpResult) {
+            allPackets.push({
+              frameIndex: packetIndex,
+              timestamp,
+              capturedLength: packetHeader.capturedLength,
+              originalLength: packetHeader.originalLength,
+              srcIp: ipResult.srcIp,
+              dstIp: ipResult.dstIp,
+              protocol: 'UDP',
+              protocolNumber: IpProtocol.UDP,
+              srcPort: udpResult.srcPort,
+              dstPort: udpResult.dstPort,
+              payloadLength: udpResult.payloadLength,
+            })
+          }
+        } else {
+          // Other protocols (ICMP, etc.)
+          allPackets.push({
+            frameIndex: packetIndex,
+            timestamp,
+            capturedLength: packetHeader.capturedLength,
+            originalLength: packetHeader.originalLength,
+            srcIp: ipResult.srcIp,
+            dstIp: ipResult.dstIp,
+            protocol: getProtocolName(ipResult.protocol),
+            protocolNumber: ipResult.protocol,
+            payloadLength: ipResult.payloadLength,
+          })
         }
-
-        packets.push({
-          timestamp: new Date(
-            packetHeader.timestampSeconds * 1000 +
-              Math.floor(packetHeader.timestampMicroseconds / 1000)
-          ),
-          capturedLength: packetHeader.capturedLength,
-          originalLength: packetHeader.originalLength,
-          srcIp: ipResult.srcIp,
-          dstIp: ipResult.dstIp,
-          srcPort: tcpResult.srcPort,
-          dstPort: tcpResult.dstPort,
-          tcpPayload: tcpResult.payload,
-          tcpFlags: tcpResult.flags,
-        })
       } catch (e) {
         warnings.push(`Packet ${packetIndex}: parse error - ${e instanceof Error ? e.message : String(e)}`)
       }
     }
 
-    return { globalHeader, packets, warnings, errors }
+    return { globalHeader, packets, allPackets, warnings, errors }
   } catch (e) {
     errors.push(`Fatal error: ${e instanceof Error ? e.message : String(e)}`)
-    return { globalHeader: createEmptyGlobalHeader(), packets, warnings, errors }
+    return { globalHeader: createEmptyGlobalHeader(), packets, allPackets, warnings, errors }
   }
 }
 
@@ -400,4 +460,32 @@ function parseTcpHeader(
   const payload = actualPayloadLength > 0 ? reader.readBytes(actualPayloadLength) : new Uint8Array(0)
 
   return { srcPort, dstPort, flags, payload }
+}
+
+interface UdpResult {
+  srcPort: number
+  dstPort: number
+  payloadLength: number
+}
+
+function parseUdpHeader(
+  reader: BinaryReader,
+  warnings: string[],
+  packetIndex: number
+): UdpResult | null {
+  if (reader.remaining() < 8) {
+    warnings.push(`Packet ${packetIndex}: UDP header too short`)
+    return null
+  }
+
+  reader.setLittleEndian(false)
+
+  const srcPort = reader.readUint16()
+  const dstPort = reader.readUint16()
+  const length = reader.readUint16()
+  reader.skip(2) // Checksum
+
+  const payloadLength = length - 8
+
+  return { srcPort, dstPort, payloadLength }
 }

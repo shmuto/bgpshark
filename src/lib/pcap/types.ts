@@ -73,9 +73,10 @@ export interface TcpFlags {
 }
 
 /**
- * Raw packet extracted from pcap
+ * Raw packet extracted from pcap (BGP traffic on port 179)
  */
 export interface RawPacket {
+  frameIndex: number // 1-based index in pcap file
   timestamp: Date
   capturedLength: number
   originalLength: number
@@ -88,11 +89,30 @@ export interface RawPacket {
 }
 
 /**
+ * Generic packet for non-BGP traffic (L4 level info)
+ */
+export interface GenericPacket {
+  frameIndex: number // 1-based index in pcap file
+  timestamp: Date
+  capturedLength: number
+  originalLength: number
+  srcIp: string
+  dstIp: string
+  protocol: 'TCP' | 'UDP' | 'ICMP' | 'OTHER'
+  protocolNumber: number
+  srcPort?: number
+  dstPort?: number
+  tcpFlags?: TcpFlags
+  payloadLength: number
+}
+
+/**
  * Parse result from pcap parser
  */
 export interface PcapParseResult {
   globalHeader: PcapGlobalHeader
   packets: RawPacket[]
+  allPackets: GenericPacket[]
   warnings: string[]
   errors: string[]
 }
