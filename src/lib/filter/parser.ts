@@ -1,4 +1,4 @@
-import type { BgpPacket, BgpOpenMessage } from '../bgp/types'
+import type { BgpPacket, BgpOpenMessage, BgpUpdateMessage } from '../bgp/types'
 
 export type FilterOperator = '=' | '!=' | 'contains' | 'not contains'
 
@@ -45,6 +45,10 @@ export const FILTER_FIELDS = {
   },
   as: {
     description: 'AS Number (OPEN messages)',
+    values: [] as string[], // Dynamic
+  },
+  'path-attr': {
+    description: 'Path Attribute (UPDATE messages)',
     values: [] as string[], // Dynamic
   },
 } as const
@@ -237,6 +241,12 @@ function matchExpression(packet: BgpPacket, expr: FilterExpression): boolean {
         fieldValue = String(openMsg.fourByteAs ?? openMsg.myAs)
       }
       break
+    case 'path-attr':
+      if (packet.message.type === 'UPDATE') {
+        const updateMsg = packet.message as BgpUpdateMessage
+        fieldValue = updateMsg.pathAttributes.map((attr) => attr.typeName)
+      }
+      break
     default:
       return false
   }
@@ -374,6 +384,7 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
     'router-id': new Set(),
     capability: new Set(),
     as: new Set(),
+    'path-attr': new Set(),
   }
 
   for (const packet of packets) {
@@ -386,6 +397,13 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
       values.as.add(String(openMsg.fourByteAs ?? openMsg.myAs))
       for (const cap of openMsg.capabilities) {
         values.capability.add(cap.name)
+      }
+    }
+
+    if (packet.message.type === 'UPDATE') {
+      const updateMsg = packet.message as BgpUpdateMessage
+      for (const attr of updateMsg.pathAttributes) {
+        values['path-attr'].add(attr.typeName)
       }
     }
   }
