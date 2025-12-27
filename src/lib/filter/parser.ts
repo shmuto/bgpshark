@@ -1,6 +1,6 @@
 import type { BgpPacket, BgpOpenMessage } from '../bgp/types'
 
-export type FilterOperator = '=' | '!=' | 'contains' | '!contains'
+export type FilterOperator = '=' | '!=' | 'contains' | 'not contains'
 
 export type FilterToken =
   | { type: 'field'; value: string }
@@ -122,8 +122,26 @@ export function tokenize(query: string): FilterToken[] {
         tokens.push({ type: 'logical', value: lower as 'and' | 'or' })
       } else if (lower === 'contains') {
         tokens.push({ type: 'operator', value: 'contains' })
-      } else if (lower === '!contains' || lower === 'notcontains') {
-        tokens.push({ type: 'operator', value: '!contains' })
+      } else if (lower === 'not') {
+        // Check if next word is 'contains' for "not contains" operator
+        skipWhitespace()
+        const nextWord = readWord()
+        if (nextWord.toLowerCase() === 'contains') {
+          tokens.push({ type: 'operator', value: 'not contains' })
+        } else {
+          // Not followed by 'contains', treat 'not' as a value and re-process next word
+          tokens.push({ type: 'value', value: word })
+          if (nextWord) {
+            const nextLower = nextWord.toLowerCase()
+            if (nextLower === 'and' || nextLower === 'or') {
+              tokens.push({ type: 'logical', value: nextLower as 'and' | 'or' })
+            } else if (Object.keys(FILTER_FIELDS).includes(nextLower)) {
+              tokens.push({ type: 'field', value: nextLower })
+            } else {
+              tokens.push({ type: 'value', value: nextWord })
+            }
+          }
+        }
       } else if (Object.keys(FILTER_FIELDS).includes(lower)) {
         tokens.push({ type: 'field', value: lower })
       } else {
@@ -235,7 +253,7 @@ function matchExpression(packet: BgpPacket, expr: FilterExpression): boolean {
         return !fieldValuesLower.includes(valueLower)
       case 'contains':
         return fieldValuesLower.some((v) => v.includes(valueLower))
-      case '!contains':
+      case 'not contains':
         return !fieldValuesLower.some((v) => v.includes(valueLower))
     }
   }
@@ -249,7 +267,7 @@ function matchExpression(packet: BgpPacket, expr: FilterExpression): boolean {
       return fieldValueLower !== valueLower
     case 'contains':
       return fieldValueLower.includes(valueLower)
-    case '!contains':
+    case 'not contains':
       return !fieldValueLower.includes(valueLower)
   }
 }
@@ -324,7 +342,7 @@ export function getSuggestions(
       { text: '=', description: 'Equals', insertText: '=' },
       { text: '!=', description: 'Not equals', insertText: '!=' },
       { text: 'contains', description: 'Contains substring', insertText: 'contains ' },
-      { text: '!contains', description: 'Does not contain', insertText: '!contains ' },
+      { text: 'not contains', description: 'Does not contain', insertText: 'not contains ' },
     ]
   }
 
