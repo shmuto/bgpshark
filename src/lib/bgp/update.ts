@@ -196,16 +196,39 @@ function parsePathAttributeValue(
 function parseAsPath(reader: BinaryReader, is4byte: boolean): ParsedPathAttribute {
   const segments: AsPathSegment[] = []
 
-  while (reader.hasMore()) {
+  // Auto-detect AS size if not explicitly 4-byte (AS4_PATH)
+  // Look at first segment to determine if 2-byte or 4-byte AS
+  if (!is4byte && reader.hasMore()) {
+    const savedPos = reader.getPosition()
     const segType = reader.readUint8()
     const segLength = reader.readUint8()
 
-    const typeNames: Record<number, AsPathSegment['type']> = {
-      1: 'AS_SET',
-      2: 'AS_SEQUENCE',
-      3: 'AS_CONFED_SEQUENCE',
-      4: 'AS_CONFED_SET',
+    if (segType >= 1 && segType <= 4 && segLength > 0) {
+      const remainingBytes = reader.remaining()
+      // Check if data fits 4-byte ASes better than 2-byte ASes
+      if (remainingBytes === segLength * 4) {
+        is4byte = true
+      } else if (remainingBytes === segLength * 2) {
+        is4byte = false
+      } else if (remainingBytes > segLength * 2) {
+        // Multiple segments - try to detect based on total structure
+        // Modern BGP typically uses 4-byte AS
+        is4byte = remainingBytes % 4 === 0 && remainingBytes >= segLength * 4
+      }
     }
+    reader.seek(savedPos)
+  }
+
+  const typeNames: Record<number, AsPathSegment['type']> = {
+    1: 'AS_SET',
+    2: 'AS_SEQUENCE',
+    3: 'AS_CONFED_SEQUENCE',
+    4: 'AS_CONFED_SET',
+  }
+
+  while (reader.hasMore()) {
+    const segType = reader.readUint8()
+    const segLength = reader.readUint8()
 
     const asNumbers: number[] = []
     for (let i = 0; i < segLength; i++) {
