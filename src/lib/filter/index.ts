@@ -1,2 +1,2 @@
 export { parseQuery, matchPacket, getSuggestions, FILTER_FIELDS, tokenize } from './parser'
-export type { FilterExpression, ParsedQuery, Suggestion, FilterFieldName, FilterToken } from './parser'
+export type { Expression, Comparison, ParsedQuery, Suggestion, FilterFieldName, Token, Operator } from './parser'

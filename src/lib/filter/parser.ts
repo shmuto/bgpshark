@@ -1,320 +1,765 @@
-import type { BgpPacket, BgpOpenMessage, BgpUpdateMessage } from '../bgp/types'
+import type {
+  BgpPacket,
+  BgpOpenMessage,
+  BgpUpdateMessage,
+  AsPathAttribute,
+  CommunitiesAttribute,
+  LargeCommunitiesAttribute,
+  NextHopAttribute,
+  OriginAttribute,
+  MpReachNlriAttribute,
+} from '../bgp/types'
 
-export type FilterOperator = '=' | '!=' | 'contains' | 'not contains'
+// =============================================================================
+// Token Types
+// =============================================================================
 
-export type FilterToken =
+export type Token =
   | { type: 'field'; value: string }
-  | { type: 'operator'; value: FilterOperator }
-  | { type: 'value'; value: string }
-  | { type: 'logical'; value: 'and' | 'or' }
+  | { type: 'operator'; value: Operator }
+  | { type: 'string'; value: string }
+  | { type: 'number'; value: number }
+  | { type: 'and' }
+  | { type: 'or' }
+  | { type: 'not' }
   | { type: 'lparen' }
   | { type: 'rparen' }
+  | { type: 'comma' }
+  | { type: 'eof' }
 
-export interface FilterExpression {
+export type Operator = '=' | '!=' | 'contains' | 'not contains'
+
+// =============================================================================
+// AST Types
+// =============================================================================
+
+export type Expression = AndExpression | OrExpression | NotExpression | Comparison
+
+export interface AndExpression {
+  type: 'and'
+  left: Expression
+  right: Expression
+}
+
+export interface OrExpression {
+  type: 'or'
+  left: Expression
+  right: Expression
+}
+
+export interface NotExpression {
+  type: 'not'
+  expr: Expression
+}
+
+export interface Comparison {
+  type: 'comparison'
   field: string
-  operator: FilterOperator
-  value: string
+  operator: Operator
+  value: FilterValue
 }
 
-export interface ParsedQuery {
-  expressions: FilterExpression[]
-  logic: 'and' | 'or'
-}
+export type FilterValue = string | number | number[] | string[]
 
-// Supported fields and their possible values
+// =============================================================================
+// Filter Fields Configuration
+// =============================================================================
+
 export const FILTER_FIELDS = {
   type: {
     description: 'Message type',
     values: ['OPEN', 'UPDATE', 'NOTIFICATION', 'KEEPALIVE', 'ROUTE_REFRESH'],
+    valueType: 'string' as const,
   },
   src: {
     description: 'Source IP address',
-    values: [] as string[], // Dynamic
+    values: [] as string[],
+    valueType: 'string' as const,
   },
   dst: {
     description: 'Destination IP address',
-    values: [] as string[], // Dynamic
+    values: [] as string[],
+    valueType: 'string' as const,
   },
   'router-id': {
     description: 'BGP Router ID (OPEN messages)',
-    values: [] as string[], // Dynamic
+    values: [] as string[],
+    valueType: 'string' as const,
   },
   capability: {
     description: 'BGP Capability (OPEN messages)',
-    values: [] as string[], // Dynamic
+    values: [] as string[],
+    valueType: 'string' as const,
   },
   as: {
     description: 'AS Number (OPEN messages)',
-    values: [] as string[], // Dynamic
+    values: [] as string[],
+    valueType: 'number' as const,
   },
-  'path-attr': {
-    description: 'Path Attribute (UPDATE messages)',
-    values: [] as string[], // Dynamic
+  aspath: {
+    description: 'AS Path (UPDATE messages)',
+    values: [] as string[],
+    valueType: 'number[]' as const,
+  },
+  origin: {
+    description: 'Origin attribute (UPDATE messages)',
+    values: ['IGP', 'EGP', 'INCOMPLETE'],
+    valueType: 'string' as const,
+  },
+  nexthop: {
+    description: 'Next Hop address (UPDATE messages)',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+  community: {
+    description: 'Community value (UPDATE messages)',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+  'large-community': {
+    description: 'Large Community value (UPDATE messages)',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+  nlri: {
+    description: 'NLRI prefix (UPDATE messages)',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+  withdrawn: {
+    description: 'Withdrawn prefix (UPDATE messages)',
+    values: [] as string[],
+    valueType: 'string' as const,
   },
 } as const
 
 export type FilterFieldName = keyof typeof FILTER_FIELDS
 
-export function tokenize(query: string): FilterToken[] {
-  const tokens: FilterToken[] = []
-  let i = 0
+const FIELD_NAMES = Object.keys(FILTER_FIELDS)
 
-  const skipWhitespace = () => {
-    while (i < query.length && /\s/.test(query[i])) i++
+// =============================================================================
+// Tokenizer
+// =============================================================================
+
+export class Tokenizer {
+  private input: string
+  private pos: number = 0
+  private tokens: Token[] = []
+
+  constructor(input: string) {
+    this.input = input
   }
 
-  const readWord = (): string => {
-    let word = ''
-    while (i < query.length && /[\w\-.]/.test(query[i])) {
-      word += query[i]
-      i++
-    }
-    return word
-  }
+  tokenize(): Token[] {
+    while (this.pos < this.input.length) {
+      this.skipWhitespace()
+      if (this.pos >= this.input.length) break
 
-  const readQuoted = (): string => {
-    const quote = query[i]
-    i++ // skip opening quote
-    let value = ''
-    while (i < query.length && query[i] !== quote) {
-      if (query[i] === '\\' && i + 1 < query.length) {
-        i++
-        value += query[i]
+      const char = this.input[this.pos]
+
+      if (char === '(') {
+        this.tokens.push({ type: 'lparen' })
+        this.pos++
+      } else if (char === ')') {
+        this.tokens.push({ type: 'rparen' })
+        this.pos++
+      } else if (char === ',') {
+        this.tokens.push({ type: 'comma' })
+        this.pos++
+      } else if (char === '=' || (char === '!' && this.peek(1) === '=')) {
+        if (char === '!') {
+          this.tokens.push({ type: 'operator', value: '!=' })
+          this.pos += 2
+        } else {
+          this.tokens.push({ type: 'operator', value: '=' })
+          this.pos++
+        }
+      } else if (char === '"' || char === "'") {
+        this.tokens.push({ type: 'string', value: this.readQuoted() })
+      } else if (this.isDigit(char)) {
+        this.tokens.push({ type: 'number', value: this.readNumber() })
+      } else if (this.isWordChar(char)) {
+        this.readWord()
       } else {
-        value += query[i]
+        // Unknown character, skip
+        this.pos++
       }
-      i++
     }
-    i++ // skip closing quote
+
+    this.tokens.push({ type: 'eof' })
+    return this.tokens
+  }
+
+  private skipWhitespace(): void {
+    while (this.pos < this.input.length && /\s/.test(this.input[this.pos])) {
+      this.pos++
+    }
+  }
+
+  private peek(offset: number = 0): string {
+    return this.input[this.pos + offset] || ''
+  }
+
+  private isDigit(char: string): boolean {
+    return /[0-9]/.test(char)
+  }
+
+  private isWordChar(char: string): boolean {
+    return /[\w\-.:\/]/.test(char)
+  }
+
+  private readQuoted(): string {
+    const quote = this.input[this.pos]
+    this.pos++ // skip opening quote
+    let value = ''
+    while (this.pos < this.input.length && this.input[this.pos] !== quote) {
+      if (this.input[this.pos] === '\\' && this.pos + 1 < this.input.length) {
+        this.pos++
+        value += this.input[this.pos]
+      } else {
+        value += this.input[this.pos]
+      }
+      this.pos++
+    }
+    this.pos++ // skip closing quote
     return value
   }
 
-  while (i < query.length) {
-    skipWhitespace()
-    if (i >= query.length) break
+  private readNumber(): number {
+    let numStr = ''
+    while (this.pos < this.input.length && this.isDigit(this.input[this.pos])) {
+      numStr += this.input[this.pos]
+      this.pos++
+    }
+    return parseInt(numStr, 10)
+  }
 
-    const char = query[i]
+  private readWord(): void {
+    let word = ''
+    while (this.pos < this.input.length && this.isWordChar(this.input[this.pos])) {
+      word += this.input[this.pos]
+      this.pos++
+    }
 
-    if (char === '(') {
-      tokens.push({ type: 'lparen' })
-      i++
-    } else if (char === ')') {
-      tokens.push({ type: 'rparen' })
-      i++
-    } else if (char === '=' || (char === '!' && query[i + 1] === '=')) {
-      if (char === '!') {
-        tokens.push({ type: 'operator', value: '!=' })
-        i += 2
-      } else {
-        tokens.push({ type: 'operator', value: '=' })
-        i++
+    const lower = word.toLowerCase()
+
+    if (lower === 'and') {
+      this.tokens.push({ type: 'and' })
+    } else if (lower === 'or') {
+      this.tokens.push({ type: 'or' })
+    } else if (lower === 'not') {
+      // Check if followed by 'contains'
+      this.skipWhitespace()
+      const savedPos = this.pos
+      let nextWord = ''
+      while (this.pos < this.input.length && this.isWordChar(this.input[this.pos])) {
+        nextWord += this.input[this.pos]
+        this.pos++
       }
-    } else if (char === '"' || char === "'") {
-      tokens.push({ type: 'value', value: readQuoted() })
+      if (nextWord.toLowerCase() === 'contains') {
+        this.tokens.push({ type: 'operator', value: 'not contains' })
+      } else {
+        // Revert and push 'not' as logical operator
+        this.pos = savedPos
+        this.tokens.push({ type: 'not' })
+      }
+    } else if (lower === 'contains') {
+      this.tokens.push({ type: 'operator', value: 'contains' })
+    } else if (FIELD_NAMES.includes(lower)) {
+      this.tokens.push({ type: 'field', value: lower })
     } else {
-      const word = readWord()
-
-      if (!word) {
-        // Unknown character, skip it to avoid infinite loop
-        i++
-        continue
-      }
-
-      const lower = word.toLowerCase()
-
-      if (lower === 'and' || lower === 'or') {
-        tokens.push({ type: 'logical', value: lower as 'and' | 'or' })
-      } else if (lower === 'contains') {
-        tokens.push({ type: 'operator', value: 'contains' })
-      } else if (lower === 'not') {
-        // Check if next word is 'contains' for "not contains" operator
-        skipWhitespace()
-        const nextWord = readWord()
-        if (nextWord.toLowerCase() === 'contains') {
-          tokens.push({ type: 'operator', value: 'not contains' })
-        } else {
-          // Not followed by 'contains', treat 'not' as a value and re-process next word
-          tokens.push({ type: 'value', value: word })
-          if (nextWord) {
-            const nextLower = nextWord.toLowerCase()
-            if (nextLower === 'and' || nextLower === 'or') {
-              tokens.push({ type: 'logical', value: nextLower as 'and' | 'or' })
-            } else if (Object.keys(FILTER_FIELDS).includes(nextLower)) {
-              tokens.push({ type: 'field', value: nextLower })
-            } else {
-              tokens.push({ type: 'value', value: nextWord })
-            }
-          }
-        }
-      } else if (Object.keys(FILTER_FIELDS).includes(lower)) {
-        tokens.push({ type: 'field', value: lower })
-      } else {
-        tokens.push({ type: 'value', value: word })
-      }
+      // Treat as string value
+      this.tokens.push({ type: 'string', value: word })
     }
   }
-
-  return tokens
 }
 
-export function parseQuery(query: string): ParsedQuery {
-  const tokens = tokenize(query)
-  const expressions: FilterExpression[] = []
-  let logic: 'and' | 'or' = 'and'
+// =============================================================================
+// Recursive Descent Parser
+// =============================================================================
 
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i]
+export class Parser {
+  private tokens: Token[]
+  private pos: number = 0
 
-    if (token.type === 'field') {
-      const field = token.value
+  constructor(tokens: Token[]) {
+    this.tokens = tokens
+  }
 
-      // Expect operator next
-      const opToken = tokens[i + 1]
-      if (!opToken || opToken.type !== 'operator') {
-        continue
-      }
-
-      // Expect value after operator
-      const valToken = tokens[i + 2]
-      if (!valToken || valToken.type !== 'value') {
-        continue
-      }
-
-      expressions.push({
-        field,
-        operator: opToken.value,
-        value: valToken.value,
-      })
-
-      // Skip the operator and value tokens
-      i += 2
-    } else if (token.type === 'logical') {
-      logic = token.value
+  parse(): Expression | null {
+    if (this.current().type === 'eof') {
+      return null
     }
-    // Other token types are skipped automatically by the for loop
+    const expr = this.parseOr()
+    return expr
   }
 
-  return { expressions, logic }
-}
+  private current(): Token {
+    return this.tokens[this.pos] || { type: 'eof' }
+  }
 
-export function matchPacket(packet: BgpPacket, query: ParsedQuery): boolean {
-  if (query.expressions.length === 0) return true
+  private advance(): Token {
+    const token = this.current()
+    this.pos++
+    return token
+  }
 
-  const results = query.expressions.map((expr) => matchExpression(packet, expr))
+  private parseOr(): Expression {
+    let left = this.parseAnd()
 
-  if (query.logic === 'and') {
-    return results.every((r) => r)
-  } else {
-    return results.some((r) => r)
+    while (this.current().type === 'or') {
+      this.advance() // consume 'or'
+      const right = this.parseAnd()
+      left = { type: 'or', left, right }
+    }
+
+    return left
+  }
+
+  private parseAnd(): Expression {
+    let left = this.parseUnary()
+
+    while (this.current().type === 'and') {
+      this.advance() // consume 'and'
+      const right = this.parseUnary()
+      left = { type: 'and', left, right }
+    }
+
+    return left
+  }
+
+  private parseUnary(): Expression {
+    if (this.current().type === 'not') {
+      this.advance() // consume 'not'
+      const expr = this.parseUnary()
+      return { type: 'not', expr }
+    }
+
+    return this.parsePrimary()
+  }
+
+  private parsePrimary(): Expression {
+    // Handle parentheses
+    if (this.current().type === 'lparen') {
+      this.advance() // consume '('
+      const expr = this.parseOr()
+      if (this.current().type === 'rparen') {
+        this.advance() // consume ')'
+      }
+      return expr
+    }
+
+    // Handle comparison: field operator value
+    return this.parseComparison()
+  }
+
+  private parseComparison(): Comparison {
+    const fieldToken = this.advance()
+    if (fieldToken.type !== 'field') {
+      // Return a dummy comparison that won't match
+      return { type: 'comparison', field: '', operator: '=', value: '' }
+    }
+
+    const field = fieldToken.value
+
+    const opToken = this.advance()
+    if (opToken.type !== 'operator') {
+      return { type: 'comparison', field, operator: '=', value: '' }
+    }
+
+    const operator = opToken.value
+
+    const value = this.parseValue()
+
+    return { type: 'comparison', field, operator, value }
+  }
+
+  private parseValue(): FilterValue {
+    const values: (string | number)[] = []
+
+    // Read first value
+    const firstValue = this.parseSingleValue()
+    if (firstValue !== null) {
+      values.push(firstValue)
+    }
+
+    // Check for comma-separated values
+    while (this.current().type === 'comma') {
+      this.advance() // consume ','
+      const nextValue = this.parseSingleValue()
+      if (nextValue !== null) {
+        values.push(nextValue)
+      }
+    }
+
+    if (values.length === 0) {
+      return ''
+    }
+
+    if (values.length === 1) {
+      return values[0]
+    }
+
+    // Multiple values - return as array
+    if (typeof values[0] === 'number') {
+      return values as number[]
+    }
+    return values as string[]
+  }
+
+  private parseSingleValue(): string | number | null {
+    const token = this.current()
+    if (token.type === 'string') {
+      this.advance()
+      return token.value
+    }
+    if (token.type === 'number') {
+      this.advance()
+      return token.value
+    }
+    return null
   }
 }
 
-function matchExpression(packet: BgpPacket, expr: FilterExpression): boolean {
+// =============================================================================
+// Expression Evaluator
+// =============================================================================
+
+export function evaluate(expr: Expression | null, packet: BgpPacket): boolean {
+  if (expr === null) return true
+
+  switch (expr.type) {
+    case 'and':
+      return evaluate(expr.left, packet) && evaluate(expr.right, packet)
+    case 'or':
+      return evaluate(expr.left, packet) || evaluate(expr.right, packet)
+    case 'not':
+      return !evaluate(expr.expr, packet)
+    case 'comparison':
+      return evaluateComparison(expr, packet)
+  }
+}
+
+function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
   const { field, operator, value } = expr
-  const valueLower = value.toLowerCase()
-
-  let fieldValue: string | string[] | undefined
 
   switch (field) {
     case 'type':
-      fieldValue = packet.message.type
-      break
+      return matchString(packet.message.type, operator, value)
+
     case 'src':
-      fieldValue = packet.srcIp
-      break
+      return matchString(packet.srcIp, operator, value)
+
     case 'dst':
-      fieldValue = packet.dstIp
-      break
+      return matchString(packet.dstIp, operator, value)
+
     case 'router-id':
-      if (packet.message.type === 'OPEN') {
-        fieldValue = (packet.message as BgpOpenMessage).bgpIdentifier
-      }
-      break
+      if (packet.message.type !== 'OPEN') return false
+      return matchString((packet.message as BgpOpenMessage).bgpIdentifier, operator, value)
+
     case 'capability':
-      if (packet.message.type === 'OPEN') {
-        fieldValue = (packet.message as BgpOpenMessage).capabilities.map((c) => c.name)
-      }
-      break
+      if (packet.message.type !== 'OPEN') return false
+      const caps = (packet.message as BgpOpenMessage).capabilities.map((c) => c.name)
+      return matchStringArray(caps, operator, value)
+
     case 'as':
-      if (packet.message.type === 'OPEN') {
-        const openMsg = packet.message as BgpOpenMessage
-        fieldValue = String(openMsg.fourByteAs ?? openMsg.myAs)
-      }
-      break
-    case 'path-attr':
-      if (packet.message.type === 'UPDATE') {
-        const updateMsg = packet.message as BgpUpdateMessage
-        fieldValue = updateMsg.pathAttributes.map((attr) => attr.typeName)
-      }
-      break
+      if (packet.message.type !== 'OPEN') return false
+      const openMsg = packet.message as BgpOpenMessage
+      const asNum = openMsg.fourByteAs ?? openMsg.myAs
+      return matchNumber(asNum, operator, value)
+
+    case 'aspath':
+      if (packet.message.type !== 'UPDATE') return false
+      const aspath = getAsPath(packet.message as BgpUpdateMessage)
+      return matchNumberArray(aspath, operator, value)
+
+    case 'origin':
+      if (packet.message.type !== 'UPDATE') return false
+      const origin = getOrigin(packet.message as BgpUpdateMessage)
+      if (!origin) return false
+      return matchString(origin, operator, value)
+
+    case 'nexthop':
+      if (packet.message.type !== 'UPDATE') return false
+      const nexthop = getNextHop(packet.message as BgpUpdateMessage)
+      if (!nexthop) return false
+      return matchString(nexthop, operator, value)
+
+    case 'community':
+      if (packet.message.type !== 'UPDATE') return false
+      const communities = getCommunities(packet.message as BgpUpdateMessage)
+      return matchStringArray(communities, operator, value)
+
+    case 'large-community':
+      if (packet.message.type !== 'UPDATE') return false
+      const largeCommunities = getLargeCommunities(packet.message as BgpUpdateMessage)
+      return matchStringArray(largeCommunities, operator, value)
+
+    case 'nlri':
+      if (packet.message.type !== 'UPDATE') return false
+      const nlriPrefixes = getNlriPrefixes(packet.message as BgpUpdateMessage)
+      return matchStringArray(nlriPrefixes, operator, value)
+
+    case 'withdrawn':
+      if (packet.message.type !== 'UPDATE') return false
+      const withdrawnPrefixes = (packet.message as BgpUpdateMessage).withdrawnRoutes.map(
+        (p) => `${p.prefix}/${p.length}`
+      )
+      return matchStringArray(withdrawnPrefixes, operator, value)
+
     default:
       return false
   }
+}
 
-  if (fieldValue === undefined) return false
+// =============================================================================
+// Helper functions for extracting BGP attributes
+// =============================================================================
 
-  // Handle array values (capabilities)
-  if (Array.isArray(fieldValue)) {
-    const fieldValuesLower = fieldValue.map((v) => v.toLowerCase())
-    switch (operator) {
-      case '=':
-        return fieldValuesLower.includes(valueLower)
-      case '!=':
-        return !fieldValuesLower.includes(valueLower)
-      case 'contains':
-        return fieldValuesLower.some((v) => v.includes(valueLower))
-      case 'not contains':
-        return !fieldValuesLower.some((v) => v.includes(valueLower))
+function getAsPath(msg: BgpUpdateMessage): number[] {
+  const attr = msg.pathAttributes.find((a) => a.parsed?.type === 'AS_PATH')
+  if (!attr?.parsed || attr.parsed.type !== 'AS_PATH') return []
+  const asPathAttr = attr.parsed as AsPathAttribute
+  // Flatten all segments into a single array
+  return asPathAttr.segments.flatMap((seg) => seg.asNumbers)
+}
+
+function getOrigin(msg: BgpUpdateMessage): string | null {
+  const attr = msg.pathAttributes.find((a) => a.parsed?.type === 'ORIGIN')
+  if (!attr?.parsed || attr.parsed.type !== 'ORIGIN') return null
+  return (attr.parsed as OriginAttribute).value
+}
+
+function getNextHop(msg: BgpUpdateMessage): string | null {
+  // Check NEXT_HOP attribute first
+  const nhAttr = msg.pathAttributes.find((a) => a.parsed?.type === 'NEXT_HOP')
+  if (nhAttr?.parsed && nhAttr.parsed.type === 'NEXT_HOP') {
+    return (nhAttr.parsed as NextHopAttribute).address
+  }
+  // Check MP_REACH_NLRI for IPv6
+  const mpAttr = msg.pathAttributes.find((a) => a.parsed?.type === 'MP_REACH_NLRI')
+  if (mpAttr?.parsed && mpAttr.parsed.type === 'MP_REACH_NLRI') {
+    return (mpAttr.parsed as MpReachNlriAttribute).nextHop
+  }
+  return null
+}
+
+function getCommunities(msg: BgpUpdateMessage): string[] {
+  const attr = msg.pathAttributes.find((a) => a.parsed?.type === 'COMMUNITIES')
+  if (!attr?.parsed || attr.parsed.type !== 'COMMUNITIES') return []
+  return (attr.parsed as CommunitiesAttribute).communities
+}
+
+function getLargeCommunities(msg: BgpUpdateMessage): string[] {
+  const attr = msg.pathAttributes.find((a) => a.parsed?.type === 'LARGE_COMMUNITIES')
+  if (!attr?.parsed || attr.parsed.type !== 'LARGE_COMMUNITIES') return []
+  return (attr.parsed as LargeCommunitiesAttribute).communities.map(
+    (c) => `${c.globalAdmin}:${c.localData1}:${c.localData2}`
+  )
+}
+
+function getNlriPrefixes(msg: BgpUpdateMessage): string[] {
+  const prefixes: string[] = []
+  // IPv4 NLRI
+  for (const p of msg.nlri) {
+    prefixes.push(`${p.prefix}/${p.length}`)
+  }
+  // MP_REACH_NLRI for IPv6
+  const mpAttr = msg.pathAttributes.find((a) => a.parsed?.type === 'MP_REACH_NLRI')
+  if (mpAttr?.parsed && mpAttr.parsed.type === 'MP_REACH_NLRI') {
+    for (const p of (mpAttr.parsed as MpReachNlriAttribute).nlri) {
+      prefixes.push(`${p.prefix}/${p.length}`)
     }
   }
+  return prefixes
+}
 
-  // Handle string values
-  const fieldValueLower = fieldValue.toLowerCase()
+// =============================================================================
+// Matching functions
+// =============================================================================
+
+function matchString(fieldValue: string, operator: Operator, queryValue: FilterValue): boolean {
+  const queryStr = String(queryValue).toLowerCase()
+  const fieldLower = fieldValue.toLowerCase()
+
   switch (operator) {
     case '=':
-      return fieldValueLower === valueLower
+      return fieldLower === queryStr
     case '!=':
-      return fieldValueLower !== valueLower
+      return fieldLower !== queryStr
     case 'contains':
-      return fieldValueLower.includes(valueLower)
+      return fieldLower.includes(queryStr)
     case 'not contains':
-      return !fieldValueLower.includes(valueLower)
+      return !fieldLower.includes(queryStr)
   }
 }
 
-// Get autocomplete suggestions based on current input
+function matchNumber(fieldValue: number, operator: Operator, queryValue: FilterValue): boolean {
+  if (typeof queryValue === 'number') {
+    switch (operator) {
+      case '=':
+        return fieldValue === queryValue
+      case '!=':
+        return fieldValue !== queryValue
+      case 'contains':
+      case 'not contains':
+        // contains doesn't make sense for single number comparison
+        return operator === 'contains' ? fieldValue === queryValue : fieldValue !== queryValue
+    }
+  }
+
+  // String comparison
+  const queryStr = String(queryValue)
+  const fieldStr = String(fieldValue)
+  switch (operator) {
+    case '=':
+      return fieldStr === queryStr
+    case '!=':
+      return fieldStr !== queryStr
+    case 'contains':
+      return fieldStr.includes(queryStr)
+    case 'not contains':
+      return !fieldStr.includes(queryStr)
+  }
+}
+
+function matchNumberArray(fieldValues: number[], operator: Operator, queryValue: FilterValue): boolean {
+  // Query is a single number
+  if (typeof queryValue === 'number') {
+    switch (operator) {
+      case '=':
+        // Exact match: array contains exactly this number only? Or array equals [queryValue]?
+        // For aspath, "=" with single value means the path contains this AS
+        return fieldValues.includes(queryValue)
+      case '!=':
+        return !fieldValues.includes(queryValue)
+      case 'contains':
+        return fieldValues.includes(queryValue)
+      case 'not contains':
+        return !fieldValues.includes(queryValue)
+    }
+  }
+
+  // Query is an array of numbers - check for subsequence match
+  if (Array.isArray(queryValue) && queryValue.every((v) => typeof v === 'number')) {
+    const queryNums = queryValue as number[]
+    switch (operator) {
+      case '=':
+        // Exact sequence match
+        return arraysEqual(fieldValues, queryNums)
+      case '!=':
+        return !arraysEqual(fieldValues, queryNums)
+      case 'contains':
+        // Contains as subsequence
+        return containsSubsequence(fieldValues, queryNums)
+      case 'not contains':
+        return !containsSubsequence(fieldValues, queryNums)
+    }
+  }
+
+  return false
+}
+
+function matchStringArray(fieldValues: string[], operator: Operator, queryValue: FilterValue): boolean {
+  const queryStr = String(queryValue).toLowerCase()
+  const fieldLower = fieldValues.map((v) => v.toLowerCase())
+
+  switch (operator) {
+    case '=':
+      return fieldLower.includes(queryStr)
+    case '!=':
+      return !fieldLower.includes(queryStr)
+    case 'contains':
+      return fieldLower.some((v) => v.includes(queryStr))
+    case 'not contains':
+      return !fieldLower.some((v) => v.includes(queryStr))
+  }
+}
+
+function arraysEqual(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+function containsSubsequence(arr: number[], sub: number[]): boolean {
+  if (sub.length === 0) return true
+  if (sub.length > arr.length) return false
+
+  for (let i = 0; i <= arr.length - sub.length; i++) {
+    let match = true
+    for (let j = 0; j < sub.length; j++) {
+      if (arr[i + j] !== sub[j]) {
+        match = false
+        break
+      }
+    }
+    if (match) return true
+  }
+  return false
+}
+
+// =============================================================================
+// Public API (backwards compatible)
+// =============================================================================
+
+export interface ParsedQuery {
+  expression: Expression | null
+}
+
+export function parseQuery(query: string): ParsedQuery {
+  const tokenizer = new Tokenizer(query)
+  const tokens = tokenizer.tokenize()
+  const parser = new Parser(tokens)
+  const expression = parser.parse()
+  return { expression }
+}
+
+export function matchPacket(packet: BgpPacket, query: ParsedQuery): boolean {
+  return evaluate(query.expression, packet)
+}
+
+// Legacy tokenize function for autocomplete
+export function tokenize(query: string): Token[] {
+  const tokenizer = new Tokenizer(query)
+  return tokenizer.tokenize()
+}
+
+// =============================================================================
+// Autocomplete
+// =============================================================================
+
 export interface Suggestion {
   text: string
   description: string
   insertText: string
 }
 
-export function getSuggestions(
-  query: string,
-  cursorPosition: number,
-  packets: BgpPacket[]
-): Suggestion[] {
+export function getSuggestions(query: string, cursorPosition: number, packets: BgpPacket[]): Suggestion[] {
   const beforeCursor = query.slice(0, cursorPosition)
-  const tokens = tokenize(beforeCursor)
+  const tokens = tokenize(beforeCursor).filter((t) => t.type !== 'eof')
   const lastToken = tokens[tokens.length - 1]
   const secondLastToken = tokens[tokens.length - 2]
   const thirdLastToken = tokens[tokens.length - 3]
 
-  // Check if cursor is after whitespace (not in the middle of a token)
   const endsWithSpace = beforeCursor.length > 0 && /\s$/.test(beforeCursor)
-
-  // Extract dynamic values from packets
   const dynamicValues = extractDynamicValues(packets)
 
-  // Case 1: After complete expression with space (e.g., "type=UPDATE |") - suggest logical operators
-  if (endsWithSpace && lastToken?.type === 'value' && secondLastToken?.type === 'operator') {
+  // After complete expression - suggest logical operators
+  if (
+    endsWithSpace &&
+    (lastToken?.type === 'string' || lastToken?.type === 'number') &&
+    secondLastToken?.type === 'operator'
+  ) {
     return [
       { text: 'and', description: 'AND condition', insertText: 'and ' },
       { text: 'or', description: 'OR condition', insertText: 'or ' },
     ]
   }
 
-  // Case 2: Right after operator (e.g., "type=|") - suggest all values
+  // After operator - suggest values
   if (lastToken?.type === 'operator' && secondLastToken?.type === 'field') {
     const field = secondLastToken.value as FilterFieldName
     const values = getFieldValues(field, dynamicValues)
@@ -326,11 +771,15 @@ export function getSuggestions(
     }))
   }
 
-  // Case 3: Typing value after operator (e.g., "type=up|") - filter values
-  if (lastToken?.type === 'value' && secondLastToken?.type === 'operator' && thirdLastToken?.type === 'field') {
+  // Typing value after operator - filter values
+  if (
+    (lastToken?.type === 'string' || lastToken?.type === 'number') &&
+    secondLastToken?.type === 'operator' &&
+    thirdLastToken?.type === 'field'
+  ) {
     const field = thirdLastToken.value as FilterFieldName
     const values = getFieldValues(field, dynamicValues)
-    const currentValue = lastToken.value.toLowerCase()
+    const currentValue = String(lastToken.type === 'string' ? lastToken.value : lastToken.value).toLowerCase()
 
     const filtered = values.filter((v) => v.toLowerCase().includes(currentValue))
 
@@ -341,23 +790,21 @@ export function getSuggestions(
         insertText: v.includes(' ') ? `"${v}"` : v,
       }))
     }
-
-    // No matching values - no suggestions (user is typing a custom value)
     return []
   }
 
-  // Case 4: After field (e.g., "type|") - suggest operators
+  // After field - suggest operators
   if (lastToken?.type === 'field') {
     return [
       { text: '=', description: 'Equals', insertText: '=' },
       { text: '!=', description: 'Not equals', insertText: '!=' },
-      { text: 'contains', description: 'Contains substring', insertText: 'contains ' },
+      { text: 'contains', description: 'Contains', insertText: 'contains ' },
       { text: 'not contains', description: 'Does not contain', insertText: 'not contains ' },
     ]
   }
 
-  // Case 5: After logical operator (e.g., "type=OPEN and |") - suggest fields
-  if (lastToken?.type === 'logical') {
+  // After logical operator - suggest fields
+  if (lastToken?.type === 'and' || lastToken?.type === 'or') {
     return Object.entries(FILTER_FIELDS).map(([key, info]) => ({
       text: key,
       description: info.description,
@@ -365,8 +812,8 @@ export function getSuggestions(
     }))
   }
 
-  // Default: Suggest fields (start of query or partial field name)
-  const currentWord = lastToken?.type === 'value' ? lastToken.value.toLowerCase() : ''
+  // Default: suggest fields
+  const currentWord = lastToken?.type === 'string' ? lastToken.value.toLowerCase() : ''
 
   return Object.entries(FILTER_FIELDS)
     .filter(([key]) => key.toLowerCase().includes(currentWord))
@@ -384,7 +831,13 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
     'router-id': new Set(),
     capability: new Set(),
     as: new Set(),
-    'path-attr': new Set(),
+    aspath: new Set(),
+    origin: new Set(),
+    nexthop: new Set(),
+    community: new Set(),
+    'large-community': new Set(),
+    nlri: new Set(),
+    withdrawn: new Set(),
   }
 
   for (const packet of packets) {
@@ -402,8 +855,25 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
 
     if (packet.message.type === 'UPDATE') {
       const updateMsg = packet.message as BgpUpdateMessage
-      for (const attr of updateMsg.pathAttributes) {
-        values['path-attr'].add(attr.typeName)
+      const aspath = getAsPath(updateMsg)
+      for (const as of aspath) {
+        values.aspath.add(String(as))
+      }
+      const origin = getOrigin(updateMsg)
+      if (origin) values.origin.add(origin)
+      const nexthop = getNextHop(updateMsg)
+      if (nexthop) values.nexthop.add(nexthop)
+      for (const c of getCommunities(updateMsg)) {
+        values.community.add(c)
+      }
+      for (const c of getLargeCommunities(updateMsg)) {
+        values['large-community'].add(c)
+      }
+      for (const p of getNlriPrefixes(updateMsg)) {
+        values.nlri.add(p)
+      }
+      for (const p of updateMsg.withdrawnRoutes) {
+        values.withdrawn.add(`${p.prefix}/${p.length}`)
       }
     }
   }
@@ -412,8 +882,9 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
 }
 
 function getFieldValues(field: FilterFieldName, dynamicValues: Record<string, Set<string>>): string[] {
-  if (field === 'type') {
-    return FILTER_FIELDS.type.values as unknown as string[]
+  const fieldDef = FILTER_FIELDS[field]
+  if (fieldDef.values.length > 0) {
+    return fieldDef.values as unknown as string[]
   }
 
   const values = dynamicValues[field]
