@@ -13,9 +13,10 @@ import {
 
 interface NeighborSummaryProps {
   packets: BgpPacket[]
+  onFilterByNeighbor?: (localIp: string, remoteIp: string) => void
 }
 
-export function NeighborSummary({ packets }: NeighborSummaryProps) {
+export function NeighborSummary({ packets, onFilterByNeighbor }: NeighborSummaryProps) {
   const neighborPairs = useMemo(() => {
     const neighbors = extractNeighbors(packets)
     return pairNeighbors(neighbors)
@@ -32,14 +33,26 @@ export function NeighborSummary({ packets }: NeighborSummaryProps) {
   return (
     <div className="p-4 space-y-4 overflow-auto">
       {neighborPairs.map((pair, index) => (
-        <NeighborPairCard key={index} pair={pair} />
+        <NeighborPairCard key={index} pair={pair} onFilter={onFilterByNeighbor} />
       ))}
     </div>
   )
 }
 
-function NeighborPairCard({ pair }: { pair: NeighborPair }) {
+function NeighborPairCard({
+  pair,
+  onFilter,
+}: {
+  pair: NeighborPair
+  onFilter?: (localIp: string, remoteIp: string) => void
+}) {
   const { local, remote, established } = pair
+
+  const handleFilterClick = () => {
+    if (onFilter) {
+      onFilter(local.localAddress, local.remoteAddress)
+    }
+  }
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -66,6 +79,15 @@ function NeighborPairCard({ pair }: { pair: NeighborPair }) {
           <span className="font-medium text-sm">
             {local.localAddress} ↔ {local.remoteAddress}
           </span>
+          {onFilter && (
+            <button
+              onClick={handleFilterClick}
+              className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+              title="Filter packets by this neighbor pair"
+            >
+              Filter
+            </button>
+          )}
         </div>
         <span
           className={`text-xs px-2 py-0.5 rounded ${

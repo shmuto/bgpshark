@@ -1,11 +1,12 @@
 import { useState, useCallback } from 'react'
-import { parsePcap, isPcapng, parsePcapng } from '../lib/pcap'
+import { parsePcap, isPcapng, parsePcapng, type GenericPacket } from '../lib/pcap'
 import { parseBgpFromPackets, type BgpPacket } from '../lib/bgp'
 
 interface AnalyzerState {
   status: 'idle' | 'loading' | 'ready' | 'error'
   fileName: string | null
   packets: BgpPacket[]
+  allPackets: GenericPacket[]
   selectedPacketIndex: number | null
   warnings: string[]
   error: string | null
@@ -15,6 +16,7 @@ const initialState: AnalyzerState = {
   status: 'idle',
   fileName: null,
   packets: [],
+  allPackets: [],
   selectedPacketIndex: null,
   warnings: [],
   error: null,
@@ -46,23 +48,15 @@ export function useBgpAnalyzer() {
         return
       }
 
-      if (pcapResult.packets.length === 0) {
-        setState((prev) => ({
-          ...prev,
-          status: 'error',
-          error: 'No BGP packets found in the pcap file. Make sure the file contains traffic on TCP port 179.',
-        }))
-        return
-      }
-
-      // Parse BGP messages
+      // Parse BGP messages from BGP-specific packets
       const bgpResult = parseBgpFromPackets(pcapResult.packets)
 
-      if (bgpResult.packets.length === 0) {
+      // If no packets at all, show error
+      if (pcapResult.allPackets.length === 0) {
         setState((prev) => ({
           ...prev,
           status: 'error',
-          error: 'No valid BGP messages found. The packets may be fragmented or corrupted.',
+          error: 'No IP packets found in the pcap file.',
         }))
         return
       }
@@ -71,6 +65,7 @@ export function useBgpAnalyzer() {
         status: 'ready',
         fileName: file.name,
         packets: bgpResult.packets,
+        allPackets: pcapResult.allPackets,
         selectedPacketIndex: null,
         warnings: [...pcapResult.warnings, ...bgpResult.warnings],
         error: null,

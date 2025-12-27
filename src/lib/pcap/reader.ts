@@ -115,6 +115,27 @@ export class BinaryReader {
     return `${bytes[0]}.${bytes[1]}.${bytes[2]}.${bytes[3]}`
   }
 
+  /** Read IPv6 address as hex string */
+  readIpv6Address(): string {
+    const bytes = this.readBytes(16)
+    const groups: string[] = []
+    for (let i = 0; i < 16; i += 2) {
+      const value = (bytes[i] << 8) | bytes[i + 1]
+      groups.push(value.toString(16))
+    }
+    return groups.join(':')
+  }
+
+  /** Check if there are more bytes to read */
+  hasMore(): boolean {
+    return this._offset < this.view.byteLength
+  }
+
+  /** Get current position */
+  getPosition(): number {
+    return this._offset
+  }
+
   /** Peek at bytes without advancing position */
   peek(length: number): Uint8Array {
     if (!this.hasBytes(length)) {
