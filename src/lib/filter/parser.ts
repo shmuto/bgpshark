@@ -177,7 +177,13 @@ export class Tokenizer {
       } else if (char === '"' || char === "'") {
         this.tokens.push({ type: 'string', value: this.readQuoted() })
       } else if (this.isDigit(char)) {
-        this.tokens.push({ type: 'number', value: this.readNumber() })
+        // Could be a number, IP address, or prefix (e.g., 192.168.1.1 or 10.0.0.0/8)
+        const value = this.readNumberOrIp()
+        if (typeof value === 'number') {
+          this.tokens.push({ type: 'number', value })
+        } else {
+          this.tokens.push({ type: 'string', value })
+        }
       } else if (this.isWordChar(char)) {
         this.readWord()
       } else {
@@ -225,13 +231,46 @@ export class Tokenizer {
     return value
   }
 
-  private readNumber(): number {
-    let numStr = ''
-    while (this.pos < this.input.length && this.isDigit(this.input[this.pos])) {
-      numStr += this.input[this.pos]
-      this.pos++
+  private readNumberOrIp(): number | string {
+    let str = ''
+    let hasDot = false
+    let hasSlash = false
+    let hasColon = false
+
+    // Read digits, dots, colons (IPv6), and slashes (prefix notation)
+    while (this.pos < this.input.length) {
+      const char = this.input[this.pos]
+      if (this.isDigit(char)) {
+        str += char
+        this.pos++
+      } else if (char === '.') {
+        hasDot = true
+        str += char
+        this.pos++
+      } else if (char === '/') {
+        hasSlash = true
+        str += char
+        this.pos++
+      } else if (char === ':') {
+        hasColon = true
+        str += char
+        this.pos++
+      } else if (hasColon && /[a-fA-F]/.test(char)) {
+        // IPv6 hex digits
+        str += char
+        this.pos++
+      } else {
+        break
+      }
     }
-    return parseInt(numStr, 10)
+
+    // If it contains dots, colons, or slashes, treat as string (IP address or prefix)
+    if (hasDot || hasSlash || hasColon) {
+      return str
+    }
+
+    // Pure number
+    return parseInt(str, 10)
   }
 
   private readWord(): void {
