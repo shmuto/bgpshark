@@ -1,8 +1,10 @@
 import type { BgpPacket, BgpOpenMessage } from '../bgp/types'
 
+export type FilterOperator = '=' | '!=' | 'contains' | '!contains'
+
 export type FilterToken =
   | { type: 'field'; value: string }
-  | { type: 'operator'; value: '=' | '!=' | 'contains' }
+  | { type: 'operator'; value: FilterOperator }
   | { type: 'value'; value: string }
   | { type: 'logical'; value: 'and' | 'or' }
   | { type: 'lparen' }
@@ -10,7 +12,7 @@ export type FilterToken =
 
 export interface FilterExpression {
   field: string
-  operator: '=' | '!=' | 'contains'
+  operator: FilterOperator
   value: string
 }
 
@@ -120,6 +122,8 @@ export function tokenize(query: string): FilterToken[] {
         tokens.push({ type: 'logical', value: lower as 'and' | 'or' })
       } else if (lower === 'contains') {
         tokens.push({ type: 'operator', value: 'contains' })
+      } else if (lower === '!contains' || lower === 'notcontains') {
+        tokens.push({ type: 'operator', value: '!contains' })
       } else if (Object.keys(FILTER_FIELDS).includes(lower)) {
         tokens.push({ type: 'field', value: lower })
       } else {
@@ -231,6 +235,8 @@ function matchExpression(packet: BgpPacket, expr: FilterExpression): boolean {
         return !fieldValuesLower.includes(valueLower)
       case 'contains':
         return fieldValuesLower.some((v) => v.includes(valueLower))
+      case '!contains':
+        return !fieldValuesLower.some((v) => v.includes(valueLower))
     }
   }
 
@@ -243,6 +249,8 @@ function matchExpression(packet: BgpPacket, expr: FilterExpression): boolean {
       return fieldValueLower !== valueLower
     case 'contains':
       return fieldValueLower.includes(valueLower)
+    case '!contains':
+      return !fieldValueLower.includes(valueLower)
   }
 }
 
@@ -316,6 +324,7 @@ export function getSuggestions(
       { text: '=', description: 'Equals', insertText: '=' },
       { text: '!=', description: 'Not equals', insertText: '!=' },
       { text: 'contains', description: 'Contains substring', insertText: 'contains ' },
+      { text: '!contains', description: 'Does not contain', insertText: '!contains ' },
     ]
   }
 
