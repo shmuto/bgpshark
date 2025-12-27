@@ -7,9 +7,10 @@ interface QueryInputProps {
   onChange: (value: string) => void
   packets: BgpPacket[]
   placeholder?: string
+  hasError?: boolean
 }
 
-export function QueryInput({ value, onChange, packets, placeholder }: QueryInputProps) {
+export function QueryInput({ value, onChange, packets, placeholder, hasError }: QueryInputProps) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [showSuggestions, setShowSuggestions] = useState(false)
@@ -163,9 +164,13 @@ export function QueryInput({ value, onChange, packets, placeholder }: QueryInput
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
           placeholder={placeholder ?? 'type=OPEN and src=10.0.0.1'}
-          className="w-full pl-8 pr-3 py-1.5 text-sm font-mono border border-gray-300 rounded
-                     focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                     placeholder:text-gray-400"
+          className={`w-full pl-8 pr-3 py-1.5 text-sm font-mono border rounded
+                     focus:outline-none focus:ring-2 focus:border-transparent
+                     placeholder:text-gray-400
+                     ${hasError
+                       ? 'border-red-400 bg-red-50 focus:ring-red-500'
+                       : 'border-gray-300 focus:ring-blue-500'
+                     }`}
           spellCheck={false}
           autoComplete="off"
         />

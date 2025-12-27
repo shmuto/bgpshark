@@ -6,15 +6,17 @@ export function useFilter(packets: BgpPacket[]) {
   const [query, setQuery] = useState('')
 
   // Parse and filter packets based on query
-  const { filteredPackets, parsedQuery } = useMemo(() => {
+  const { filteredPackets, parsedQuery, parseErrors } = useMemo(() => {
     if (!query.trim()) {
-      return { filteredPackets: packets, parsedQuery: null }
+      return { filteredPackets: packets, parsedQuery: null, parseErrors: [] }
     }
 
     const parsed = parseQuery(query)
-    const filtered = packets.filter((packet) => matchPacket(packet, parsed))
+    const filtered = parsed.errors.length === 0
+      ? packets.filter((packet) => matchPacket(packet, parsed))
+      : packets // Don't filter if there are parse errors
 
-    return { filteredPackets: filtered, parsedQuery: parsed }
+    return { filteredPackets: filtered, parsedQuery: parsed, parseErrors: parsed.errors }
   }, [packets, query])
 
   const clearQuery = useCallback(() => {
@@ -22,13 +24,16 @@ export function useFilter(packets: BgpPacket[]) {
   }, [])
 
   const hasActiveFilter = query.trim().length > 0
+  const hasParseErrors = parseErrors.length > 0
 
   return {
     query,
     setQuery,
     filteredPackets,
     parsedQuery,
+    parseErrors,
     clearQuery,
     hasActiveFilter,
+    hasParseErrors,
   }
 }

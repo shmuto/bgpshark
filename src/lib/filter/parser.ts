@@ -278,9 +278,15 @@ export class Tokenizer {
 // Recursive Descent Parser
 // =============================================================================
 
+export interface ParseError {
+  message: string
+  position: number
+}
+
 export class Parser {
   private tokens: Token[]
   private pos: number = 0
+  private errors: ParseError[] = []
 
   constructor(tokens: Token[]) {
     this.tokens = tokens
@@ -291,7 +297,47 @@ export class Parser {
       return null
     }
     const expr = this.parseOr()
+
+    // Check for unconsumed tokens (except eof)
+    if (this.current().type !== 'eof') {
+      this.addError(`Unexpected token: ${this.tokenToString(this.current())}`)
+    }
+
     return expr
+  }
+
+  getErrors(): ParseError[] {
+    return this.errors
+  }
+
+  private addError(message: string): void {
+    this.errors.push({ message, position: this.pos })
+  }
+
+  private tokenToString(token: Token): string {
+    switch (token.type) {
+      case 'field':
+      case 'string':
+        return `"${token.value}"`
+      case 'number':
+        return String(token.value)
+      case 'operator':
+        return token.value
+      case 'and':
+        return 'and'
+      case 'or':
+        return 'or'
+      case 'not':
+        return 'not'
+      case 'lparen':
+        return '('
+      case 'rparen':
+        return ')'
+      case 'comma':
+        return ','
+      case 'eof':
+        return 'end of input'
+    }
   }
 
   private current(): Token {
@@ -356,7 +402,7 @@ export class Parser {
   private parseComparison(): Comparison {
     const fieldToken = this.advance()
     if (fieldToken.type !== 'field') {
-      // Return a dummy comparison that won't match
+      this.addError(`Expected field name, got ${this.tokenToString(fieldToken)}`)
       return { type: 'comparison', field: '', operator: '=', value: '' }
     }
 
@@ -364,12 +410,17 @@ export class Parser {
 
     const opToken = this.advance()
     if (opToken.type !== 'operator') {
+      this.addError(`Expected operator after "${field}", got ${this.tokenToString(opToken)}`)
       return { type: 'comparison', field, operator: '=', value: '' }
     }
 
     const operator = opToken.value
 
     const value = this.parseValue()
+
+    if (value === '') {
+      this.addError(`Expected value after "${field} ${operator}"`)
+    }
 
     return { type: 'comparison', field, operator, value }
   }
@@ -707,6 +758,7 @@ function containsSubsequence(arr: number[], sub: number[]): boolean {
 
 export interface ParsedQuery {
   expression: Expression | null
+  errors: ParseError[]
 }
 
 export function parseQuery(query: string): ParsedQuery {
@@ -714,7 +766,8 @@ export function parseQuery(query: string): ParsedQuery {
   const tokens = tokenizer.tokenize()
   const parser = new Parser(tokens)
   const expression = parser.parse()
-  return { expression }
+  const errors = parser.getErrors()
+  return { expression, errors }
 }
 
 export function matchPacket(packet: BgpPacket, query: ParsedQuery): boolean {

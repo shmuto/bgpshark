@@ -69,7 +69,7 @@ export function MainContent({
     }
   }, [packets, allPackets, showAllPackets])
 
-  const { query, setQuery, filteredPackets, hasActiveFilter } = useFilter(packets)
+  const { query, setQuery, filteredPackets, hasActiveFilter, hasParseErrors, parseErrors } = useFilter(packets)
   const { getActualSizes, getVisiblePanes, handleMouseDown } = useResizablePanes({
     panes,
     containerRef,
@@ -260,14 +260,20 @@ export function MainContent({
         <div className="h-4 w-px bg-gray-300" />
 
         {/* Query Input */}
-        <QueryInput value={query} onChange={setQuery} packets={packets} />
-        <span className="text-xs text-gray-500 whitespace-nowrap">
-          {showAllPackets
-            ? `${filteredDisplayPackets.length} / ${allPackets.length} packets`
-            : hasActiveFilter
-              ? `${filteredPackets.length} / ${packets.length} packets`
-              : `${packets.length} packets`}
-        </span>
+        <QueryInput value={query} onChange={setQuery} packets={packets} hasError={hasParseErrors} />
+        {hasParseErrors ? (
+          <span className="text-xs text-red-500 whitespace-nowrap" title={parseErrors.map(e => e.message).join('; ')}>
+            ⚠ {parseErrors[0].message}
+          </span>
+        ) : (
+          <span className="text-xs text-gray-500 whitespace-nowrap">
+            {showAllPackets
+              ? `${filteredDisplayPackets.length} / ${allPackets.length} packets`
+              : hasActiveFilter
+                ? `${filteredPackets.length} / ${packets.length} packets`
+                : `${packets.length} packets`}
+          </span>
+        )}
 
         {/* File name */}
         {fileName && (
