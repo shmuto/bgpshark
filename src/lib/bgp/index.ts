@@ -3,7 +3,15 @@ export { parseOpenMessage } from './open'
 export { parseNotificationMessage } from './notification'
 export { parseUpdateMessage } from './update'
 export { getErrorInfo, BGP_ERROR_CODES } from './errors'
-export { extractNeighbors, pairNeighbors, getCapabilitySummary, getLatestOpen, hasCapabilityChanges } from './neighbor'
-export type { NeighborInfo, NeighborPair, OpenMessageRecord } from './neighbor'
+export {
+  extractNeighbors,
+  pairNeighbors,
+  extractNeighborGroups,
+  getCapabilitySummary,
+  getLatestOpen,
+  getSessionLatestOpen,
+  hasCapabilityChanges,
+} from './neighbor'
+export type { NeighborInfo, NeighborPair, NeighborGroup, SessionInfo, OpenMessageRecord } from './neighbor'
 export * from './types'
 export * from './constants'

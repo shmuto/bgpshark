@@ -117,9 +117,9 @@ export function MainContent({
   }, [])
 
   const handleFilterByNeighbor = useCallback(
-    (localIp: string, remoteIp: string) => {
-      // Create a filter query that matches packets from either direction
-      const filterQuery = `src=${localIp} or src=${remoteIp}`
+    (srcIp: string, dstIp: string) => {
+      // Filter packets for this specific session (src->dst or dst->src)
+      const filterQuery = `(src=${srcIp} and dst=${dstIp}) or (src=${dstIp} and dst=${srcIp})`
       setQuery(filterQuery)
       // Ensure packets pane is visible
       setPanes((prev) => ({ ...prev, packets: true }))

@@ -34,6 +34,32 @@ export interface NeighborPair {
   established: boolean
 }
 
+// New structure: one source IP with multiple destination IPs
+export interface SessionInfo {
+  srcIp: string
+  dstIp: string
+  openHistory: OpenMessageRecord[]
+  messageCount: {
+    open: number
+    update: number
+    notification: number
+    keepalive: number
+    routeRefresh: number
+  }
+  lastSeen: Date
+  hasNotification: boolean
+  notificationInfo?: {
+    errorCode: string
+    errorSubcode: string
+    hint: string
+  }
+}
+
+export interface NeighborGroup {
+  srcIp: string
+  sessions: SessionInfo[]
+}
+
 export function extractNeighbors(packets: BgpPacket[]): Map<string, NeighborInfo> {
   const neighbors = new Map<string, NeighborInfo>()
 
@@ -130,6 +156,93 @@ export function pairNeighbors(neighbors: Map<string, NeighborInfo>): NeighborPai
   }
 
   return pairs
+}
+
+// Extract sessions grouped by source IP
+export function extractNeighborGroups(packets: BgpPacket[]): NeighborGroup[] {
+  // Map: srcIp -> Map<dstIp -> SessionInfo>
+  const sessionMap = new Map<string, Map<string, SessionInfo>>()
+
+  for (const packet of packets) {
+    const { srcIp, dstIp } = packet
+
+    if (!sessionMap.has(srcIp)) {
+      sessionMap.set(srcIp, new Map())
+    }
+
+    const dstMap = sessionMap.get(srcIp)!
+    if (!dstMap.has(dstIp)) {
+      dstMap.set(dstIp, {
+        srcIp,
+        dstIp,
+        openHistory: [],
+        messageCount: {
+          open: 0,
+          update: 0,
+          notification: 0,
+          keepalive: 0,
+          routeRefresh: 0,
+        },
+        lastSeen: packet.timestamp,
+        hasNotification: false,
+      })
+    }
+
+    const session = dstMap.get(dstIp)!
+    session.lastSeen = packet.timestamp
+
+    switch (packet.message.type) {
+      case 'OPEN': {
+        const openMsg = packet.message as BgpOpenMessage
+        session.openHistory.push({
+          timestamp: packet.timestamp,
+          routerId: openMsg.bgpIdentifier,
+          asNumber: openMsg.fourByteAs ?? openMsg.myAs,
+          holdTime: openMsg.holdTime,
+          capabilities: openMsg.capabilities,
+        })
+        session.messageCount.open++
+        break
+      }
+      case 'UPDATE':
+        session.messageCount.update++
+        break
+      case 'NOTIFICATION':
+        session.messageCount.notification++
+        session.hasNotification = true
+        session.notificationInfo = {
+          errorCode: packet.message.errorCodeName,
+          errorSubcode: packet.message.errorSubcodeName,
+          hint: packet.message.hint,
+        }
+        break
+      case 'KEEPALIVE':
+        session.messageCount.keepalive++
+        break
+      case 'ROUTE_REFRESH':
+        session.messageCount.routeRefresh++
+        break
+    }
+  }
+
+  // Convert to array of NeighborGroups
+  const groups: NeighborGroup[] = []
+  for (const [srcIp, dstMap] of sessionMap) {
+    groups.push({
+      srcIp,
+      sessions: Array.from(dstMap.values()),
+    })
+  }
+
+  // Sort by srcIp
+  groups.sort((a, b) => a.srcIp.localeCompare(b.srcIp))
+
+  return groups
+}
+
+// Get session info (like getLatestOpen but for SessionInfo)
+export function getSessionLatestOpen(session: SessionInfo): OpenMessageRecord | null {
+  return session.openHistory.length > 0 ? session.openHistory[session.openHistory.length - 1] : null
 }
 
 export function getCapabilitySummary(capabilities: BgpCapability[]): string[] {
