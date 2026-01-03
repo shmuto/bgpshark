@@ -14,9 +14,9 @@ interface UseResizablePanesOptions {
 export function useResizablePanes({ panes, containerRef }: UseResizablePanesOptions) {
   // Store sizes as percentages (0-100)
   const [sizes, setSizes] = useState<PaneSizes>({
-    packets: 33.33,
-    detail: 33.33,
-    neighbors: 33.34,
+    packets: 33,
+    detail: 33,
+    neighbors: 34,
   })
 
   const dragState = useRef<{

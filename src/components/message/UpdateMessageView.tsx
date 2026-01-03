@@ -1,8 +1,11 @@
+import { useState } from 'react'
 import type {
   BgpUpdateMessage,
   BgpPathAttribute,
   BgpPrefix,
   AsPathSegment,
+  MpReachNlriAttribute,
+  MpUnreachNlriAttribute,
 } from '../../lib/bgp/types'
 
 interface UpdateMessageViewProps {
@@ -10,58 +13,166 @@ interface UpdateMessageViewProps {
 }
 
 export function UpdateMessageView({ message }: UpdateMessageViewProps) {
+  const [isExpanded, setIsExpanded] = useState(false)
+
+  // Collect all NLRI (IPv4 + MP_REACH_NLRI)
+  const allNlri: BgpPrefix[] = [...message.nlri]
+  const mpReachAttr = message.pathAttributes.find((a) => a.parsed?.type === 'MP_REACH_NLRI')
+  if (mpReachAttr?.parsed?.type === 'MP_REACH_NLRI') {
+    allNlri.push(...(mpReachAttr.parsed as MpReachNlriAttribute).nlri)
+  }
+
+  // Collect all withdrawn (IPv4 + MP_UNREACH_NLRI)
+  const allWithdrawn: BgpPrefix[] = [...message.withdrawnRoutes]
+  const mpUnreachAttr = message.pathAttributes.find((a) => a.parsed?.type === 'MP_UNREACH_NLRI')
+  if (mpUnreachAttr?.parsed?.type === 'MP_UNREACH_NLRI') {
+    allWithdrawn.push(...(mpUnreachAttr.parsed as MpUnreachNlriAttribute).withdrawnRoutes)
+  }
+
+  // Extract key attributes for compact view
+  const asPathAttr = message.pathAttributes.find((a) => a.parsed?.type === 'AS_PATH')
+  const nextHopAttr = message.pathAttributes.find((a) => a.parsed?.type === 'NEXT_HOP')
+  const mpReachNextHop = mpReachAttr?.parsed?.type === 'MP_REACH_NLRI' ? (mpReachAttr.parsed as MpReachNlriAttribute).nextHop : null
+
+  const asPath = asPathAttr?.parsed?.type === 'AS_PATH' ? asPathAttr.parsed.segments : []
+  const nextHop = nextHopAttr?.parsed?.type === 'NEXT_HOP' ? nextHopAttr.parsed.address : mpReachNextHop
+
   return (
-    <div className="space-y-4">
-      {/* Summary */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm space-y-1">
-        <div className="flex justify-between">
-          <span className="text-blue-700">Withdrawn Routes</span>
-          <span className="font-mono">{message.withdrawnRoutes.length} prefixes</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-blue-700">Path Attributes</span>
-          <span className="font-mono">{message.pathAttributes.length} attributes</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-blue-700">NLRI</span>
-          <span className="font-mono">{message.nlri.length} prefixes</span>
+    <div className="space-y-2">
+      {/* Compact View - Always visible */}
+      <div
+        className="bg-gray-50 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-100 transition-colors"
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        {/* Summary Table */}
+        <table className="w-full text-sm">
+          <tbody>
+            <tr className="border-b border-gray-200">
+              <td className="px-3 py-2 text-gray-500 w-24">Announced</td>
+              <td className="px-3 py-2">
+                {allNlri.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {allNlri.slice(0, 8).map((prefix, i) => (
+                      <span key={i} className="font-mono text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
+                        {prefix.prefix}/{prefix.length}
+                      </span>
+                    ))}
+                    {allNlri.length > 8 && (
+                      <span className="text-xs text-gray-500 px-1.5 py-0.5">... {allNlri.length - 8} more</span>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-gray-400">-</span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-right text-gray-500 w-16">{allNlri.length}</td>
+            </tr>
+            <tr className="border-b border-gray-200">
+              <td className="px-3 py-2 text-gray-500">Withdrawn</td>
+              <td className="px-3 py-2">
+                {allWithdrawn.length > 0 ? (
+                  <div className="flex flex-wrap gap-1">
+                    {allWithdrawn.slice(0, 5).map((prefix, i) => (
+                      <span key={i} className="font-mono text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded line-through">
+                        {prefix.prefix}/{prefix.length}
+                      </span>
+                    ))}
+                    {allWithdrawn.length > 5 && (
+                      <span className="text-xs text-gray-500 px-1.5 py-0.5">... {allWithdrawn.length - 5} more</span>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-gray-400">-</span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-right text-gray-500 w-16">{allWithdrawn.length}</td>
+            </tr>
+            {nextHop && (
+              <tr className="border-b border-gray-200">
+                <td className="px-3 py-2 text-gray-500">Next Hop</td>
+                <td className="px-3 py-2 font-mono" colSpan={2}>{nextHop}</td>
+              </tr>
+            )}
+            {asPath.length > 0 && (
+              <tr>
+                <td className="px-3 py-2 text-gray-500">AS Path</td>
+                <td className="px-3 py-2" colSpan={2}>
+                  <AsPathCompact segments={asPath} />
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
+        {/* Expand indicator */}
+        <div className="px-3 py-1 text-xs text-gray-400 flex items-center gap-1 border-t border-gray-200">
+          <svg
+            className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          {isExpanded ? 'Click to collapse' : 'Click for details'}
         </div>
       </div>
 
-      {/* Withdrawn Routes */}
-      {message.withdrawnRoutes.length > 0 && (
-        <div>
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            Withdrawn Routes
-          </h4>
-          <PrefixList prefixes={message.withdrawnRoutes} className="bg-red-50 border-red-200" />
-        </div>
-      )}
+      {/* Expanded View - Full details */}
+      {isExpanded && (
+        <div className="ml-4 space-y-3 border-l-2 border-gray-200 pl-4">
+          {/* All NLRI */}
+          {allNlri.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                NLRI ({allNlri.length} prefixes)
+              </h4>
+              <PrefixList prefixes={allNlri} className="bg-green-50 border-green-200" />
+            </div>
+          )}
 
-      {/* Path Attributes */}
-      {message.pathAttributes.length > 0 && (
-        <div>
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            Path Attributes
-          </h4>
-          <div className="space-y-2">
-            {message.pathAttributes.map((attr, i) => (
-              <PathAttributeView key={i} attribute={attr} />
-            ))}
-          </div>
-        </div>
-      )}
+          {/* All Withdrawn Routes */}
+          {allWithdrawn.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Withdrawn Routes ({allWithdrawn.length} prefixes)
+              </h4>
+              <PrefixList prefixes={allWithdrawn} className="bg-red-50 border-red-200" />
+            </div>
+          )}
 
-      {/* NLRI */}
-      {message.nlri.length > 0 && (
-        <div>
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            NLRI (Announced Routes)
-          </h4>
-          <PrefixList prefixes={message.nlri} className="bg-green-50 border-green-200" />
+          {/* Path Attributes */}
+          {message.pathAttributes.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Path Attributes
+              </h4>
+              <div className="space-y-2">
+                {message.pathAttributes.map((attr, i) => (
+                  <PathAttributeView key={i} attribute={attr} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
+  )
+}
+
+function AsPathCompact({ segments }: { segments: AsPathSegment[] }) {
+  if (segments.length === 0) return null
+
+  // Show first 3 AS numbers
+  const allAsns = segments.flatMap((s) => s.asNumbers)
+  const displayAsns = allAsns.slice(0, 3)
+  const remaining = allAsns.length - displayAsns.length
+
+  return (
+    <span className="font-mono">
+      {displayAsns.join(' ')}
+      {remaining > 0 && <span className="text-gray-400"> +{remaining}</span>}
+    </span>
   )
 }
 
@@ -71,7 +182,7 @@ function PrefixList({ prefixes, className }: { prefixes: BgpPrefix[]; className:
       <div className="flex flex-wrap gap-1">
         {prefixes.map((prefix, i) => (
           <span key={i} className="font-mono text-xs bg-white px-1.5 py-0.5 rounded border">
-            {prefix.prefix}
+            {prefix.prefix}/{prefix.length}
           </span>
         ))}
       </div>
@@ -182,7 +293,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
             <div className="flex flex-wrap gap-1 mt-1">
               {parsed.nlri.map((prefix, i) => (
                 <span key={i} className="font-mono text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
-                  {prefix.prefix}
+                  {prefix.prefix}/{prefix.length}
                 </span>
               ))}
             </div>
@@ -200,7 +311,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
             <div className="flex flex-wrap gap-1 mt-1">
               {parsed.withdrawnRoutes.map((prefix, i) => (
                 <span key={i} className="font-mono text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">
-                  {prefix.prefix}
+                  {prefix.prefix}/{prefix.length}
                 </span>
               ))}
             </div>
