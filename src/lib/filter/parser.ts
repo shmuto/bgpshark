@@ -8,6 +8,7 @@ import type {
   NextHopAttribute,
   OriginAttribute,
   MpReachNlriAttribute,
+  MpUnreachNlriAttribute,
 } from '../bgp/types'
 
 // =============================================================================
@@ -66,76 +67,96 @@ export type FilterValue = string | number | number[] | string[]
 // =============================================================================
 
 export const FILTER_FIELDS = {
+  // Packet-level fields (SQL: packets table)
   type: {
     description: 'Message type',
     values: ['OPEN', 'UPDATE', 'NOTIFICATION', 'KEEPALIVE', 'ROUTE_REFRESH'],
     valueType: 'string' as const,
   },
-  src: {
-    description: 'Source IP address',
+  src_ip: {
+    description: 'Source IP (packets.src_ip)',
     values: [] as string[],
     valueType: 'string' as const,
   },
-  dst: {
-    description: 'Destination IP address',
+  dst_ip: {
+    description: 'Destination IP (packets.dst_ip)',
     values: [] as string[],
     valueType: 'string' as const,
   },
-  'router-id': {
-    description: 'BGP Router ID (OPEN messages)',
+
+  // Message-level fields (SQL: messages table)
+  router_id: {
+    description: 'Router ID (messages.router_id)',
     values: [] as string[],
     valueType: 'string' as const,
   },
-  capability: {
-    description: 'BGP Capability (OPEN messages)',
-    values: [] as string[],
-    valueType: 'string' as const,
-  },
-  as: {
-    description: 'AS Number (OPEN messages)',
+  src_as: {
+    description: 'Source AS (from OPEN message)',
     values: [] as string[],
     valueType: 'number' as const,
   },
-  aspath: {
-    description: 'AS Path (UPDATE messages)',
-    values: [] as string[],
-    valueType: 'number[]' as const,
-  },
+
+  // Path attributes (SQL: path_attributes table)
   origin: {
-    description: 'Origin attribute (UPDATE messages)',
+    description: 'Origin (path_attributes.origin_value)',
     values: ['IGP', 'EGP', 'INCOMPLETE'],
     valueType: 'string' as const,
   },
-  nexthop: {
-    description: 'Next Hop address (UPDATE messages)',
+  next_hop: {
+    description: 'Next Hop (path_attributes.next_hop)',
     values: [] as string[],
     valueType: 'string' as const,
   },
-  community: {
-    description: 'Community value (UPDATE messages)',
-    values: [] as string[],
-    valueType: 'string' as const,
-  },
-  'large-community': {
-    description: 'Large Community value (UPDATE messages)',
-    values: [] as string[],
-    valueType: 'string' as const,
-  },
-  nlri: {
-    description: 'NLRI prefix (UPDATE messages)',
+
+  // Prefixes (SQL: nlri, withdrawn tables)
+  prefix: {
+    description: 'NLRI prefix (nlri.prefix)',
     values: [] as string[],
     valueType: 'string' as const,
   },
   withdrawn: {
-    description: 'Withdrawn prefix (UPDATE messages)',
+    description: 'Withdrawn prefix (withdrawn.prefix)',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+
+  // Communities (SQL: communities table)
+  community: {
+    description: 'Community (communities.formatted)',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+
+  // Capabilities (SQL: capabilities table)
+  capability: {
+    description: 'Capability (capabilities.name)',
     values: [] as string[],
     valueType: 'string' as const,
   },
 } as const
 
+// Aliases for backwards compatibility (old name -> canonical name)
+export const FIELD_ALIASES: Record<string, string> = {
+  src: 'src_ip',
+  dst: 'dst_ip',
+  'router-id': 'router_id',
+  my_as: 'src_as', // backwards compat
+  as: 'src_as',
+  aspath: 'asn',
+  nexthop: 'next_hop',
+  nlri: 'prefix',
+  'large-community': 'community', // Same handling as community
+}
+
 export type FilterFieldName = keyof typeof FILTER_FIELDS
 
-const FIELD_NAMES = Object.keys(FILTER_FIELDS)
+// All valid field names (canonical + aliases)
+const FIELD_NAMES = [...Object.keys(FILTER_FIELDS), ...Object.keys(FIELD_ALIASES)]
+
+// Normalize field name (resolve alias to canonical name)
+export function normalizeFieldName(field: string): string {
+  return FIELD_ALIASES[field] || field
+}
 
 // =============================================================================
 // Tokenizer
@@ -531,71 +552,98 @@ export function evaluate(expr: Expression | null, packet: BgpPacket): boolean {
 }
 
 function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
-  const { field, operator, value } = expr
+  const { operator, value } = expr
+  // Normalize field name to handle aliases
+  const field = normalizeFieldName(expr.field)
 
   switch (field) {
     case 'type':
-      return matchString(packet.message.type, operator, value)
+      // Match if any message matches the type
+      return packet.messages.some((msg) => matchString(msg.type, operator, value))
 
-    case 'src':
+    case 'src_ip':
       return matchString(packet.srcIp, operator, value)
 
-    case 'dst':
+    case 'dst_ip':
       return matchString(packet.dstIp, operator, value)
 
-    case 'router-id':
-      if (packet.message.type !== 'OPEN') return false
-      return matchString((packet.message as BgpOpenMessage).bgpIdentifier, operator, value)
+    case 'router_id':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'OPEN') continue
+        if (matchString((msg as BgpOpenMessage).bgpIdentifier, operator, value)) return true
+      }
+      return false
 
     case 'capability':
-      if (packet.message.type !== 'OPEN') return false
-      const caps = (packet.message as BgpOpenMessage).capabilities.map((c) => c.name)
-      return matchStringArray(caps, operator, value)
+      for (const msg of packet.messages) {
+        if (msg.type !== 'OPEN') continue
+        const caps = (msg as BgpOpenMessage).capabilities.map((c) => c.name)
+        if (matchStringArray(caps, operator, value)) return true
+      }
+      return false
 
-    case 'as':
-      if (packet.message.type !== 'OPEN') return false
-      const openMsg = packet.message as BgpOpenMessage
-      const asNum = openMsg.fourByteAs ?? openMsg.myAs
-      return matchNumber(asNum, operator, value)
+    case 'src_as':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'OPEN') continue
+        const openMsg = msg as BgpOpenMessage
+        const asNum = openMsg.fourByteAs ?? openMsg.myAs
+        if (matchNumber(asNum, operator, value)) return true
+      }
+      return false
 
-    case 'aspath':
-      if (packet.message.type !== 'UPDATE') return false
-      const aspath = getAsPath(packet.message as BgpUpdateMessage)
-      return matchNumberArray(aspath, operator, value)
+    case 'asn':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const aspath = getAsPath(msg as BgpUpdateMessage)
+        if (matchNumberArray(aspath, operator, value)) return true
+      }
+      return false
 
     case 'origin':
-      if (packet.message.type !== 'UPDATE') return false
-      const origin = getOrigin(packet.message as BgpUpdateMessage)
-      if (!origin) return false
-      return matchString(origin, operator, value)
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const origin = getOrigin(msg as BgpUpdateMessage)
+        if (origin && matchString(origin, operator, value)) return true
+      }
+      return false
 
-    case 'nexthop':
-      if (packet.message.type !== 'UPDATE') return false
-      const nexthop = getNextHop(packet.message as BgpUpdateMessage)
-      if (!nexthop) return false
-      return matchString(nexthop, operator, value)
+    case 'next_hop':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const nexthop = getNextHop(msg as BgpUpdateMessage)
+        if (nexthop && matchString(nexthop, operator, value)) return true
+      }
+      return false
 
     case 'community':
-      if (packet.message.type !== 'UPDATE') return false
-      const communities = getCommunities(packet.message as BgpUpdateMessage)
-      return matchStringArray(communities, operator, value)
+      // Handle both standard and large communities
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const communities = getCommunities(msg as BgpUpdateMessage)
+        const largeCommunities = getLargeCommunities(msg as BgpUpdateMessage)
+        if (matchStringArray([...communities, ...largeCommunities], operator, value)) return true
+      }
+      return false
 
-    case 'large-community':
-      if (packet.message.type !== 'UPDATE') return false
-      const largeCommunities = getLargeCommunities(packet.message as BgpUpdateMessage)
-      return matchStringArray(largeCommunities, operator, value)
-
-    case 'nlri':
-      if (packet.message.type !== 'UPDATE') return false
-      const nlriPrefixes = getNlriPrefixes(packet.message as BgpUpdateMessage)
-      return matchStringArray(nlriPrefixes, operator, value)
+    case 'prefix':
+      // Match both announced (NLRI) and withdrawn prefixes
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const update = msg as BgpUpdateMessage
+        const nlriPrefixes = getNlriPrefixes(update)
+        const withdrawnPrefixes = getWithdrawnPrefixes(update)
+        const allPrefixes = [...nlriPrefixes, ...withdrawnPrefixes]
+        if (matchStringArray(allPrefixes, operator, value)) return true
+      }
+      return false
 
     case 'withdrawn':
-      if (packet.message.type !== 'UPDATE') return false
-      const withdrawnPrefixes = (packet.message as BgpUpdateMessage).withdrawnRoutes.map(
-        (p) => `${p.prefix}/${p.length}`
-      )
-      return matchStringArray(withdrawnPrefixes, operator, value)
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const withdrawnPrefixes = getWithdrawnPrefixes(msg as BgpUpdateMessage)
+        if (matchStringArray(withdrawnPrefixes, operator, value)) return true
+      }
+      return false
 
     default:
       return false
@@ -658,6 +706,22 @@ function getNlriPrefixes(msg: BgpUpdateMessage): string[] {
   const mpAttr = msg.pathAttributes.find((a) => a.parsed?.type === 'MP_REACH_NLRI')
   if (mpAttr?.parsed && mpAttr.parsed.type === 'MP_REACH_NLRI') {
     for (const p of (mpAttr.parsed as MpReachNlriAttribute).nlri) {
+      prefixes.push(`${p.prefix}/${p.length}`)
+    }
+  }
+  return prefixes
+}
+
+function getWithdrawnPrefixes(msg: BgpUpdateMessage): string[] {
+  const prefixes: string[] = []
+  // IPv4 Withdrawn
+  for (const p of msg.withdrawnRoutes) {
+    prefixes.push(`${p.prefix}/${p.length}`)
+  }
+  // MP_UNREACH_NLRI for IPv6
+  const mpAttr = msg.pathAttributes.find((a) => a.parsed?.type === 'MP_UNREACH_NLRI')
+  if (mpAttr?.parsed && mpAttr.parsed.type === 'MP_UNREACH_NLRI') {
+    for (const p of (mpAttr.parsed as MpUnreachNlriAttribute).withdrawnRoutes) {
       prefixes.push(`${p.prefix}/${p.length}`)
     }
   }
@@ -851,14 +915,26 @@ export function getSuggestions(query: string, cursorPosition: number, packets: B
     ]
   }
 
-  // After operator - suggest values
-  if (lastToken?.type === 'operator' && secondLastToken?.type === 'field') {
-    const field = secondLastToken.value as FilterFieldName
+  // After operator with space - suggest values
+  if (endsWithSpace && lastToken?.type === 'operator' && secondLastToken?.type === 'field') {
+    const field = normalizeFieldName(secondLastToken.value) as FilterFieldName
     const values = getFieldValues(field, dynamicValues)
 
-    return values.slice(0, 10).map((v) => ({
+    return values.slice(0, 15).map((v) => ({
       text: v,
-      description: `${field} = ${v}`,
+      description: field,
+      insertText: v.includes(' ') ? `"${v}"` : v,
+    }))
+  }
+
+  // After operator (no space yet) - suggest values
+  if (lastToken?.type === 'operator' && secondLastToken?.type === 'field') {
+    const field = normalizeFieldName(secondLastToken.value) as FilterFieldName
+    const values = getFieldValues(field, dynamicValues)
+
+    return values.slice(0, 15).map((v) => ({
+      text: v,
+      description: field,
       insertText: v.includes(' ') ? `"${v}"` : v,
     }))
   }
@@ -869,16 +945,16 @@ export function getSuggestions(query: string, cursorPosition: number, packets: B
     secondLastToken?.type === 'operator' &&
     thirdLastToken?.type === 'field'
   ) {
-    const field = thirdLastToken.value as FilterFieldName
+    const field = normalizeFieldName(thirdLastToken.value) as FilterFieldName
     const values = getFieldValues(field, dynamicValues)
     const currentValue = String(lastToken.type === 'string' ? lastToken.value : lastToken.value).toLowerCase()
 
     const filtered = values.filter((v) => v.toLowerCase().includes(currentValue))
 
     if (filtered.length > 0) {
-      return filtered.slice(0, 10).map((v) => ({
+      return filtered.slice(0, 15).map((v) => ({
         text: v,
-        description: `${field} = ${v}`,
+        description: field,
         insertText: v.includes(' ') ? `"${v}"` : v,
       }))
     }
@@ -891,81 +967,122 @@ export function getSuggestions(query: string, cursorPosition: number, packets: B
       { text: '=', description: 'Equals', insertText: '=' },
       { text: '!=', description: 'Not equals', insertText: '!=' },
       { text: 'contains', description: 'Contains', insertText: 'contains ' },
-      { text: 'not contains', description: 'Does not contain', insertText: 'not contains ' },
     ]
   }
 
-  // After logical operator - suggest fields
-  if (lastToken?.type === 'and' || lastToken?.type === 'or') {
-    return Object.entries(FILTER_FIELDS).map(([key, info]) => ({
-      text: key,
-      description: info.description,
-      insertText: key,
-    }))
+  // After logical operator with space - suggest fields
+  if (endsWithSpace && (lastToken?.type === 'and' || lastToken?.type === 'or')) {
+    return getFieldSuggestions('')
   }
 
-  // Default: suggest fields
-  const currentWord = lastToken?.type === 'string' ? lastToken.value.toLowerCase() : ''
+  // After logical operator (no space) - suggest fields
+  if (lastToken?.type === 'and' || lastToken?.type === 'or') {
+    return getFieldSuggestions('')
+  }
 
-  return Object.entries(FILTER_FIELDS)
-    .filter(([key]) => key.toLowerCase().includes(currentWord))
-    .map(([key, info]) => ({
-      text: key,
-      description: info.description,
-      insertText: key,
-    }))
+  // Typing something - filter fields
+  if (lastToken?.type === 'string') {
+    const currentWord = lastToken.value.toLowerCase()
+    return getFieldSuggestions(currentWord)
+  }
+
+  // Empty or start - show all fields
+  return getFieldSuggestions('')
+}
+
+// Get field suggestions, including common examples
+function getFieldSuggestions(filter: string): Suggestion[] {
+  const suggestions: Suggestion[] = []
+
+  // Add canonical field names with examples
+  for (const [key, info] of Object.entries(FILTER_FIELDS)) {
+    if (!filter || key.toLowerCase().includes(filter)) {
+      const examples = info.values.length > 0
+        ? info.values.slice(0, 3).join(', ')
+        : ''
+      suggestions.push({
+        text: key,
+        description: examples || info.description,
+        insertText: key,
+      })
+    }
+  }
+
+  // Add common aliases
+  const aliasDescriptions: Record<string, string> = {
+    src: 'Source IP (alias for src_ip)',
+    dst: 'Destination IP (alias for dst_ip)',
+    as: 'Source AS (alias for src_as)',
+    aspath: 'AS in path (alias for asn)',
+    nexthop: 'Next hop (alias for next_hop)',
+    nlri: 'NLRI prefix (alias for prefix)',
+  }
+
+  for (const [alias, desc] of Object.entries(aliasDescriptions)) {
+    if (!filter || alias.toLowerCase().includes(filter)) {
+      suggestions.push({
+        text: alias,
+        description: desc,
+        insertText: alias,
+      })
+    }
+  }
+
+  return suggestions
 }
 
 function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>> {
+  // Use canonical field names
   const values: Record<string, Set<string>> = {
-    src: new Set(),
-    dst: new Set(),
-    'router-id': new Set(),
+    src_ip: new Set(),
+    dst_ip: new Set(),
+    router_id: new Set(),
     capability: new Set(),
-    as: new Set(),
-    aspath: new Set(),
+    src_as: new Set(),
+    asn: new Set(),
     origin: new Set(),
-    nexthop: new Set(),
+    next_hop: new Set(),
     community: new Set(),
-    'large-community': new Set(),
-    nlri: new Set(),
+    prefix: new Set(),
     withdrawn: new Set(),
   }
 
   for (const packet of packets) {
-    values.src.add(packet.srcIp)
-    values.dst.add(packet.dstIp)
+    values.src_ip.add(packet.srcIp)
+    values.dst_ip.add(packet.dstIp)
 
-    if (packet.message.type === 'OPEN') {
-      const openMsg = packet.message as BgpOpenMessage
-      values['router-id'].add(openMsg.bgpIdentifier)
-      values.as.add(String(openMsg.fourByteAs ?? openMsg.myAs))
-      for (const cap of openMsg.capabilities) {
-        values.capability.add(cap.name)
+    for (const msg of packet.messages) {
+      if (msg.type === 'OPEN') {
+        const openMsg = msg as BgpOpenMessage
+        values.router_id.add(openMsg.bgpIdentifier)
+        values.src_as.add(String(openMsg.fourByteAs ?? openMsg.myAs))
+        for (const cap of openMsg.capabilities) {
+          values.capability.add(cap.name)
+        }
       }
-    }
 
-    if (packet.message.type === 'UPDATE') {
-      const updateMsg = packet.message as BgpUpdateMessage
-      const aspath = getAsPath(updateMsg)
-      for (const as of aspath) {
-        values.aspath.add(String(as))
-      }
-      const origin = getOrigin(updateMsg)
-      if (origin) values.origin.add(origin)
-      const nexthop = getNextHop(updateMsg)
-      if (nexthop) values.nexthop.add(nexthop)
-      for (const c of getCommunities(updateMsg)) {
-        values.community.add(c)
-      }
-      for (const c of getLargeCommunities(updateMsg)) {
-        values['large-community'].add(c)
-      }
-      for (const p of getNlriPrefixes(updateMsg)) {
-        values.nlri.add(p)
-      }
-      for (const p of updateMsg.withdrawnRoutes) {
-        values.withdrawn.add(`${p.prefix}/${p.length}`)
+      if (msg.type === 'UPDATE') {
+        const updateMsg = msg as BgpUpdateMessage
+        const aspath = getAsPath(updateMsg)
+        for (const asNum of aspath) {
+          values.asn.add(String(asNum))
+        }
+        const origin = getOrigin(updateMsg)
+        if (origin) values.origin.add(origin)
+        const nexthop = getNextHop(updateMsg)
+        if (nexthop) values.next_hop.add(nexthop)
+        for (const c of getCommunities(updateMsg)) {
+          values.community.add(c)
+        }
+        for (const c of getLargeCommunities(updateMsg)) {
+          values.community.add(c) // Merge large communities into community
+        }
+        for (const p of getNlriPrefixes(updateMsg)) {
+          values.prefix.add(p)
+        }
+        for (const p of updateMsg.withdrawnRoutes) {
+          values.withdrawn.add(`${p.prefix}/${p.length}`)
+        }
       }
     }
   }
