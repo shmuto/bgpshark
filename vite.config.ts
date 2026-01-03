@@ -8,4 +8,5 @@ export default defineConfig({
   build: {
     outDir: 'dist',
   },
+  // Vite handles SPA fallback automatically with appType: 'spa' (default)
 })

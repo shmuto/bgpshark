@@ -1,54 +1,58 @@
-import { Header, MainContent, FileDropzone, WarningBanner } from './components'
-import { useBgpAnalyzer } from './hooks/useBgpAnalyzer'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { AppProvider, useApp } from './context/AppContext'
+import { AppHeader } from './components/layout/AppHeader'
 import { useFileDropzone } from './hooks/useFileDropzone'
+import {
+  FileUploadPage,
+  NeighborsPage,
+  MessagesPage,
+  RoutesPage,
+  SqlConsolePage,
+} from './pages'
 
-function App() {
-  const { state, loadFile, selectPacket, reset } = useBgpAnalyzer()
+function AppContent() {
+  const { status, loadFile } = useApp()
 
   // Enable global drag & drop (disabled during loading)
   const { isDragOver, error: dropError, clearError } = useFileDropzone({
     onFileLoad: loadFile,
-    disabled: state.status === 'loading',
+    disabled: status === 'loading' || status === 'initializing',
   })
+
+  const isReady = status === 'ready'
 
   return (
     <div className="h-screen flex flex-col relative overflow-hidden">
-      <Header onReset={state.status === 'ready' ? reset : undefined} />
+      <AppHeader />
 
-      {state.status === 'idle' || state.status === 'loading' ? (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <FileDropzone
-            onFileLoad={loadFile}
-            isLoading={state.status === 'loading'}
-          />
-        </div>
-      ) : state.status === 'error' ? (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center">
-            <div className="text-red-600 text-lg font-medium mb-2">Error</div>
-            <div className="text-gray-600 mb-4">{state.error}</div>
-            <button
-              onClick={reset}
-              className="px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-700"
-            >
-              Try Again
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          {state.warnings.length > 0 && (
-            <WarningBanner warnings={state.warnings} />
-          )}
-          <MainContent
-            packets={state.packets}
-            allPackets={state.allPackets}
-            selectedIndex={state.selectedPacketIndex}
-            onSelectPacket={selectPacket}
-            fileName={state.fileName}
-          />
-        </div>
-      )}
+      <Routes>
+        {/* File Upload - always accessible */}
+        <Route path="/" element={<FileUploadPage />} />
+
+        {/* Protected routes - redirect to / if no file loaded */}
+        <Route
+          path="/neighbors"
+          element={isReady ? <NeighborsPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="/messages"
+          element={isReady ? <MessagesPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="/routes"
+          element={isReady ? <RoutesPage /> : <Navigate to="/" replace />}
+        />
+        <Route
+          path="/sql"
+          element={isReady ? <SqlConsolePage /> : <Navigate to="/" replace />}
+        />
+
+        {/* Catch all - redirect to messages or home */}
+        <Route
+          path="*"
+          element={<Navigate to={isReady ? '/messages' : '/'} replace />}
+        />
+      </Routes>
 
       {/* Global drop overlay */}
       {isDragOver && (
@@ -87,6 +91,16 @@ function App() {
         </div>
       )}
     </div>
+  )
+}
+
+function App() {
+  return (
+    <BrowserRouter basename="/bgpshark">
+      <AppProvider>
+        <AppContent />
+      </AppProvider>
+    </BrowserRouter>
   )
 }
 
