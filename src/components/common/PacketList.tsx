@@ -95,10 +95,21 @@ const ALL_COLUMNS: ColumnDef[] = [
     width: 'w-28',
     getValue: (dp) => {
       if (dp.kind === 'bgp') {
-        const typeClass = messageTypeColors[dp.packet.message.type] ?? 'bg-gray-500 text-white'
+        const messages = dp.packet.messages
+        if (messages.length === 1) {
+          const typeClass = messageTypeColors[messages[0].type] ?? 'bg-gray-500 text-white'
+          return (
+            <span className={`px-2 py-0.5 rounded text-xs font-medium ${typeClass}`}>
+              {messages[0].type}
+            </span>
+          )
+        }
+        // Multiple messages - show count and primary type
+        const primaryType = messages[0].type
+        const typeClass = messageTypeColors[primaryType] ?? 'bg-gray-500 text-white'
         return (
           <span className={`px-2 py-0.5 rounded text-xs font-medium ${typeClass}`}>
-            {dp.packet.message.type}
+            {primaryType} +{messages.length - 1}
           </span>
         )
       }
@@ -120,7 +131,12 @@ const ALL_COLUMNS: ColumnDef[] = [
     label: 'Info',
     getValue: (dp) => {
       if (dp.kind === 'bgp') {
-        return <span className="text-gray-600 truncate">{getMessageSummary(dp.packet.message)}</span>
+        const messages = dp.packet.messages
+        if (messages.length === 1) {
+          return <span className="text-gray-600 truncate">{getMessageSummary(messages[0])}</span>
+        }
+        // Multiple messages - show count
+        return <span className="text-gray-600 truncate">{messages.length} msgs</span>
       }
       // For generic packets, show port info
       const src = dp.packet.srcPort ?? '?'
@@ -144,12 +160,16 @@ const ALL_COLUMNS: ColumnDef[] = [
     label: 'AS Path',
     getValue: (dp) => {
       if (dp.kind !== 'bgp') return null
-      if (dp.packet.message.type !== 'UPDATE') return null
-      const update = dp.packet.message as BgpUpdateMessage
-      const asPathAttr = update.pathAttributes?.find((a) => a.typeName === 'AS_PATH')
-      if (!asPathAttr?.parsed || asPathAttr.parsed.type !== 'AS_PATH') return null
-      const asns = asPathAttr.parsed.segments.flatMap((s) => s.asNumbers)
-      return <span className="font-mono text-xs text-gray-600">{asns.join(' ')}</span>
+      // Find first UPDATE message with AS_PATH
+      for (const msg of dp.packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const update = msg as BgpUpdateMessage
+        const asPathAttr = update.pathAttributes?.find((a) => a.typeName === 'AS_PATH')
+        if (!asPathAttr?.parsed || asPathAttr.parsed.type !== 'AS_PATH') continue
+        const asns = asPathAttr.parsed.segments.flatMap((s) => s.asNumbers)
+        return <span className="font-mono text-xs text-gray-600">{asns.join(' ')}</span>
+      }
+      return null
     },
   },
   {
@@ -158,9 +178,14 @@ const ALL_COLUMNS: ColumnDef[] = [
     width: 'w-12',
     getValue: (dp) => {
       if (dp.kind !== 'bgp') return null
-      if (dp.packet.message.type !== 'UPDATE') return null
-      const update = dp.packet.message as BgpUpdateMessage
-      return <span className="font-mono text-green-600">{update.nlri?.length ?? 0}</span>
+      // Sum NLRI from all UPDATE messages
+      let total = 0
+      for (const msg of dp.packet.messages) {
+        if (msg.type === 'UPDATE') {
+          total += (msg as BgpUpdateMessage).nlri?.length ?? 0
+        }
+      }
+      return total > 0 ? <span className="font-mono text-green-600">{total}</span> : null
     },
   },
   {
@@ -169,9 +194,14 @@ const ALL_COLUMNS: ColumnDef[] = [
     width: 'w-12',
     getValue: (dp) => {
       if (dp.kind !== 'bgp') return null
-      if (dp.packet.message.type !== 'UPDATE') return null
-      const update = dp.packet.message as BgpUpdateMessage
-      return <span className="font-mono text-red-600">{update.withdrawnRoutes?.length ?? 0}</span>
+      // Sum withdrawn routes from all UPDATE messages
+      let total = 0
+      for (const msg of dp.packet.messages) {
+        if (msg.type === 'UPDATE') {
+          total += (msg as BgpUpdateMessage).withdrawnRoutes?.length ?? 0
+        }
+      }
+      return total > 0 ? <span className="font-mono text-red-600">{total}</span> : null
     },
   },
 ]
@@ -183,6 +213,7 @@ interface PacketListProps {
   selectedIndex: number | null
   onSelect: (index: number) => void
   baseTimestamp?: Date
+  highlightedIndex?: number | null
 }
 
 const messageTypeColors: Record<string, string> = {
@@ -243,7 +274,7 @@ function loadSavedColumns(): ColumnId[] {
   return DEFAULT_COLUMNS
 }
 
-export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp }: PacketListProps) {
+export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, highlightedIndex }: PacketListProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const columnPickerRef = useRef<HTMLDivElement>(null)
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(loadSavedColumns)
@@ -360,6 +391,7 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp }: 
         <tbody>
           {packets.map((dp, index) => {
             const isSelected = index === selectedIndex
+            const isHighlighted = index === highlightedIndex
             const isBgp = dp.kind === 'bgp'
 
             return (
@@ -368,7 +400,8 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp }: 
                 data-index={index}
                 onClick={() => onSelect(index)}
                 className={`
-                  cursor-pointer border-b border-gray-100
+                  cursor-pointer border-b border-gray-100 transition-colors duration-300
+                  ${isHighlighted ? 'animate-flash bg-yellow-200' : ''}
                   ${isSelected ? 'bg-blue-100' : isBgp ? 'hover:bg-gray-50' : 'hover:bg-gray-50 bg-gray-50/50'}
                 `}
               >

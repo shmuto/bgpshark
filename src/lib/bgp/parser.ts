@@ -31,7 +31,7 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
     try {
       const messages = parseBgpMessages(raw.tcpPayload, packetWarnings, i + 1)
 
-      for (const message of messages) {
+      if (messages.length > 0) {
         packets.push({
           frameIndex: raw.frameIndex,
           timestamp: raw.timestamp,
@@ -39,7 +39,7 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
           dstIp: raw.dstIp,
           srcPort: raw.srcPort,
           dstPort: raw.dstPort,
-          message,
+          messages,
           rawData: raw.tcpPayload,
           parseWarnings: [...packetWarnings],
         })

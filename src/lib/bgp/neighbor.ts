@@ -1,4 +1,4 @@
-import type { BgpPacket, BgpOpenMessage, BgpCapability } from './types'
+import type { BgpPacket, BgpMessage, BgpOpenMessage, BgpNotificationMessage, BgpCapability } from './types'
 
 export interface OpenMessageRecord {
   timestamp: Date
@@ -86,41 +86,53 @@ export function extractNeighbors(packets: BgpPacket[]): Map<string, NeighborInfo
     const neighbor = neighbors.get(key)!
     neighbor.lastSeen = packet.timestamp
 
-    switch (packet.message.type) {
-      case 'OPEN': {
-        const openMsg = packet.message as BgpOpenMessage
-        neighbor.openHistory.push({
-          timestamp: packet.timestamp,
-          routerId: openMsg.bgpIdentifier,
-          asNumber: openMsg.fourByteAs ?? openMsg.myAs,
-          holdTime: openMsg.holdTime,
-          capabilities: openMsg.capabilities,
-        })
-        neighbor.messageCount.open++
-        break
-      }
-      case 'UPDATE':
-        neighbor.messageCount.update++
-        break
-      case 'NOTIFICATION':
-        neighbor.messageCount.notification++
-        neighbor.hasNotification = true
-        neighbor.notificationInfo = {
-          errorCode: packet.message.errorCodeName,
-          errorSubcode: packet.message.errorSubcodeName,
-          hint: packet.message.hint,
-        }
-        break
-      case 'KEEPALIVE':
-        neighbor.messageCount.keepalive++
-        break
-      case 'ROUTE_REFRESH':
-        neighbor.messageCount.routeRefresh++
-        break
+    for (const message of packet.messages) {
+      processMessage(message, neighbor, packet.timestamp)
     }
   }
 
   return neighbors
+}
+
+function processMessage(
+  message: BgpMessage,
+  target: { openHistory: OpenMessageRecord[]; messageCount: NeighborInfo['messageCount']; hasNotification: boolean; notificationInfo?: NeighborInfo['notificationInfo'] },
+  timestamp: Date
+): void {
+  switch (message.type) {
+    case 'OPEN': {
+      const openMsg = message as BgpOpenMessage
+      target.openHistory.push({
+        timestamp,
+        routerId: openMsg.bgpIdentifier,
+        asNumber: openMsg.fourByteAs ?? openMsg.myAs,
+        holdTime: openMsg.holdTime,
+        capabilities: openMsg.capabilities,
+      })
+      target.messageCount.open++
+      break
+    }
+    case 'UPDATE':
+      target.messageCount.update++
+      break
+    case 'NOTIFICATION': {
+      const notifMsg = message as BgpNotificationMessage
+      target.messageCount.notification++
+      target.hasNotification = true
+      target.notificationInfo = {
+        errorCode: notifMsg.errorCodeName,
+        errorSubcode: notifMsg.errorSubcodeName,
+        hint: notifMsg.hint,
+      }
+      break
+    }
+    case 'KEEPALIVE':
+      target.messageCount.keepalive++
+      break
+    case 'ROUTE_REFRESH':
+      target.messageCount.routeRefresh++
+      break
+  }
 }
 
 export function pairNeighbors(neighbors: Map<string, NeighborInfo>): NeighborPair[] {
@@ -191,37 +203,8 @@ export function extractNeighborGroups(packets: BgpPacket[]): NeighborGroup[] {
     const session = dstMap.get(dstIp)!
     session.lastSeen = packet.timestamp
 
-    switch (packet.message.type) {
-      case 'OPEN': {
-        const openMsg = packet.message as BgpOpenMessage
-        session.openHistory.push({
-          timestamp: packet.timestamp,
-          routerId: openMsg.bgpIdentifier,
-          asNumber: openMsg.fourByteAs ?? openMsg.myAs,
-          holdTime: openMsg.holdTime,
-          capabilities: openMsg.capabilities,
-        })
-        session.messageCount.open++
-        break
-      }
-      case 'UPDATE':
-        session.messageCount.update++
-        break
-      case 'NOTIFICATION':
-        session.messageCount.notification++
-        session.hasNotification = true
-        session.notificationInfo = {
-          errorCode: packet.message.errorCodeName,
-          errorSubcode: packet.message.errorSubcodeName,
-          hint: packet.message.hint,
-        }
-        break
-      case 'KEEPALIVE':
-        session.messageCount.keepalive++
-        break
-      case 'ROUTE_REFRESH':
-        session.messageCount.routeRefresh++
-        break
+    for (const message of packet.messages) {
+      processMessage(message, session, packet.timestamp)
     }
   }
 

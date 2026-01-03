@@ -32,9 +32,16 @@ export interface BgpPacket {
   dstIp: string
   srcPort: number
   dstPort: number
-  message: BgpMessage
+  messages: BgpMessage[] // Multiple BGP messages can be in one TCP segment
   rawData: Uint8Array
   parseWarnings: string[]
+}
+
+/**
+ * Helper to get the primary message (first message in packet)
+ */
+export function getPrimaryMessage(packet: BgpPacket): BgpMessage {
+  return packet.messages[0]
 }
 
 /**

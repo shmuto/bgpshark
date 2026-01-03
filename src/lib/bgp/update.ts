@@ -85,10 +85,10 @@ function parsePrefixes(reader: BinaryReader, length: number, _warnings: string[]
   return prefixes
 }
 
-function formatIpv4Prefix(octets: Uint8Array, prefixLength: number): string {
+function formatIpv4Prefix(octets: Uint8Array, _prefixLength: number): string {
   const fullOctets = new Uint8Array(4)
   fullOctets.set(octets)
-  return `${fullOctets[0]}.${fullOctets[1]}.${fullOctets[2]}.${fullOctets[3]}/${prefixLength}`
+  return `${fullOctets[0]}.${fullOctets[1]}.${fullOctets[2]}.${fullOctets[3]}`
 }
 
 function parsePathAttribute(reader: BinaryReader, warnings: string[]): BgpPathAttribute {
@@ -384,7 +384,7 @@ function parsePrefix(reader: BinaryReader, afi: number): BgpPrefix {
   }
 }
 
-function formatIpv6Prefix(octets: Uint8Array, prefixLength: number): string {
+function formatIpv6Prefix(octets: Uint8Array, _prefixLength: number): string {
   const fullOctets = new Uint8Array(16)
   fullOctets.set(octets)
 
@@ -395,5 +395,5 @@ function formatIpv6Prefix(octets: Uint8Array, prefixLength: number): string {
   }
 
   // Simple IPv6 formatting (no zero compression)
-  return groups.join(':') + '/' + prefixLength
+  return groups.join(':')
 }

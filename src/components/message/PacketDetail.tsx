@@ -1,4 +1,4 @@
-import type { BgpPacket } from '../../lib/bgp/types'
+import type { BgpPacket, BgpMessage } from '../../lib/bgp/types'
 import { OpenMessageView } from './OpenMessageView'
 import { NotificationMessageView } from './NotificationMessageView'
 import { KeepaliveMessageView } from './KeepaliveMessageView'
@@ -11,7 +11,7 @@ interface PacketDetailProps {
 }
 
 export function PacketDetail({ packet }: PacketDetailProps) {
-  const { message, rawData, parseWarnings } = packet
+  const { messages, rawData, parseWarnings } = packet
 
   return (
     <div className="h-full overflow-auto p-4 space-y-4">
@@ -37,6 +37,12 @@ export function PacketDetail({ packet }: PacketDetailProps) {
               {packet.dstIp}:{packet.dstPort}
             </span>
           </div>
+          {messages.length > 1 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Messages</span>
+              <span className="font-mono">{messages.length}</span>
+            </div>
+          )}
         </div>
       </section>
 
@@ -54,17 +60,10 @@ export function PacketDetail({ packet }: PacketDetailProps) {
         </section>
       )}
 
-      {/* Message Content */}
-      <section>
-        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
-          BGP {message.type} Message
-        </h3>
-        {message.type === 'OPEN' && <OpenMessageView message={message} />}
-        {message.type === 'NOTIFICATION' && <NotificationMessageView message={message} />}
-        {message.type === 'KEEPALIVE' && <KeepaliveMessageView />}
-        {message.type === 'UPDATE' && <UpdateMessageView message={message} />}
-        {message.type === 'ROUTE_REFRESH' && <RouteRefreshMessageView message={message} />}
-      </section>
+      {/* Message Content - render all messages */}
+      {messages.map((message, index) => (
+        <MessageSection key={index} message={message} index={index} total={messages.length} />
+      ))}
 
       {/* Hex Dump */}
       <section>
@@ -74,5 +73,22 @@ export function PacketDetail({ packet }: PacketDetailProps) {
         <HexDump data={rawData} />
       </section>
     </div>
+  )
+}
+
+function MessageSection({ message, index, total }: { message: BgpMessage; index: number; total: number }) {
+  const title = total > 1 ? `BGP ${message.type} Message (${index + 1}/${total})` : `BGP ${message.type} Message`
+
+  return (
+    <section>
+      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
+        {title}
+      </h3>
+      {message.type === 'OPEN' && <OpenMessageView message={message} />}
+      {message.type === 'NOTIFICATION' && <NotificationMessageView message={message} />}
+      {message.type === 'KEEPALIVE' && <KeepaliveMessageView />}
+      {message.type === 'UPDATE' && <UpdateMessageView message={message} />}
+      {message.type === 'ROUTE_REFRESH' && <RouteRefreshMessageView message={message} />}
+    </section>
   )
 }

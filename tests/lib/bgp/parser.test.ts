@@ -66,7 +66,7 @@ describe('parseBgpFromPackets', () => {
       const result = parseBgpFromPackets([rawPacket])
 
       expect(result.packets).toHaveLength(1)
-      const message = result.packets[0].message as BgpOpenMessage
+      const message = result.packets[0].messages[0] as BgpOpenMessage
       expect(message.type).toBe('OPEN')
       expect(message.version).toBe(4)
       expect(message.myAs).toBe(65001)
@@ -97,7 +97,7 @@ describe('parseBgpFromPackets', () => {
       const result = parseBgpFromPackets([rawPacket])
 
       expect(result.packets).toHaveLength(1)
-      const message = result.packets[0].message as BgpOpenMessage
+      const message = result.packets[0].messages[0] as BgpOpenMessage
       expect(message.type).toBe('OPEN')
       expect(message.myAs).toBe(23456)
       expect(message.fourByteAs).toBe(4200000001)
@@ -125,7 +125,7 @@ describe('parseBgpFromPackets', () => {
 
       const result = parseBgpFromPackets([rawPacket])
 
-      const message = result.packets[0].message as BgpOpenMessage
+      const message = result.packets[0].messages[0] as BgpOpenMessage
       expect(message.capabilities).toHaveLength(1)
       expect(message.capabilities[0].code).toBe(1)
       expect(message.capabilities[0].parsed?.type).toBe('MULTIPROTOCOL')
@@ -158,7 +158,7 @@ describe('parseBgpFromPackets', () => {
 
       const result = parseBgpFromPackets([rawPacket])
 
-      const message = result.packets[0].message as BgpOpenMessage
+      const message = result.packets[0].messages[0] as BgpOpenMessage
       expect(message.capabilities).toHaveLength(4)
       expect(message.capabilities.map((c) => c.code)).toEqual([1, 1, 2, 65])
     })
@@ -174,7 +174,7 @@ describe('parseBgpFromPackets', () => {
       const result = parseBgpFromPackets([rawPacket])
 
       expect(result.packets).toHaveLength(1)
-      const message = result.packets[0].message as BgpNotificationMessage
+      const message = result.packets[0].messages[0] as BgpNotificationMessage
       expect(message.type).toBe('NOTIFICATION')
       expect(message.errorCode).toBe(6)
       expect(message.errorSubcode).toBe(2)
@@ -192,7 +192,7 @@ describe('parseBgpFromPackets', () => {
 
       const result = parseBgpFromPackets([rawPacket])
 
-      const message = result.packets[0].message as BgpNotificationMessage
+      const message = result.packets[0].messages[0] as BgpNotificationMessage
       expect(message.errorCode).toBe(2)
       expect(message.errorSubcode).toBe(2)
       expect(message.data).toEqual(new Uint8Array([0xfd, 0xea]))
@@ -205,7 +205,7 @@ describe('parseBgpFromPackets', () => {
 
       const result = parseBgpFromPackets([rawPacket])
 
-      const message = result.packets[0].message as BgpNotificationMessage
+      const message = result.packets[0].messages[0] as BgpNotificationMessage
       expect(message.errorCodeName).toBe('Hold Timer Expired')
       expect(message.hint).toContain('KEEPALIVE')
     })
@@ -219,7 +219,7 @@ describe('parseBgpFromPackets', () => {
       const result = parseBgpFromPackets([rawPacket])
 
       expect(result.packets).toHaveLength(1)
-      const message = result.packets[0].message as BgpKeepaliveMessage
+      const message = result.packets[0].messages[0] as BgpKeepaliveMessage
       expect(message.type).toBe('KEEPALIVE')
     })
   })
@@ -235,7 +235,7 @@ describe('parseBgpFromPackets', () => {
       const result = parseBgpFromPackets([rawPacket])
 
       expect(result.packets).toHaveLength(1)
-      const message = result.packets[0].message as BgpUpdateMessage
+      const message = result.packets[0].messages[0] as BgpUpdateMessage
       expect(message.type).toBe('UPDATE')
       expect(message.withdrawnRoutesLength).toBe(0)
       expect(message.totalPathAttrLength).toBe(0)
@@ -270,9 +270,11 @@ describe('parseBgpFromPackets', () => {
 
       const result = parseBgpFromPackets([rawPacket])
 
-      expect(result.packets).toHaveLength(2)
-      expect(result.packets[0].message.type).toBe('KEEPALIVE')
-      expect(result.packets[1].message.type).toBe('KEEPALIVE')
+      // Multiple BGP messages in one TCP segment should be in one packet with multiple messages
+      expect(result.packets).toHaveLength(1)
+      expect(result.packets[0].messages).toHaveLength(2)
+      expect(result.packets[0].messages[0].type).toBe('KEEPALIVE')
+      expect(result.packets[0].messages[1].type).toBe('KEEPALIVE')
     })
   })
 
