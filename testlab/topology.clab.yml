@@ -2,6 +2,7 @@ name: bgpshark-test
 
 topology:
   nodes:
+    # AS 65001
     srl1:
       kind: nokia_srlinux
       image: ghcr.io/nokia/srlinux:24.10.1
@@ -12,5 +13,26 @@ topology:
       image: ghcr.io/nokia/srlinux:24.10.1
       startup-config: srl2.cfg
 
+    # AS 65002
+    srl3:
+      kind: nokia_srlinux
+      image: ghcr.io/nokia/srlinux:24.10.1
+      startup-config: srl3.cfg
+
+    srl4:
+      kind: nokia_srlinux
+      image: ghcr.io/nokia/srlinux:24.10.1
+      startup-config: srl4.cfg
+
   links:
+    # iBGP links within AS 65001
     - endpoints: ["srl1:e1-1", "srl2:e1-1"]
+
+    # iBGP links within AS 65002
+    - endpoints: ["srl3:e1-1", "srl4:e1-1"]
+
+    # eBGP links between AS 65001 and AS 65002 (full mesh)
+    - endpoints: ["srl1:e1-2", "srl3:e1-2"]
+    - endpoints: ["srl1:e1-3", "srl4:e1-2"]
+    - endpoints: ["srl2:e1-2", "srl3:e1-3"]
+    - endpoints: ["srl2:e1-3", "srl4:e1-3"]

@@ -5,11 +5,44 @@ ContainerLab environment for testing BGP packet captures.
 ## Topology
 
 ```
-+--------+     e1-1      +--------+
-|  srl1  |---------------| srl2   |
-| AS65001|  10.0.0.0/30  | AS65002|
-+--------+               +--------+
+                    AS 65001                                     AS 65002
+           +------------------------+                   +------------------------+
+           |                        |                   |                        |
+       +--------+               +--------+          +--------+               +--------+
+       |  srl1  |----iBGP-------|  srl2  |          |  srl3  |----iBGP-------|  srl4  |
+       | R-ID:  |  10.0.12.0/24 | R-ID:  |          | R-ID:  |  10.0.34.0/24 | R-ID:  |
+       | 1.1.1.1|               | 2.2.2.2|          | 3.3.3.3|               | 4.4.4.4|
+       +--------+               +--------+          +--------+               +--------+
+           |   \                 /   |                  |   \                 /   |
+           |    \               /    |                  |    \               /    |
+           |     \  eBGP mesh  /     |                  |     \             /     |
+           |      \           /      |                  |      \           /      |
+           |       \         /       |                  |       \         /       |
+           +--------X-------X--------+                  +--------X-------X--------+
+                     \     /                                      \     /
+          10.0.13.0/24\   /10.0.23.0/24              10.0.14.0/24  \   / 10.0.24.0/24
+                       \ /                                          \ /
+                        X (Full mesh eBGP between AS65001 and AS65002)
+                       / \                                          / \
+                      /   \                                        /   \
+
+Links:
+  - srl1 <-> srl2: 10.0.12.0/24 (iBGP) - .1 and .2
+  - srl3 <-> srl4: 10.0.34.0/24 (iBGP) - .3 and .4
+  - srl1 <-> srl3: 10.0.13.0/24 (eBGP) - .1 and .3
+  - srl1 <-> srl4: 10.0.14.0/24 (eBGP) - .1 and .4
+  - srl2 <-> srl3: 10.0.23.0/24 (eBGP) - .2 and .3
+  - srl2 <-> srl4: 10.0.24.0/24 (eBGP) - .2 and .4
 ```
+
+## IP Addressing
+
+| Router | Loopback | AS | Interfaces |
+|--------|----------|-----|------------|
+| srl1 | 1.1.1.1/32 | 65001 | e1-1: 10.0.12.1/24, e1-2: 10.0.13.1/24, e1-3: 10.0.14.1/24 |
+| srl2 | 2.2.2.2/32 | 65001 | e1-1: 10.0.12.2/24, e1-2: 10.0.23.2/24, e1-3: 10.0.24.2/24 |
+| srl3 | 3.3.3.3/32 | 65002 | e1-1: 10.0.34.3/24, e1-2: 10.0.13.3/24, e1-3: 10.0.23.3/24 |
+| srl4 | 4.4.4.4/32 | 65002 | e1-1: 10.0.34.4/24, e1-2: 10.0.14.4/24, e1-3: 10.0.24.4/24 |
 
 ## Requirements
 
@@ -28,7 +61,7 @@ sudo containerlab deploy -t topology.clab.yml
 ### Check BGP status
 
 ```bash
-# Connect to srl1
+# Connect to any router
 ssh admin@clab-bgpshark-test-srl1
 
 # Check BGP neighbors
@@ -38,21 +71,24 @@ show network-instance default protocols bgp neighbor
 ### Capture BGP traffic
 
 ```bash
-# Capture on the link between srl1 and srl2
-sudo ip netns exec clab-bgpshark-test-srl1 tcpdump -i e1-1 port 179 -w bgp-capture.pcap
+# Capture from srl1's 3 interfaces and merge
+./capture.sh
 
-# Or capture from host bridge
-sudo tcpdump -i br-$(docker network ls -qf name=clab) port 179 -w bgp-capture.pcap
+# Or capture manually on a specific interface
+sudo ip netns exec clab-bgpshark-test-srl1 tcpdump -i e1-2 port 179 -w bgp-capture.pcap
 ```
 
 ### Generate BGP events
 
 ```bash
-# Flap the BGP session on srl1
-ssh admin@clab-bgpshark-test-srl1 "sr_cli 'tools network-instance default protocols bgp neighbor 10.0.0.2 reset-peer'"
+# Flap the eBGP session between srl1 and srl3
+ssh admin@clab-bgpshark-test-srl1 "sr_cli 'tools network-instance default protocols bgp neighbor 10.0.13.3 reset-peer'"
 
-# Administratively shutdown BGP on srl2
-ssh admin@clab-bgpshark-test-srl2 "sr_cli 'enter candidate; set network-instance default protocols bgp neighbor 10.0.0.1 admin-state disable; commit now'"
+# Administratively shutdown iBGP on srl1
+ssh admin@clab-bgpshark-test-srl1 "sr_cli 'enter candidate; set network-instance default protocols bgp neighbor 10.0.12.2 admin-state disable; commit now'"
+
+# Re-enable iBGP
+ssh admin@clab-bgpshark-test-srl1 "sr_cli 'enter candidate; set network-instance default protocols bgp neighbor 10.0.12.2 admin-state enable; commit now'"
 ```
 
 ### Stop the lab
