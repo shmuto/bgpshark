@@ -2,7 +2,23 @@
  * DuckDB WASM Database Management
  */
 import * as duckdb from '@duckdb/duckdb-wasm'
+import mvpWasm from '@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url'
+import mvpWorker from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url'
+import ehWasm from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url'
+import ehWorker from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url'
 import { SCHEMA_SQL, DROP_TABLES_SQL } from './schema'
+
+/**
+ * Bundles are served from our own origin rather than a CDN, so the app makes no
+ * third-party requests and works under a strict CSP.
+ *
+ * The COI bundle is omitted deliberately: it requires cross-origin isolation
+ * (COOP/COEP headers) which GitHub Pages cannot set.
+ */
+const BUNDLES: duckdb.DuckDBBundles = {
+  mvp: { mainModule: mvpWasm, mainWorker: mvpWorker },
+  eh: { mainModule: ehWasm, mainWorker: ehWorker },
+}
 
 let db: duckdb.AsyncDuckDB | null = null
 let conn: duckdb.AsyncDuckDBConnection | null = null
@@ -18,14 +34,10 @@ export async function initDatabase(): Promise<void> {
 
   initPromise = (async () => {
     // Select bundle based on browser capabilities
-    const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles()
-    const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES)
+    const bundle = await duckdb.selectBundle(BUNDLES)
 
-    // Create worker
-    const workerUrl = URL.createObjectURL(
-      new Blob([`importScripts("${bundle.mainWorker!}");`], { type: 'text/javascript' })
-    )
-    const worker = new Worker(workerUrl)
+    // Create worker directly from the same-origin URL (no blob wrapper needed)
+    const worker = new Worker(bundle.mainWorker!)
     const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)
 
     // Instantiate database
