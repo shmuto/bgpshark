@@ -113,16 +113,16 @@ export function BgpPeersSidebar({ packets, selectedPeer, onSelectPeer, onEventCl
   }
 
   return (
-    <div className="h-full flex flex-col bg-white border-r border-gray-200">
+    <div className="h-full flex flex-col bg-surface border-r border-hair">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-        <h2 className="text-sm font-semibold text-gray-700">BGP Peers</h2>
+      <div className="px-4 py-3 border-b border-hair bg-surface-sunken">
+        <h2 className="text-sm font-semibold text-strong">BGP Peers</h2>
       </div>
 
       {/* Peer List */}
       <div className="flex-1 overflow-auto">
         {peers.length === 0 ? (
-          <div className="p-4 text-sm text-gray-400 text-center">
+          <div className="p-4 text-sm text-dim text-center">
             No BGP peers found
           </div>
         ) : (
@@ -164,11 +164,11 @@ function PeerItem({
   onEventClick?: (event: SessionEvent) => void
 }) {
   return (
-    <div className={`${isSelected ? 'bg-blue-50' : ''}`}>
+    <div className={`${isSelected ? 'bg-accent-subtle' : ''}`}>
       {/* Main row */}
       <div
-        className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 ${
-          isSelected ? 'bg-blue-500 text-white hover:bg-blue-600' : ''
+        className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-surface-sunken ${
+          isSelected ? 'bg-accent text-accent-fg hover:bg-accent-hover' : ''
         }`}
         onClick={onClick}
       >
@@ -178,7 +178,7 @@ function PeerItem({
         </div>
 
         {/* IP Address */}
-        <span className={`flex-1 font-mono text-sm ${isSelected ? 'text-white' : 'text-gray-800'}`}>
+        <span className={`flex-1 font-mono text-sm ${isSelected ? 'text-accent-fg' : 'text-strong'}`}>
           {peer.ip}
         </span>
 
@@ -188,8 +188,8 @@ function PeerItem({
             e.stopPropagation()
             onToggleExpand()
           }}
-          className={`p-1 rounded hover:bg-opacity-20 hover:bg-gray-500 ${
-            isSelected ? 'text-white' : 'text-gray-400'
+          className={`p-1 rounded hover:bg-opacity-20 hover:bg-surface-raised ${
+            isSelected ? 'text-accent-fg' : 'text-dim'
           }`}
         >
           <svg
@@ -205,21 +205,21 @@ function PeerItem({
 
       {/* Expanded details */}
       {isExpanded && (
-        <div className={`px-4 py-2 ${isSelected ? 'bg-blue-100' : 'bg-gray-50'} border-b border-gray-200`}>
+        <div className={`px-4 py-2 ${isSelected ? 'bg-accent-subtle' : 'bg-surface-sunken'} border-b border-hair`}>
           {/* State */}
           <div className="flex items-center gap-2 mb-1">
             <span
               className={`w-2 h-2 rounded-full ${
                 peer.state === 'Established'
-                  ? 'bg-green-500'
+                  ? 'bg-ok'
                   : peer.state === 'OpenSent'
-                    ? 'bg-yellow-500'
+                    ? 'bg-warning'
                     : peer.state === 'Connect'
-                      ? 'bg-blue-500'
-                      : 'bg-red-500'
+                      ? 'bg-accent'
+                      : 'bg-critical'
               }`}
             />
-            <span className={`text-xs ${peer.hasError ? 'text-red-600' : 'text-gray-600'}`}>
+            <span className={`text-xs ${peer.hasError ? 'text-critical' : 'text-muted'}`}>
               {peer.state}
             </span>
           </div>
@@ -231,19 +231,19 @@ function PeerItem({
 
           {/* Route counts */}
           {peer.ipv4Routes > 0 && (
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <span className="w-2 h-2 rounded-full bg-gray-400" />
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <span className="w-2 h-2 rounded-full bg-hair-strong" />
               IPv4 Routes: {peer.ipv4Routes}
             </div>
           )}
           {peer.ipv6Routes > 0 && (
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <span className="w-2 h-2 rounded-full bg-gray-400" />
+            <div className="flex items-center gap-2 text-xs text-muted">
+              <span className="w-2 h-2 rounded-full bg-hair-strong" />
               IPv6 Routes: {peer.ipv6Routes}
             </div>
           )}
           {peer.ipv4Routes === 0 && peer.ipv6Routes === 0 && (
-            <div className="text-xs text-gray-400">No routes</div>
+            <div className="text-xs text-dim">No routes</div>
           )}
         </div>
       )}
@@ -253,12 +253,12 @@ function PeerItem({
 
 function StateIcon({ state, isSelected }: { state: PeerStats['state']; isSelected: boolean }) {
   const colorClass = isSelected
-    ? 'text-white'
+    ? 'text-accent-fg'
     : state === 'Established'
-      ? 'text-green-500'
+      ? 'text-ok'
       : state === 'Idle'
-        ? 'text-red-500'
-        : 'text-yellow-500'
+        ? 'text-critical'
+        : 'text-warning'
 
   if (state === 'Established') {
     return (
@@ -306,15 +306,15 @@ function MiniTimeline({
     switch (eventType) {
       case 'OPEN_SENT':
       case 'OPEN_RECEIVED':
-        return 'bg-blue-500'
+        return 'bg-bgp-open'
       case 'KEEPALIVE':
-        return 'bg-green-500'
+        return 'bg-bgp-keepalive'
       case 'NOTIFICATION':
-        return 'bg-red-500'
+        return 'bg-bgp-notification'
       case 'UPDATE':
-        return 'bg-purple-500'
+        return 'bg-bgp-update'
       default:
-        return 'bg-gray-500'
+        return 'bg-hair-strong'
     }
   }
 
@@ -346,21 +346,21 @@ function MiniTimeline({
   const getStateColor = (state: string): string => {
     switch (state) {
       case 'Established':
-        return 'bg-green-400'
+        return 'bg-ok'
       case 'OpenSent':
       case 'OpenConfirm':
-        return 'bg-yellow-400'
+        return 'bg-warning'
       case 'Down':
-        return 'bg-red-400'
+        return 'bg-critical'
       default:
-        return 'bg-gray-300'
+        return 'bg-hair-strong'
     }
   }
 
   return (
     <div className="mb-2">
-      <div className="text-xs text-gray-500 mb-1">Timeline</div>
-      <div className="relative h-3 bg-gray-200 rounded overflow-hidden">
+      <div className="text-xs text-muted mb-1">Timeline</div>
+      <div className="relative h-3 bg-surface-sunken rounded overflow-hidden">
         {/* State segments */}
         {segments.map((seg, idx) => (
           <div

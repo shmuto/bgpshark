@@ -41,10 +41,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     if (error) {
       return (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gray-50">
+        <div className="flex-1 flex flex-col items-center justify-center p-8 bg-canvas">
           <div className="max-w-lg w-full text-center">
-            <div className="w-16 h-16 mx-auto mb-4 bg-red-100 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-16 h-16 mx-auto mb-4 bg-critical-subtle rounded-full flex items-center justify-center">
+              <svg className="w-8 h-8 text-critical" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -54,17 +54,17 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               </svg>
             </div>
 
-            <div className="text-red-600 text-lg font-medium mb-2">Something went wrong</div>
-            <p className="text-gray-600 mb-4">
+            <div className="text-critical text-lg font-medium mb-2">Something went wrong</div>
+            <p className="text-muted mb-4">
               The app hit an unexpected error, possibly while parsing the loaded pcap file.
             </p>
 
-            <details className="mb-6 text-left bg-white border border-gray-200 rounded">
-              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            <details className="mb-6 text-left bg-surface-sunken border border-hair rounded">
+              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-body hover:bg-surface">
                 Error details
               </summary>
               <div className="px-3 pb-3 max-h-48 overflow-auto">
-                <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words">
+                <pre className="text-xs font-mono text-body whitespace-pre-wrap break-words">
                   {error.message}
                   {errorInfo?.componentStack}
                 </pre>
@@ -74,13 +74,13 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <div className="flex items-center justify-center gap-3">
               <button
                 onClick={this.handleReload}
-                className="px-4 py-2 bg-gray-800 text-white rounded hover:bg-gray-700"
+                className="px-4 py-2 bg-accent text-accent-fg rounded hover:bg-accent-hover"
               >
                 Reload
               </button>
               <button
                 onClick={this.handleClearAndReset}
-                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                className="px-4 py-2 bg-critical text-on-solid rounded hover:opacity-90"
               >
                 Clear stored file and reset
               </button>

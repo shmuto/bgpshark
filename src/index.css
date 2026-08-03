@@ -84,6 +84,11 @@
     --accent-fg: 255 255 255;
     --accent-subtle: 239 244 255;
 
+    /* Foreground for text sitting on any solid, saturated fill (accent,
+       critical, ok...). It flips with the theme because those fills darken in
+       light mode and brighten in dark mode. */
+    --on-solid: 255 255 255;
+
     /* BGP message types. These carry meaning, so they are the only colours
        allowed to vary by content rather than by state. */
     --msg-open: 22 163 74;
@@ -123,6 +128,7 @@
       --accent-hover: 129 173 255;
       --accent-fg: 12 13 17;
       --accent-subtle: 22 32 58;
+      --on-solid: 12 13 17;
 
       --msg-open: 74 222 128;
       --msg-update: 96 165 250;
@@ -159,6 +165,7 @@
     --accent-hover: 129 173 255;
     --accent-fg: 12 13 17;
     --accent-subtle: 22 32 58;
+    --on-solid: 12 13 17;
 
     --msg-open: 74 222 128;
     --msg-update: 96 165 250;

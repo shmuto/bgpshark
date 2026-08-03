@@ -11,10 +11,10 @@ export interface CapabilityDiffProps {
 type Tone = 'ok' | 'warn' | 'error' | 'neutral'
 
 const TONE_CLASSES: Record<Tone, string> = {
-  ok: 'text-emerald-700 bg-emerald-50',
-  warn: 'text-amber-700 bg-amber-50',
-  error: 'text-red-700 bg-red-50',
-  neutral: 'text-gray-500 bg-gray-100',
+  ok: 'text-ok bg-ok-subtle',
+  warn: 'text-warning bg-warning-subtle',
+  error: 'text-critical bg-critical-subtle',
+  neutral: 'text-muted bg-surface-sunken',
 }
 
 // RFC 6793: when a 4-byte AS is carried in the capability, the legacy 2-byte
@@ -37,7 +37,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
 
   if (!localOpen && !remoteOpen) {
     return (
-      <div className="text-sm text-gray-400 text-center py-6">
+      <div className="text-sm text-dim text-center py-6">
         No OPEN message captured for either side of this session
       </div>
     )
@@ -46,7 +46,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
   return (
     <div className="space-y-4">
       {(!localOpen || !remoteOpen) && (
-        <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+        <div className="flex items-center gap-2 rounded-lg bg-warning-subtle border border-hair px-3 py-2 text-xs text-warning">
           <span aria-hidden="true">⚠</span>
           <span>
             No OPEN captured from {!localOpen ? localLabel : remoteLabel} — this is a one-sided comparison.
@@ -55,7 +55,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
       )}
 
       <section>
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">
           Session Fields
         </h4>
         <SessionFieldsTable
@@ -68,7 +68,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
 
       <section>
         <div className="flex items-center justify-between mb-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
             Capability Mismatches {mismatchRows.length > 0 ? `(${mismatchRows.length})` : ''}
           </h4>
           <Legend />
@@ -76,7 +76,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
         {mismatchRows.length > 0 ? (
           <CapabilityTable rows={mismatchRows} localLabel={localLabel} remoteLabel={remoteLabel} />
         ) : (
-          <div className="text-xs text-gray-500 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2">
+          <div className="text-xs text-muted rounded-lg border border-hair bg-ok-subtle px-3 py-2">
             ✓ No capability mismatches detected
           </div>
         )}
@@ -84,7 +84,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
 
       {matchedRows.length > 0 && (
         <details>
-          <summary className="text-xs font-semibold uppercase tracking-wide text-gray-500 cursor-pointer select-none">
+          <summary className="text-xs font-semibold uppercase tracking-wide text-muted cursor-pointer select-none">
             Matching Capabilities ({matchedRows.length})
           </summary>
           <div className="mt-2">
@@ -98,10 +98,10 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
 
 function Legend() {
   return (
-    <span className="text-xs text-gray-400">
-      <span className="text-gray-600">✓</span> advertised &nbsp;
-      <span className="text-gray-400">✗</span> not advertised &nbsp;
-      <span className="text-amber-600">⚠</span> mismatch
+    <span className="text-xs text-dim">
+      <span className="text-muted">✓</span> advertised &nbsp;
+      <span className="text-dim">✗</span> not advertised &nbsp;
+      <span className="text-warning">⚠</span> mismatch
     </span>
   )
 }
@@ -162,14 +162,14 @@ function SessionFieldsTable({
   return (
     <table className="w-full text-sm border-collapse">
       <thead>
-        <tr className="border-b border-gray-200 text-left text-gray-500">
+        <tr className="border-b border-hair text-left text-muted">
           <th className="py-1.5 pr-3 font-medium">Field</th>
           <th className="py-1.5 pr-3 font-medium">{localLabel}</th>
           <th className="py-1.5 pr-3 font-medium">{remoteLabel}</th>
           <th className="py-1.5 font-medium">Status</th>
         </tr>
       </thead>
-      <tbody className="divide-y divide-gray-100">
+      <tbody className="divide-y divide-hair">
         <FieldRow
           label="BGP Version"
           localValue={localOpen ? String(localOpen.version) : null}
@@ -215,12 +215,12 @@ function FieldRow({
 }) {
   return (
     <tr>
-      <td className="py-1.5 pr-3 text-gray-600 align-top">{label}</td>
+      <td className="py-1.5 pr-3 text-muted align-top">{label}</td>
       <td className="py-1.5 pr-3 font-mono align-top">
-        {localValue ?? <span className="text-gray-400 italic font-sans">not captured</span>}
+        {localValue ?? <span className="text-dim italic font-sans">not captured</span>}
       </td>
       <td className="py-1.5 pr-3 font-mono align-top">
-        {remoteValue ?? <span className="text-gray-400 italic font-sans">not captured</span>}
+        {remoteValue ?? <span className="text-dim italic font-sans">not captured</span>}
       </td>
       <td className="py-1.5 align-top">
         {status && (
@@ -228,7 +228,7 @@ function FieldRow({
             {status.text}
           </span>
         )}
-        {caption && <div className="text-xs text-gray-400 mt-0.5">{caption}</div>}
+        {caption && <div className="text-xs text-dim mt-0.5">{caption}</div>}
       </td>
     </tr>
   )
@@ -429,14 +429,14 @@ function CapabilityTable({
   return (
     <table className="w-full text-sm border-collapse">
       <thead>
-        <tr className="border-b border-gray-200 text-left text-gray-500">
+        <tr className="border-b border-hair text-left text-muted">
           <th className="py-1.5 pr-3 font-medium">Capability</th>
           <th className="py-1.5 pr-3 font-medium">{localLabel}</th>
           <th className="py-1.5 pr-3 font-medium">{remoteLabel}</th>
           <th className="py-1.5 font-medium">Status</th>
         </tr>
       </thead>
-      <tbody className="divide-y divide-gray-100">
+      <tbody className="divide-y divide-hair">
         {rows.map((row) => {
           const status: FieldStatus =
             row.presence === 'both'
@@ -448,8 +448,8 @@ function CapabilityTable({
           return (
             <tr key={row.id}>
               <td className="py-1.5 pr-3 align-top">
-                <div className="text-gray-800">{row.label}</div>
-                <div className="text-xs text-gray-400">{row.group}</div>
+                <div className="text-strong">{row.label}</div>
+                <div className="text-xs text-dim">{row.group}</div>
               </td>
               <CapabilitySideCell side={row.local} />
               <CapabilitySideCell side={row.remote} />
@@ -470,9 +470,9 @@ function CapabilitySideCell({ side }: { side: CapabilitySide }) {
   return (
     <td className="py-1.5 pr-3 align-top font-mono text-xs">
       {side.present ? (
-        <span className="text-gray-700">✓ {side.detail ?? 'Supported'}</span>
+        <span className="text-body">✓ {side.detail ?? 'Supported'}</span>
       ) : (
-        <span className="text-gray-400">✗ —</span>
+        <span className="text-dim">✗ —</span>
       )}
     </td>
   )

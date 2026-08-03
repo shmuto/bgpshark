@@ -4,9 +4,9 @@ interface HeaderProps {
 
 export function Header({ onReset }: HeaderProps) {
   return (
-    <header className="bg-gray-800 text-white px-4 py-3 flex items-center justify-between">
+    <header className="bg-surface-sunken text-strong px-4 py-3 flex items-center justify-between">
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center text-sm font-bold">
+        <div className="w-8 h-8 bg-accent text-accent-fg rounded flex items-center justify-center text-sm font-bold">
           BGP
         </div>
         <h1 className="text-lg font-semibold">BGP Packet Analyzer</h1>
@@ -16,7 +16,7 @@ export function Header({ onReset }: HeaderProps) {
         {onReset && (
           <button
             onClick={onReset}
-            className="text-sm text-gray-300 hover:text-white transition-colors"
+            className="text-sm text-muted hover:text-strong transition-colors"
           >
             Load New File
           </button>
@@ -25,7 +25,7 @@ export function Header({ onReset }: HeaderProps) {
           href="https://github.com/shmuto/bgpshark"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-gray-400 hover:text-white transition-colors"
+          className="text-dim hover:text-strong transition-colors"
           aria-label="View on GitHub"
         >
           <svg

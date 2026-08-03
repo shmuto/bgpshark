@@ -310,21 +310,21 @@ export function MessagesPage() {
   const filterFields = Object.keys(FILTER_FIELDS) as FilterFieldName[]
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-white">
+    <div className="flex-1 flex flex-col min-h-0 bg-canvas">
       {/* Filter Bar */}
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 space-y-2">
+      <div className="px-4 py-3 border-b border-hair bg-surface-sunken space-y-2">
         {/* Header row with mode toggle and packet display toggle */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             {/* Filter mode toggle */}
             <div className="flex items-center gap-1">
-              <span className="text-xs text-gray-500">Filter:</span>
+              <span className="text-xs text-muted">Filter:</span>
               <button
                 onClick={() => handleModeSwitch('simple')}
                 className={`px-2 py-1 text-xs rounded transition-colors ${
                   filterMode === 'simple'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    ? 'bg-accent text-accent-fg'
+                    : 'bg-surface-sunken text-muted hover:bg-surface-raised'
                 }`}
               >
                 Simple
@@ -333,25 +333,25 @@ export function MessagesPage() {
                 onClick={() => handleModeSwitch('advanced')}
                 className={`px-2 py-1 text-xs rounded transition-colors ${
                   filterMode === 'advanced'
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    ? 'bg-accent text-accent-fg'
+                    : 'bg-surface-sunken text-muted hover:bg-surface-raised'
                 }`}
               >
                 Advanced
               </button>
             </div>
 
-            <div className="h-4 w-px bg-gray-300" />
+            <div className="h-4 w-px bg-hair-strong" />
 
             {/* Packet display toggle */}
             <div className="flex items-center gap-1">
-              <span className="text-xs text-gray-500">Show:</span>
+              <span className="text-xs text-muted">Show:</span>
               <button
                 onClick={() => { setShowAllPackets(false); selectPacket(null) }}
                 className={`px-2 py-1 text-xs rounded transition-colors ${
                   !showAllPackets
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    ? 'bg-accent text-accent-fg'
+                    : 'bg-surface-sunken text-muted hover:bg-surface-raised'
                 }`}
               >
                 BGP Only
@@ -360,8 +360,8 @@ export function MessagesPage() {
                 onClick={() => { setShowAllPackets(true); selectPacket(null) }}
                 className={`px-2 py-1 text-xs rounded transition-colors ${
                   showAllPackets
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    ? 'bg-accent text-accent-fg'
+                    : 'bg-surface-sunken text-muted hover:bg-surface-raised'
                 }`}
               >
                 All Packets
@@ -373,7 +373,7 @@ export function MessagesPage() {
           {(query || rules.length > 0) && (
             <button
               onClick={clearFilter}
-              className="px-3 py-1 text-xs text-gray-600 hover:bg-gray-200 rounded transition-colors"
+              className="px-3 py-1 text-xs text-muted hover:bg-surface-sunken rounded transition-colors"
             >
               Clear Filter
             </button>
@@ -384,7 +384,7 @@ export function MessagesPage() {
         {filterMode === 'advanced' ? (
           /* Advanced mode - text query input */
           <div className="flex items-center gap-2">
-            <span className="text-gray-400 text-sm">Query:</span>
+            <span className="text-dim text-sm">Query:</span>
             <div className="flex-1">
               <QueryInput
                 value={query}
@@ -399,10 +399,10 @@ export function MessagesPage() {
           <div className="space-y-2">
             {rules.length === 0 ? (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-500">No filters applied.</span>
+                <span className="text-sm text-muted">No filters applied.</span>
                 <button
                   onClick={addRule}
-                  className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors flex items-center gap-1"
+                  className="px-2 py-1 text-xs bg-accent text-accent-fg rounded hover:bg-accent-hover transition-colors flex items-center gap-1"
                 >
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -415,7 +415,7 @@ export function MessagesPage() {
                 {rules.map((rule, index) => (
                   <div key={rule.id} className="flex items-center gap-2">
                     {index > 0 && (
-                      <span className="text-xs text-gray-400 w-8 text-center">AND</span>
+                      <span className="text-xs text-dim w-8 text-center">AND</span>
                     )}
                     {index === 0 && <span className="w-8" />}
 
@@ -423,7 +423,7 @@ export function MessagesPage() {
                     <select
                       value={rule.field}
                       onChange={(e) => updateRule(rule.id, { field: e.target.value as FilterFieldName | '', value: '' })}
-                      className="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-700 min-w-[100px]"
+                      className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body min-w-[100px]"
                     >
                       <option value="">Select field...</option>
                       {filterFields.map((field) => (
@@ -435,7 +435,7 @@ export function MessagesPage() {
                     <select
                       value={rule.operator}
                       onChange={(e) => updateRule(rule.id, { operator: e.target.value as Operator })}
-                      className="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-700 w-16"
+                      className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body w-16"
                     >
                       <option value="=">=</option>
                       <option value="!=">!=</option>
@@ -449,7 +449,7 @@ export function MessagesPage() {
                           <select
                             value={rule.value}
                             onChange={(e) => updateRule(rule.id, { value: e.target.value })}
-                            className="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-700 min-w-[120px]"
+                            className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body min-w-[120px]"
                           >
                             <option value="">Select value...</option>
                             {values.map((v) => (
@@ -464,7 +464,7 @@ export function MessagesPage() {
                           value={rule.value}
                           onChange={(e) => updateRule(rule.id, { value: e.target.value })}
                           placeholder="Enter value..."
-                          className="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-700 min-w-[120px]"
+                          className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body min-w-[120px] placeholder:text-dim"
                         />
                       )
                     })()}
@@ -472,7 +472,7 @@ export function MessagesPage() {
                     {/* Remove button */}
                     <button
                       onClick={() => removeRule(rule.id)}
-                      className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                      className="p-1 text-dim hover:text-critical transition-colors"
                       title="Remove filter"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -485,7 +485,7 @@ export function MessagesPage() {
                 {/* Add rule button */}
                 <button
                   onClick={addRule}
-                  className="ml-8 px-2 py-1 text-xs text-gray-500 hover:text-blue-500 transition-colors flex items-center gap-1"
+                  className="ml-8 px-2 py-1 text-xs text-muted hover:text-accent transition-colors flex items-center gap-1"
                 >
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -498,14 +498,14 @@ export function MessagesPage() {
         )}
 
         {/* Status bar */}
-        <div className="flex items-center justify-between text-xs text-gray-500">
+        <div className="flex items-center justify-between text-xs text-muted">
           <span>
             Showing {displayPackets.length} of {showAllPackets ? allPackets.length : packets.length} packets
             {showAllPackets && ` (${packets.length} BGP)`}
           </span>
           {isFiltering && <span>filtering...</span>}
           {hasParseErrors && (
-            <span className="text-red-500" title={parseErrors.map(e => e.message).join('; ')}>
+            <span className="text-critical" title={parseErrors.map(e => e.message).join('; ')}>
               {parseErrors[0]?.message}
             </span>
           )}
@@ -515,7 +515,7 @@ export function MessagesPage() {
       {/* Main content - split view */}
       <div ref={containerRef} className="flex-1 flex min-h-0">
         {/* Packet List */}
-        <div className="w-1/2 border-r border-gray-200 flex flex-col min-h-0">
+        <div className="w-1/2 border-r border-hair flex flex-col min-h-0">
           <div className="flex-1 overflow-auto">
             <PacketList
               packets={displayPackets}
@@ -527,18 +527,18 @@ export function MessagesPage() {
         </div>
 
         {/* Packet Detail */}
-        <div className="w-1/2 flex flex-col min-h-0 bg-white">
-          <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between shrink-0">
-            <span className="text-sm font-semibold text-gray-700">
+        <div className="w-1/2 flex flex-col min-h-0 bg-surface">
+          <div className="px-4 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between shrink-0">
+            <span className="text-sm font-semibold text-strong">
               {selectedPacketIndex !== null ? `Packet #${displayPackets[selectedPacketIndex]?.packet.frameIndex}` : 'Packet Detail'}
             </span>
             {selectedBgpPacket && (
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-muted">
                 {selectedBgpPacket.messages.map(m => m.type).join(', ')}
               </span>
             )}
             {selectedGenericPacket && (
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-muted">
                 {selectedGenericPacket.protocol}
               </span>
             )}
@@ -549,7 +549,7 @@ export function MessagesPage() {
             ) : selectedGenericPacket ? (
               <GenericPacketDetail packet={selectedGenericPacket} />
             ) : (
-              <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+              <div className="flex items-center justify-center h-full text-dim text-sm">
                 Select a packet to view details
               </div>
             )}
@@ -576,71 +576,68 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
   return (
     <div className="p-4 space-y-4">
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-gray-700">Network Layer</h3>
+        <h3 className="text-sm font-semibold text-strong">Network Layer</h3>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-gray-500">Source IP:</span>
+            <span className="text-muted">Source IP:</span>
             <span className="ml-2 font-mono">{packet.srcIp}</span>
           </div>
           <div>
-            <span className="text-gray-500">Destination IP:</span>
+            <span className="text-muted">Destination IP:</span>
             <span className="ml-2 font-mono">{packet.dstIp}</span>
           </div>
         </div>
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-gray-700">Transport Layer</h3>
+        <h3 className="text-sm font-semibold text-strong">Transport Layer</h3>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-gray-500">Protocol:</span>
-            <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
-              packet.protocol === 'TCP' ? 'bg-blue-100 text-blue-700' :
-              packet.protocol === 'UDP' ? 'bg-green-100 text-green-700' :
-              packet.protocol === 'ICMP' ? 'bg-yellow-100 text-yellow-700' :
-              'bg-gray-100 text-gray-700'
-            }`}>
+            <span className="text-muted">Protocol:</span>
+            {/* Neutral on purpose: protocol is a category, and the severity
+                palette has to keep meaning severity. */}
+            <span className="ml-2 rounded bg-surface-sunken px-2 py-0.5 font-mono text-xs font-medium text-body">
               {packet.protocol}
             </span>
           </div>
           {packet.srcPort !== undefined && (
             <div>
-              <span className="text-gray-500">Source Port:</span>
+              <span className="text-muted">Source Port:</span>
               <span className="ml-2 font-mono">{packet.srcPort}</span>
             </div>
           )}
           {packet.dstPort !== undefined && (
             <div>
-              <span className="text-gray-500">Destination Port:</span>
+              <span className="text-muted">Destination Port:</span>
               <span className="ml-2 font-mono">{packet.dstPort}</span>
             </div>
           )}
           <div>
-            <span className="text-gray-500">Payload Length:</span>
+            <span className="text-muted">Payload Length:</span>
             <span className="ml-2 font-mono">{packet.payloadLength} bytes</span>
           </div>
         </div>
         {packet.tcpFlags && (
           <div className="text-sm">
-            <span className="text-gray-500">TCP Flags:</span>
+            <span className="text-muted">TCP Flags:</span>
             <span className="ml-2 font-mono">{formatTcpFlags(packet.tcpFlags)}</span>
           </div>
         )}
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-gray-700">Frame Info</h3>
+        <h3 className="text-sm font-semibold text-strong">Frame Info</h3>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-gray-500">Captured:</span>
+            <span className="text-muted">Captured:</span>
             <span className="ml-2 font-mono">{packet.capturedLength} bytes</span>
           </div>
           <div>
-            <span className="text-gray-500">Original:</span>
+            <span className="text-muted">Original:</span>
             <span className="ml-2 font-mono">{packet.originalLength} bytes</span>
           </div>
           <div className="col-span-2">
-            <span className="text-gray-500">Timestamp:</span>
+            <span className="text-muted">Timestamp:</span>
             <span className="ml-2 font-mono">{packet.timestamp.toISOString()}</span>
           </div>
         </div>

@@ -23,6 +23,7 @@ export default {
           DEFAULT: token('hair'),
           strong: token('hair-strong'),
         },
+        'on-solid': token('on-solid'),
         strong: token('text-strong'),
         body: token('text-body'),
         muted: token('text-muted'),

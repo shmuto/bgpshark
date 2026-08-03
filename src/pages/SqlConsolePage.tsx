@@ -144,14 +144,14 @@ export function SqlConsolePage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-gray-50 p-4 gap-4">
+    <div className="flex-1 flex flex-col min-h-0 bg-canvas p-4 gap-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span>💾</span>
-          <h1 className="text-lg font-semibold text-gray-700">SQL Console</h1>
+          <h1 className="text-lg font-semibold text-strong">SQL Console</h1>
         </div>
         {!dbReady && (
-          <span className="text-sm text-amber-600">
+          <span className="text-sm text-warning">
             ⚠️ DuckDB not initialized. Load a pcap file first.
           </span>
         )}
@@ -161,36 +161,36 @@ export function SqlConsolePage() {
         {/* Main Editor Area */}
         <div className="flex-1 flex flex-col gap-4 min-h-0">
           {/* SQL Editor */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col min-h-[200px]">
-            <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Query</span>
-              <span className="text-xs text-gray-500">Ctrl+Enter to execute</span>
+          <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-[200px]">
+            <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
+              <span className="text-sm font-medium text-strong">Query</span>
+              <span className="text-xs text-muted">Ctrl+Enter to execute</span>
             </div>
             <textarea
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="SELECT * FROM packets LIMIT 10"
-              className="flex-1 p-4 font-mono text-sm resize-none focus:outline-none"
+              className="flex-1 p-4 font-mono text-sm resize-none focus:outline-none bg-surface-sunken text-body"
               disabled={!dbReady}
             />
-            <div className="px-4 py-2 border-t border-gray-200 bg-gray-50 flex items-center gap-3">
+            <div className="px-4 py-2 border-t border-hair bg-surface-sunken flex items-center gap-3">
               <button
                 onClick={handleExecute}
                 disabled={!dbReady || isExecuting || !query.trim()}
-                className="px-4 py-1.5 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="px-4 py-1.5 bg-accent text-accent-fg text-sm rounded hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <span>▶</span>
                 {isExecuting ? 'Running...' : 'Run'}
               </button>
               <button
                 onClick={() => setQuery('')}
-                className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-200 rounded"
+                className="px-3 py-1.5 text-sm text-muted hover:bg-surface-raised rounded"
               >
                 Clear
               </button>
               {result && (
-                <span className="text-xs text-gray-500 ml-auto">
+                <span className="text-xs text-muted ml-auto">
                   Execution: {result.executionTime.toFixed(0)}ms
                 </span>
               )}
@@ -198,15 +198,15 @@ export function SqlConsolePage() {
           </div>
 
           {/* Results */}
-          <div className="flex-1 bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col min-h-0">
-            <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between shrink-0">
-              <span className="text-sm font-medium text-gray-700">
+          <div className="flex-1 bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
+            <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between shrink-0">
+              <span className="text-sm font-medium text-strong">
                 📊 Results {result ? `(${result.rows.length} rows)` : ''}
               </span>
               {result && result.rows.length > 0 && (
                 <button
                   onClick={exportCsv}
-                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                  className="text-xs text-accent hover:text-accent-hover flex items-center gap-1"
                 >
                   Export CSV ↓
                 </button>
@@ -214,27 +214,27 @@ export function SqlConsolePage() {
             </div>
             <div className="flex-1 overflow-auto">
               {error ? (
-                <div className="p-4 text-red-600 text-sm">
+                <div className="p-4 text-critical text-sm">
                   <div className="font-medium mb-1">Error:</div>
                   <pre className="whitespace-pre-wrap font-mono text-xs">{error}</pre>
                 </div>
               ) : result ? (
                 result.rows.length > 0 ? (
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50 sticky top-0">
+                    <thead className="bg-surface-sunken sticky top-0">
                       <tr>
                         {result.columns.map((col) => (
-                          <th key={col} className="px-4 py-2 text-left font-medium text-gray-600 border-b">
+                          <th key={col} className="px-4 py-2 text-left font-medium text-muted border-b border-hair">
                             {col}
                           </th>
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className="divide-y divide-hair">
                       {result.rows.slice(0, 100).map((row, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
+                        <tr key={idx} className="hover:bg-surface-sunken">
                           {result.columns.map((col) => (
-                            <td key={col} className="px-4 py-2 font-mono text-gray-700">
+                            <td key={col} className="px-4 py-2 font-mono text-body">
                               {formatValue(row[col])}
                             </td>
                           ))}
@@ -243,17 +243,17 @@ export function SqlConsolePage() {
                     </tbody>
                   </table>
                 ) : (
-                  <div className="text-center text-gray-400 py-8">
+                  <div className="text-center text-dim py-8">
                     Query returned no results
                   </div>
                 )
               ) : (
-                <div className="text-center text-gray-400 py-8">
+                <div className="text-center text-dim py-8">
                   Run a query to see results
                 </div>
               )}
               {result && result.rows.length > 100 && (
-                <div className="text-center text-gray-500 text-xs py-2 border-t">
+                <div className="text-center text-muted text-xs py-2 border-t border-hair">
                   Showing first 100 of {result.rows.length} rows
                 </div>
               )}
@@ -264,16 +264,16 @@ export function SqlConsolePage() {
         {/* Sidebar */}
         <div className="w-72 flex flex-col gap-4 shrink-0">
           {/* Templates */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
-              <span className="text-sm font-medium text-gray-700">📝 Query Templates</span>
+          <div className="bg-surface rounded-lg shadow-sm border border-hair">
+            <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+              <span className="text-sm font-medium text-strong">📝 Query Templates</span>
             </div>
             <div className="p-2">
               {QUERY_TEMPLATES.map((template) => (
                 <button
                   key={template.name}
                   onClick={() => handleTemplateClick(template)}
-                  className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+                  className="w-full text-left px-3 py-2 text-sm text-body hover:bg-surface-sunken rounded"
                 >
                   {template.name}
                 </button>
@@ -283,16 +283,16 @@ export function SqlConsolePage() {
 
           {/* History */}
           {queryHistory.length > 0 && (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 flex-1 min-h-0 flex flex-col">
-              <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 shrink-0">
-                <span className="text-sm font-medium text-gray-700">📋 Query History</span>
+            <div className="bg-surface rounded-lg shadow-sm border border-hair flex-1 min-h-0 flex flex-col">
+              <div className="px-4 py-2 border-b border-hair bg-surface-sunken shrink-0">
+                <span className="text-sm font-medium text-strong">📋 Query History</span>
               </div>
               <div className="flex-1 overflow-auto p-2">
                 {queryHistory.map((q, idx) => (
                   <button
                     key={idx}
                     onClick={() => handleHistoryClick(q)}
-                    className="w-full text-left px-3 py-2 text-xs font-mono text-gray-600 hover:bg-gray-100 rounded truncate"
+                    className="w-full text-left px-3 py-2 text-xs font-mono text-muted hover:bg-surface-sunken rounded truncate"
                     title={q}
                   >
                     {q.slice(0, 50)}...
@@ -303,11 +303,11 @@ export function SqlConsolePage() {
           )}
 
           {/* Schema */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-            <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
-              <span className="text-sm font-medium text-gray-700">📁 Schema</span>
+          <div className="bg-surface rounded-lg shadow-sm border border-hair">
+            <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+              <span className="text-sm font-medium text-strong">📁 Schema</span>
             </div>
-            <div className="p-2 text-xs text-gray-600 space-y-1">
+            <div className="p-2 text-xs text-muted space-y-1">
               <SchemaTable name="packets" columns={['frame_index', 'timestamp', 'src_ip', 'dst_ip', '...']} />
               <SchemaTable name="messages" columns={['id', 'frame_index', 'type', '...']} />
               <SchemaTable name="as_path" columns={['message_id', 'segment_index', 'asn']} />
@@ -329,13 +329,13 @@ function SchemaTable({ name, columns }: { name: string; columns: string[] }) {
     <div>
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 font-medium text-gray-700 hover:text-blue-600"
+        className="flex items-center gap-1 font-medium text-body hover:text-accent"
       >
         <span>{expanded ? '▼' : '▶'}</span>
         {name}
       </button>
       {expanded && (
-        <div className="ml-4 text-gray-500">
+        <div className="ml-4 text-muted">
           {columns.map((col) => (
             <div key={col}>{col}</div>
           ))}

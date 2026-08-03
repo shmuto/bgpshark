@@ -184,13 +184,13 @@ export function RoutesPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-gray-50">
+    <div className="flex-1 flex flex-col min-h-0 bg-canvas">
       {/* Search Bar */}
-      <div className="p-4 bg-white border-b border-gray-200">
+      <div className="p-4 bg-surface border-b border-hair">
         <div className="max-w-3xl mx-auto">
           <div className="flex items-center gap-3">
-            <span className="text-gray-400">🔍</span>
-            <span className="text-sm font-medium text-gray-700">Prefix Search</span>
+            <span className="text-dim">🔍</span>
+            <span className="text-sm font-medium text-strong">Prefix Search</span>
           </div>
           <div className="mt-2 flex items-center gap-3">
             <input
@@ -198,19 +198,19 @@ export function RoutesPage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="10.0.0.0/8 or AS65001"
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+              className="flex-1 px-3 py-2 border border-hair-strong rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-sm"
             />
-            <button className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm">
+            <button className="px-4 py-2 bg-accent text-accent-fg rounded-lg hover:bg-accent-hover text-sm">
               Search
             </button>
           </div>
           <div className="mt-2 flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm text-gray-600">
+            <label className="flex items-center gap-2 text-sm text-muted">
               <input
                 type="checkbox"
                 checked={includeSubnets}
                 onChange={(e) => setIncludeSubnets(e.target.checked)}
-                className="rounded border-gray-300"
+                className="rounded border-hair-strong"
               />
               Include subnets
             </label>
@@ -221,36 +221,36 @@ export function RoutesPage() {
       {/* Main Content */}
       <div className="flex-1 flex min-h-0 p-4 gap-4">
         {/* Prefix Statistics */}
-        <div className="w-1/2 bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col min-h-0">
-          <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-2 shrink-0">
+        <div className="w-1/2 bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
+          <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <span>📊</span>
-            <h2 className="font-semibold text-gray-700">Prefix Statistics</h2>
-            <span className="text-xs text-gray-500 ml-auto">{filteredPrefixes.length} prefixes</span>
+            <h2 className="font-semibold text-strong">Prefix Statistics</h2>
+            <span className="text-xs text-muted ml-auto">{filteredPrefixes.length} prefixes</span>
           </div>
           <div className="flex-1 overflow-auto">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 sticky top-0">
-                <tr className="text-left text-gray-600">
+              <thead className="bg-surface-sunken sticky top-0">
+                <tr className="text-left text-muted">
                   <th className="px-4 py-2 font-medium">Prefix</th>
                   <th className="px-4 py-2 font-medium text-right">Announced</th>
                   <th className="px-4 py-2 font-medium text-right">Withdrawn</th>
                   <th className="px-4 py-2 font-medium text-right">Flap</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-hair">
                 {filteredPrefixes.map((stat) => (
                   <tr
                     key={stat.prefix}
                     onClick={() => setSelectedPrefix(stat.prefix)}
-                    className={`cursor-pointer hover:bg-gray-50 ${
-                      selectedPrefix === stat.prefix ? 'bg-blue-50' : ''
+                    className={`cursor-pointer hover:bg-surface-sunken ${
+                      selectedPrefix === stat.prefix ? 'bg-accent-subtle' : ''
                     }`}
                   >
-                    <td className="px-4 py-2 font-mono text-gray-800">{stat.prefix}</td>
-                    <td className="px-4 py-2 text-right text-green-600">{stat.announced}</td>
-                    <td className="px-4 py-2 text-right text-red-600">{stat.withdrawn}</td>
+                    <td className="px-4 py-2 font-mono text-strong">{stat.prefix}</td>
+                    <td className="px-4 py-2 text-right text-ok">{stat.announced}</td>
+                    <td className="px-4 py-2 text-right text-critical">{stat.withdrawn}</td>
                     <td className="px-4 py-2 text-right">
-                      <span className={stat.flap > 10 ? 'text-amber-600 font-medium' : 'text-gray-600'}>
+                      <span className={stat.flap > 10 ? 'text-warning font-medium' : 'text-muted'}>
                         {stat.flap}
                         {stat.flap > 10 && ' ⚠'}
                       </span>
@@ -260,7 +260,7 @@ export function RoutesPage() {
               </tbody>
             </table>
             {filteredPrefixes.length === 0 && (
-              <div className="text-center text-gray-400 py-8">
+              <div className="text-center text-dim py-8">
                 No prefixes found
               </div>
             )}
@@ -268,45 +268,45 @@ export function RoutesPage() {
         </div>
 
         {/* Route History */}
-        <div className="w-1/2 bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col min-h-0">
-          <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-2 shrink-0">
+        <div className="w-1/2 bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
+          <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <span>📜</span>
-            <h2 className="font-semibold text-gray-700">
+            <h2 className="font-semibold text-strong">
               Route History{selectedPrefix ? `: ${selectedPrefix}` : ''}
             </h2>
           </div>
           <div className="flex-1 overflow-auto">
             {selectedPrefixStats ? (
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 sticky top-0">
-                  <tr className="text-left text-gray-600">
+                <thead className="bg-surface-sunken sticky top-0">
+                  <tr className="text-left text-muted">
                     <th className="px-4 py-2 font-medium">Time</th>
                     <th className="px-4 py-2 font-medium">Action</th>
                     <th className="px-4 py-2 font-medium">AS_PATH</th>
                     <th className="px-4 py-2 font-medium">Next Hop</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-hair">
                   {selectedPrefixStats.history.slice().reverse().map((event, idx) => (
                     <tr
                       key={idx}
                       onClick={() => handleHistoryClick(event)}
-                      className="cursor-pointer hover:bg-gray-50"
+                      className="cursor-pointer hover:bg-surface-sunken"
                     >
-                      <td className="px-4 py-2 font-mono text-gray-600">
+                      <td className="px-4 py-2 font-mono text-muted">
                         {formatTime(event.timestamp)}
                       </td>
                       <td className="px-4 py-2">
                         {event.action === 'announce' ? (
-                          <span className="text-green-600">🟢 Announce</span>
+                          <span className="text-ok">🟢 Announce</span>
                         ) : (
-                          <span className="text-red-600">🔴 Withdraw</span>
+                          <span className="text-critical">🔴 Withdraw</span>
                         )}
                       </td>
-                      <td className="px-4 py-2 font-mono text-gray-600">
+                      <td className="px-4 py-2 font-mono text-muted">
                         {event.asPath || '-'}
                       </td>
-                      <td className="px-4 py-2 font-mono text-gray-600">
+                      <td className="px-4 py-2 font-mono text-muted">
                         {event.nextHop || '-'}
                       </td>
                     </tr>
@@ -314,7 +314,7 @@ export function RoutesPage() {
                 </tbody>
               </table>
             ) : (
-              <div className="text-center text-gray-400 py-8">
+              <div className="text-center text-dim py-8">
                 Select a prefix to view history
               </div>
             )}

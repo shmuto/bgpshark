@@ -35,7 +35,7 @@ export function HexDump({ data, bytesPerLine = 16 }: HexDumpProps) {
   }
 
   return (
-    <pre className="bg-gray-900 text-gray-100 text-xs font-mono p-3 rounded-lg overflow-x-auto">
+    <pre className="bg-surface-sunken text-body text-xs font-mono p-3 rounded-lg overflow-x-auto">
       {lines.join('\n')}
     </pre>
   )

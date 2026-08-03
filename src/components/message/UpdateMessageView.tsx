@@ -41,61 +41,61 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
     <div className="space-y-2">
       {/* Compact View - Always visible */}
       <div
-        className="bg-gray-50 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-100 transition-colors"
+        className="bg-surface-sunken rounded-lg border border-hair cursor-pointer hover:bg-surface-raised transition-colors"
         onClick={() => setIsExpanded(!isExpanded)}
       >
         {/* Summary Table */}
         <table className="w-full text-sm">
           <tbody>
-            <tr className="border-b border-gray-200">
-              <td className="px-3 py-2 text-gray-500 w-24">Announced</td>
+            <tr className="border-b border-hair">
+              <td className="px-3 py-2 text-muted w-24">Announced</td>
               <td className="px-3 py-2">
                 {allNlri.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {allNlri.slice(0, 8).map((prefix, i) => (
-                      <span key={i} className="font-mono text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
+                      <span key={i} className="font-mono text-xs bg-ok-subtle text-ok px-1.5 py-0.5 rounded">
                         {prefix.prefix}/{prefix.length}
                       </span>
                     ))}
                     {allNlri.length > 8 && (
-                      <span className="text-xs text-gray-500 px-1.5 py-0.5">... {allNlri.length - 8} more</span>
+                      <span className="text-xs text-muted px-1.5 py-0.5">... {allNlri.length - 8} more</span>
                     )}
                   </div>
                 ) : (
-                  <span className="text-gray-400">-</span>
+                  <span className="text-dim">-</span>
                 )}
               </td>
-              <td className="px-3 py-2 text-right text-gray-500 w-16">{allNlri.length}</td>
+              <td className="px-3 py-2 text-right text-muted w-16">{allNlri.length}</td>
             </tr>
-            <tr className="border-b border-gray-200">
-              <td className="px-3 py-2 text-gray-500">Withdrawn</td>
+            <tr className="border-b border-hair">
+              <td className="px-3 py-2 text-muted">Withdrawn</td>
               <td className="px-3 py-2">
                 {allWithdrawn.length > 0 ? (
                   <div className="flex flex-wrap gap-1">
                     {allWithdrawn.slice(0, 5).map((prefix, i) => (
-                      <span key={i} className="font-mono text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded line-through">
+                      <span key={i} className="font-mono text-xs bg-critical-subtle text-critical px-1.5 py-0.5 rounded line-through">
                         {prefix.prefix}/{prefix.length}
                       </span>
                     ))}
                     {allWithdrawn.length > 5 && (
-                      <span className="text-xs text-gray-500 px-1.5 py-0.5">... {allWithdrawn.length - 5} more</span>
+                      <span className="text-xs text-muted px-1.5 py-0.5">... {allWithdrawn.length - 5} more</span>
                     )}
                   </div>
                 ) : (
-                  <span className="text-gray-400">-</span>
+                  <span className="text-dim">-</span>
                 )}
               </td>
-              <td className="px-3 py-2 text-right text-gray-500 w-16">{allWithdrawn.length}</td>
+              <td className="px-3 py-2 text-right text-muted w-16">{allWithdrawn.length}</td>
             </tr>
             {nextHop && (
-              <tr className="border-b border-gray-200">
-                <td className="px-3 py-2 text-gray-500">Next Hop</td>
+              <tr className="border-b border-hair">
+                <td className="px-3 py-2 text-muted">Next Hop</td>
                 <td className="px-3 py-2 font-mono" colSpan={2}>{nextHop}</td>
               </tr>
             )}
             {asPath.length > 0 && (
               <tr>
-                <td className="px-3 py-2 text-gray-500">AS Path</td>
+                <td className="px-3 py-2 text-muted">AS Path</td>
                 <td className="px-3 py-2" colSpan={2}>
                   <AsPathCompact segments={asPath} />
                 </td>
@@ -105,7 +105,7 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
         </table>
 
         {/* Expand indicator */}
-        <div className="px-3 py-1 text-xs text-gray-400 flex items-center gap-1 border-t border-gray-200">
+        <div className="px-3 py-1 text-xs text-dim flex items-center gap-1 border-t border-hair">
           <svg
             className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
             fill="none"
@@ -120,31 +120,31 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
 
       {/* Expanded View - Full details */}
       {isExpanded && (
-        <div className="ml-4 space-y-3 border-l-2 border-gray-200 pl-4">
+        <div className="ml-4 space-y-3 border-l-2 border-hair pl-4">
           {/* All NLRI */}
           {allNlri.length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              <h4 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
                 NLRI ({allNlri.length} prefixes)
               </h4>
-              <PrefixList prefixes={allNlri} className="bg-green-50 border-green-200" />
+              <PrefixList prefixes={allNlri} className="bg-ok-subtle border-ok/30" />
             </div>
           )}
 
           {/* All Withdrawn Routes */}
           {allWithdrawn.length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              <h4 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
                 Withdrawn Routes ({allWithdrawn.length} prefixes)
               </h4>
-              <PrefixList prefixes={allWithdrawn} className="bg-red-50 border-red-200" />
+              <PrefixList prefixes={allWithdrawn} className="bg-critical-subtle border-critical/30" />
             </div>
           )}
 
           {/* Path Attributes */}
           {message.pathAttributes.length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              <h4 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
                 Path Attributes
               </h4>
               <div className="space-y-2">
@@ -171,7 +171,7 @@ function AsPathCompact({ segments }: { segments: AsPathSegment[] }) {
   return (
     <span className="font-mono">
       {displayAsns.join(' ')}
-      {remaining > 0 && <span className="text-gray-400"> +{remaining}</span>}
+      {remaining > 0 && <span className="text-dim"> +{remaining}</span>}
     </span>
   )
 }
@@ -181,7 +181,7 @@ function PrefixList({ prefixes, className }: { prefixes: BgpPrefix[]; className:
     <div className={`rounded-lg border p-3 ${className}`}>
       <div className="flex flex-wrap gap-1">
         {prefixes.map((prefix, i) => (
-          <span key={i} className="font-mono text-xs bg-white px-1.5 py-0.5 rounded border">
+          <span key={i} className="font-mono text-xs bg-surface px-1.5 py-0.5 rounded border border-hair">
             {prefix.prefix}/{prefix.length}
           </span>
         ))}
@@ -194,23 +194,23 @@ function PathAttributeView({ attribute }: { attribute: BgpPathAttribute }) {
   const { parsed } = attribute
 
   return (
-    <div className="bg-gray-50 rounded-lg border border-gray-200 p-3 text-sm">
+    <div className="bg-surface-sunken rounded-lg border border-hair p-3 text-sm">
       <div className="flex items-center justify-between mb-1">
-        <span className="font-medium text-gray-700">{attribute.typeName}</span>
+        <span className="font-medium text-strong">{attribute.typeName}</span>
         <div className="flex gap-1">
           {attribute.flags.optional && (
-            <span className="text-xs bg-gray-200 px-1 rounded">Optional</span>
+            <span className="text-xs bg-surface-raised text-body px-1 rounded">Optional</span>
           )}
           {attribute.flags.transitive && (
-            <span className="text-xs bg-gray-200 px-1 rounded">Transitive</span>
+            <span className="text-xs bg-surface-raised text-body px-1 rounded">Transitive</span>
           )}
           {attribute.flags.partial && (
-            <span className="text-xs bg-yellow-200 px-1 rounded">Partial</span>
+            <span className="text-xs bg-warning-subtle text-warning px-1 rounded">Partial</span>
           )}
         </div>
       </div>
 
-      <div className="text-gray-600">
+      <div className="text-muted">
         {parsed ? (
           <ParsedAttributeValue parsed={parsed} />
         ) : (
@@ -228,10 +228,10 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
         <span
           className={`inline-block px-2 py-0.5 rounded text-xs ${
             parsed.value === 'IGP'
-              ? 'bg-green-100 text-green-700'
+              ? 'bg-ok-subtle text-ok'
               : parsed.value === 'EGP'
-                ? 'bg-yellow-100 text-yellow-700'
-                : 'bg-gray-100 text-gray-700'
+                ? 'bg-warning-subtle text-warning'
+                : 'bg-surface-sunken text-muted'
           }`}
         >
           {parsed.value}
@@ -251,7 +251,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
       return <span className="font-mono">Local Preference: {parsed.value}</span>
 
     case 'ATOMIC_AGGREGATE':
-      return <span className="text-gray-500">Present</span>
+      return <span className="text-muted">Present</span>
 
     case 'AGGREGATOR':
       return (
@@ -264,7 +264,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
       return (
         <div className="flex flex-wrap gap-1 mt-1">
           {parsed.communities.map((comm, i) => (
-            <span key={i} className="font-mono text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+            <span key={i} className="font-mono text-xs bg-bgp-keepalive/15 text-bgp-keepalive px-1.5 py-0.5 rounded">
               {comm}
             </span>
           ))}
@@ -275,7 +275,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
       return (
         <div className="flex flex-wrap gap-1 mt-1">
           {parsed.communities.map((comm, i) => (
-            <span key={i} className="font-mono text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+            <span key={i} className="font-mono text-xs bg-bgp-keepalive/15 text-bgp-keepalive px-1.5 py-0.5 rounded">
               {comm.globalAdmin}:{comm.localData1}:{comm.localData2}
             </span>
           ))}
@@ -285,14 +285,14 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
     case 'MP_REACH_NLRI':
       return (
         <div className="space-y-1">
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-muted">
             {parsed.afiName} / {parsed.safiName}
           </div>
           <div className="font-mono">Next Hop: {parsed.nextHop}</div>
           {parsed.nlri.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {parsed.nlri.map((prefix, i) => (
-                <span key={i} className="font-mono text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">
+                <span key={i} className="font-mono text-xs bg-ok-subtle text-ok px-1.5 py-0.5 rounded">
                   {prefix.prefix}/{prefix.length}
                 </span>
               ))}
@@ -304,13 +304,13 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
     case 'MP_UNREACH_NLRI':
       return (
         <div className="space-y-1">
-          <div className="text-xs text-gray-500">
+          <div className="text-xs text-muted">
             {parsed.afiName} / {parsed.safiName}
           </div>
           {parsed.withdrawnRoutes.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {parsed.withdrawnRoutes.map((prefix, i) => (
-                <span key={i} className="font-mono text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">
+                <span key={i} className="font-mono text-xs bg-critical-subtle text-critical px-1.5 py-0.5 rounded">
                   {prefix.prefix}/{prefix.length}
                 </span>
               ))}
@@ -321,32 +321,32 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
 
     case 'UNKNOWN':
     default:
-      return <span className="text-gray-400">Unparsed</span>
+      return <span className="text-dim">Unparsed</span>
   }
 }
 
 function AsPathView({ segments }: { segments: AsPathSegment[] }) {
   if (segments.length === 0) {
-    return <span className="text-gray-400">Empty</span>
+    return <span className="text-dim">Empty</span>
   }
 
   return (
     <div className="flex flex-wrap items-center gap-1">
       {segments.map((segment, i) => (
         <span key={i} className="flex items-center gap-1">
-          {segment.type === 'AS_SET' && <span className="text-gray-400">{'{'}</span>}
-          {segment.type === 'AS_CONFED_SEQUENCE' && <span className="text-gray-400">(</span>}
-          {segment.type === 'AS_CONFED_SET' && <span className="text-gray-400">({'{'}</span>}
+          {segment.type === 'AS_SET' && <span className="text-dim">{'{'}</span>}
+          {segment.type === 'AS_CONFED_SEQUENCE' && <span className="text-dim">(</span>}
+          {segment.type === 'AS_CONFED_SET' && <span className="text-dim">({'{'}</span>}
 
           {segment.asNumbers.map((asn, j) => (
-            <span key={j} className="font-mono text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+            <span key={j} className="font-mono text-xs bg-bgp-update/15 text-bgp-update px-1.5 py-0.5 rounded">
               {asn}
             </span>
           ))}
 
-          {segment.type === 'AS_SET' && <span className="text-gray-400">{'}'}</span>}
-          {segment.type === 'AS_CONFED_SEQUENCE' && <span className="text-gray-400">)</span>}
-          {segment.type === 'AS_CONFED_SET' && <span className="text-gray-400">{'})'}</span>}
+          {segment.type === 'AS_SET' && <span className="text-dim">{'}'}</span>}
+          {segment.type === 'AS_CONFED_SEQUENCE' && <span className="text-dim">)</span>}
+          {segment.type === 'AS_CONFED_SET' && <span className="text-dim">{'})'}</span>}
         </span>
       ))}
     </div>

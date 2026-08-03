@@ -227,7 +227,7 @@ export function MainContent({
           {paneKey === 'packets' && (
             <>
               <PaneHeader title="Packet List">
-                <span className="text-xs text-gray-500">
+                <span className="text-xs text-muted">
                   {filteredDisplayPackets.length} packet{filteredDisplayPackets.length !== 1 ? 's' : ''}
                   {hasActiveFilter && ` (${showAllPackets ? allPackets.length : packets.length} total)`}
                 </span>
@@ -246,20 +246,20 @@ export function MainContent({
             <>
               <PaneHeader title="Packet Detail">
                 {selectedDisplayPacket && (
-                  <span className="text-xs text-gray-500">
+                  <span className="text-xs text-muted">
                     {selectedDisplayPacket.kind === 'bgp'
                       ? selectedDisplayPacket.packet.messages.map(m => m.type).join(', ')
                       : selectedDisplayPacket.packet.protocol}
                   </span>
                 )}
               </PaneHeader>
-              <div className="flex-1 min-h-0 overflow-auto bg-white">
+              <div className="flex-1 min-h-0 overflow-auto bg-surface">
                 {selectedBgpPacket ? (
                   <PacketDetail packet={selectedBgpPacket} />
                 ) : selectedDisplayPacket?.kind === 'generic' ? (
                   <GenericPacketDetail packet={selectedDisplayPacket.packet} />
                 ) : (
-                  <div className="flex-1 h-full flex items-center justify-center text-gray-400 text-sm p-8">
+                  <div className="flex-1 h-full flex items-center justify-center text-dim text-sm p-8">
                     Select a packet to view details
                   </div>
                 )}
@@ -269,9 +269,9 @@ export function MainContent({
           {paneKey === 'neighbors' && (
             <>
               <PaneHeader title="Neighbor Summary">
-                <span className="text-xs text-gray-500">Session info</span>
+                <span className="text-xs text-muted">Session info</span>
               </PaneHeader>
-              <div className="flex-1 min-h-0 overflow-auto bg-white">
+              <div className="flex-1 min-h-0 overflow-auto bg-surface">
                 <NeighborSummary packets={packets} onFilterByNeighbor={handleFilterByNeighbor} />
               </div>
             </>
@@ -303,12 +303,12 @@ export function MainContent({
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {/* Toolbar */}
-        <div className="bg-gray-50 border-b border-gray-200 px-4 py-2 flex items-center gap-4">
+        <div className="bg-surface-sunken border-b border-hair px-4 py-2 flex items-center gap-4">
           {/* Sidebar Toggle */}
           <button
             onClick={() => setShowPeersSidebar(!showPeersSidebar)}
             className={`p-1.5 rounded transition-colors ${
-              showPeersSidebar ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+              showPeersSidebar ? 'bg-accent text-accent-fg' : 'bg-surface-raised text-muted hover:text-strong'
             }`}
             title={showPeersSidebar ? 'Hide Peers' : 'Show Peers'}
           >
@@ -319,14 +319,14 @@ export function MainContent({
 
           {/* Selected Peer Indicator */}
           {selectedPeer && (
-            <div className="flex items-center gap-1 bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs">
+            <div className="flex items-center gap-1 bg-accent-subtle text-accent px-2 py-1 rounded text-xs">
               <span className="font-mono">{selectedPeer}</span>
               <button
                 onClick={() => {
                   setSelectedPeer(null)
                   onSelectPacket(null)
                 }}
-                className="hover:bg-blue-200 rounded p-0.5"
+                className="hover:bg-accent/20 rounded p-0.5"
               >
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -335,11 +335,11 @@ export function MainContent({
             </div>
           )}
 
-          <div className="h-4 w-px bg-gray-300" />
+          <div className="h-4 w-px bg-hair-strong" />
 
           {/* Pane Toggles */}
           <div className="flex items-center gap-1">
-            <span className="text-xs text-gray-500 mr-1">Panes:</span>
+            <span className="text-xs text-muted mr-1">Panes:</span>
             <PaneToggle
               label="Packets"
               active={panes.packets}
@@ -357,11 +357,11 @@ export function MainContent({
             />
           </div>
 
-          <div className="h-4 w-px bg-gray-300" />
+          <div className="h-4 w-px bg-hair-strong" />
 
           {/* Packet Filter Toggle */}
           <div className="flex items-center gap-1">
-            <span className="text-xs text-gray-500 mr-1">Show:</span>
+            <span className="text-xs text-muted mr-1">Show:</span>
             <PaneToggle
               label="BGP Only"
               active={!showAllPackets}
@@ -380,21 +380,21 @@ export function MainContent({
             />
           </div>
 
-          <div className="h-4 w-px bg-gray-300" />
+          <div className="h-4 w-px bg-hair-strong" />
 
           {/* Query Input */}
           <QueryInput value={query} onChange={setQuery} packets={peerFilteredPackets} hasError={hasParseErrors} />
           {isFiltering && (
-            <span className="text-xs text-gray-500 whitespace-nowrap">
+            <span className="text-xs text-muted whitespace-nowrap">
               filtering...
             </span>
           )}
           {hasParseErrors ? (
-            <span className="text-xs text-red-500 whitespace-nowrap max-w-64 truncate" title={parseErrors.map(e => e.message).join('; ')}>
+            <span className="text-xs text-critical whitespace-nowrap max-w-64 truncate" title={parseErrors.map(e => e.message).join('; ')}>
               {parseErrors[0]?.message}
             </span>
           ) : (
-            <span className="text-xs text-gray-500 whitespace-nowrap">
+            <span className="text-xs text-muted whitespace-nowrap">
               {showAllPackets
                 ? `${filteredDisplayPackets.length} / ${allPackets.length} packets`
                 : hasActiveFilter || selectedPeer
@@ -404,7 +404,7 @@ export function MainContent({
           )}
           <button
             onClick={() => setShowSqlHelp(true)}
-            className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
+            className="w-6 h-6 flex items-center justify-center text-dim hover:text-strong hover:bg-surface-raised rounded transition-colors"
             title="Filter Help"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -415,8 +415,8 @@ export function MainContent({
           {/* File name */}
           {fileName && (
             <>
-              <div className="h-4 w-px bg-gray-300" />
-              <span className="text-xs text-gray-600 font-medium truncate max-w-48">{fileName}</span>
+              <div className="h-4 w-px bg-hair-strong" />
+              <span className="text-xs text-muted font-medium truncate max-w-48">{fileName}</span>
             </>
           )}
         </div>
@@ -447,8 +447,8 @@ function PaneToggle({
       onClick={onClick}
       className={`px-2 py-1 text-xs font-medium rounded transition-colors ${
         active
-          ? 'bg-blue-500 text-white'
-          : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+          ? 'bg-accent text-accent-fg'
+          : 'bg-surface-raised text-muted hover:text-strong'
       }`}
     >
       {label}
@@ -458,8 +458,8 @@ function PaneToggle({
 
 function PaneHeader({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between shrink-0">
-      <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">{title}</span>
+    <div className="px-3 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between shrink-0">
+      <span className="text-xs font-semibold text-strong uppercase tracking-wide">{title}</span>
       {children}
     </div>
   )
@@ -468,11 +468,11 @@ function PaneHeader({ title, children }: { title: string; children?: React.React
 function ResizeDivider({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
   return (
     <div
-      className="w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize transition-colors shrink-0 relative group"
+      className="w-1 bg-hair hover:bg-accent cursor-col-resize transition-colors shrink-0 relative group"
       onMouseDown={onMouseDown}
     >
       <div className="absolute inset-y-0 -left-1 -right-1" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-8 rounded-full bg-gray-400 group-hover:bg-blue-500 transition-colors" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-8 rounded-full bg-hair-strong group-hover:bg-accent transition-colors" />
     </div>
   )
 }
@@ -493,71 +493,71 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
   return (
     <div className="p-4 space-y-4">
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-gray-700">Network Layer</h3>
+        <h3 className="text-sm font-semibold text-strong">Network Layer</h3>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-gray-500">Source IP:</span>
+            <span className="text-muted">Source IP:</span>
             <span className="ml-2 font-mono">{packet.srcIp}</span>
           </div>
           <div>
-            <span className="text-gray-500">Destination IP:</span>
+            <span className="text-muted">Destination IP:</span>
             <span className="ml-2 font-mono">{packet.dstIp}</span>
           </div>
         </div>
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-gray-700">Transport Layer</h3>
+        <h3 className="text-sm font-semibold text-strong">Transport Layer</h3>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-gray-500">Protocol:</span>
+            <span className="text-muted">Protocol:</span>
             <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${
-              packet.protocol === 'TCP' ? 'bg-blue-100 text-blue-700' :
-              packet.protocol === 'UDP' ? 'bg-green-100 text-green-700' :
-              packet.protocol === 'ICMP' ? 'bg-yellow-100 text-yellow-700' :
-              'bg-gray-100 text-gray-700'
+              packet.protocol === 'TCP' ? 'bg-accent-subtle text-accent' :
+              packet.protocol === 'UDP' ? 'bg-ok-subtle text-ok' :
+              packet.protocol === 'ICMP' ? 'bg-warning-subtle text-warning' :
+              'bg-surface-sunken text-muted'
             }`}>
               {packet.protocol}
             </span>
           </div>
           {packet.srcPort !== undefined && (
             <div>
-              <span className="text-gray-500">Source Port:</span>
+              <span className="text-muted">Source Port:</span>
               <span className="ml-2 font-mono">{packet.srcPort}</span>
             </div>
           )}
           {packet.dstPort !== undefined && (
             <div>
-              <span className="text-gray-500">Destination Port:</span>
+              <span className="text-muted">Destination Port:</span>
               <span className="ml-2 font-mono">{packet.dstPort}</span>
             </div>
           )}
           <div>
-            <span className="text-gray-500">Payload Length:</span>
+            <span className="text-muted">Payload Length:</span>
             <span className="ml-2 font-mono">{packet.payloadLength} bytes</span>
           </div>
         </div>
         {packet.tcpFlags && (
           <div className="text-sm">
-            <span className="text-gray-500">TCP Flags:</span>
+            <span className="text-muted">TCP Flags:</span>
             <span className="ml-2 font-mono">{formatTcpFlags(packet.tcpFlags)}</span>
           </div>
         )}
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-gray-700">Frame Info</h3>
+        <h3 className="text-sm font-semibold text-strong">Frame Info</h3>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-gray-500">Captured:</span>
+            <span className="text-muted">Captured:</span>
             <span className="ml-2 font-mono">{packet.capturedLength} bytes</span>
           </div>
           <div>
-            <span className="text-gray-500">Original:</span>
+            <span className="text-muted">Original:</span>
             <span className="ml-2 font-mono">{packet.originalLength} bytes</span>
           </div>
           <div>
-            <span className="text-gray-500">Timestamp:</span>
+            <span className="text-muted">Timestamp:</span>
             <span className="ml-2 font-mono">{packet.timestamp.toISOString()}</span>
           </div>
         </div>
@@ -569,19 +569,19 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
 function SqlHelpModal({ onClose }: { onClose: () => void }) {
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      className="fixed inset-0 bg-canvas/50 flex items-center justify-center z-50"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-lg shadow-xl max-w-2xl max-h-[80vh] overflow-hidden flex flex-col"
+        className="bg-surface rounded-lg shadow-xl max-w-2xl max-h-[80vh] overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
-          <h2 className="text-lg font-semibold text-gray-800">Filter Help</h2>
+        <div className="px-6 py-4 border-b border-hair flex items-center justify-between bg-surface-sunken">
+          <h2 className="text-lg font-semibold text-strong">Filter Help</h2>
           <button
             onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 p-1"
+            className="text-muted hover:text-strong p-1"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -593,7 +593,7 @@ function SqlHelpModal({ onClose }: { onClose: () => void }) {
         <div className="p-6 overflow-auto">
           {/* Available Fields */}
           <div className="mb-6">
-            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Available Fields</h3>
+            <h3 className="text-sm font-semibold text-strong uppercase tracking-wide mb-3">Available Fields</h3>
             <div className="grid grid-cols-2 gap-2 text-sm">
               <FieldHelp name="type" desc="Message type" examples="OPEN, UPDATE, NOTIFICATION, KEEPALIVE" />
               <FieldHelp name="src_ip" desc="Source IP address" examples="10.0.0.1, 192.168.1.0/24" />
@@ -612,42 +612,42 @@ function SqlHelpModal({ onClose }: { onClose: () => void }) {
 
           {/* Operators */}
           <div className="mb-6">
-            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Operators</h3>
+            <h3 className="text-sm font-semibold text-strong uppercase tracking-wide mb-3">Operators</h3>
             <div className="grid grid-cols-3 gap-2 text-sm">
-              <div className="bg-gray-50 p-2 rounded">
-                <code className="font-mono text-blue-600">=</code>
-                <span className="text-gray-500 ml-2">Equals</span>
+              <div className="bg-surface-sunken p-2 rounded">
+                <code className="font-mono text-accent">=</code>
+                <span className="text-muted ml-2">Equals</span>
               </div>
-              <div className="bg-gray-50 p-2 rounded">
-                <code className="font-mono text-blue-600">!=</code>
-                <span className="text-gray-500 ml-2">Not equals</span>
+              <div className="bg-surface-sunken p-2 rounded">
+                <code className="font-mono text-accent">!=</code>
+                <span className="text-muted ml-2">Not equals</span>
               </div>
-              <div className="bg-gray-50 p-2 rounded">
-                <code className="font-mono text-blue-600">contains</code>
-                <span className="text-gray-500 ml-2">Contains</span>
+              <div className="bg-surface-sunken p-2 rounded">
+                <code className="font-mono text-accent">contains</code>
+                <span className="text-muted ml-2">Contains</span>
               </div>
             </div>
           </div>
 
           {/* Examples */}
           <div>
-            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Examples</h3>
-            <div className="space-y-2 text-sm bg-gray-50 p-4 rounded-lg font-mono">
-              <div><code className="text-gray-800">type=UPDATE</code></div>
-              <div><code className="text-gray-800">type=UPDATE and src_ip=10.0.0.1</code></div>
-              <div><code className="text-gray-800">asn=65001</code></div>
-              <div><code className="text-gray-800">prefix contains 192.168</code></div>
-              <div><code className="text-gray-800">(type=OPEN or type=UPDATE) and src_ip=10.0.0.1</code></div>
-              <div><code className="text-gray-800">community=65001:100</code></div>
+            <h3 className="text-sm font-semibold text-strong uppercase tracking-wide mb-3">Examples</h3>
+            <div className="space-y-2 text-sm bg-surface-sunken p-4 rounded-lg font-mono">
+              <div><code className="text-body">type=UPDATE</code></div>
+              <div><code className="text-body">type=UPDATE and src_ip=10.0.0.1</code></div>
+              <div><code className="text-body">asn=65001</code></div>
+              <div><code className="text-body">prefix contains 192.168</code></div>
+              <div><code className="text-body">(type=OPEN or type=UPDATE) and src_ip=10.0.0.1</code></div>
+              <div><code className="text-body">community=65001:100</code></div>
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-3 border-t border-gray-200 bg-gray-50 flex justify-end">
+        <div className="px-6 py-3 border-t border-hair bg-surface-sunken flex justify-end">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium bg-gray-800 text-white rounded hover:bg-gray-700"
+            className="px-4 py-2 text-sm font-medium bg-accent text-accent-fg rounded hover:bg-accent-hover"
           >
             Close
           </button>
@@ -659,10 +659,10 @@ function SqlHelpModal({ onClose }: { onClose: () => void }) {
 
 function FieldHelp({ name, desc, examples }: { name: string; desc: string; examples: string }) {
   return (
-    <div className="bg-gray-50 p-2 rounded">
-      <code className="font-mono text-blue-600 font-medium">{name}</code>
-      <p className="text-gray-600 text-xs mt-0.5">{desc}</p>
-      <p className="text-gray-400 text-xs">{examples}</p>
+    <div className="bg-surface-sunken p-2 rounded">
+      <code className="font-mono text-accent font-medium">{name}</code>
+      <p className="text-muted text-xs mt-0.5">{desc}</p>
+      <p className="text-muted text-xs">{examples}</p>
     </div>
   )
 }

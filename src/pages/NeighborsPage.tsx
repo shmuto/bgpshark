@@ -475,15 +475,15 @@ export function NeighborsPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-gray-50">
+    <div className="flex-1 flex flex-col min-h-0 bg-canvas">
       {/* Header */}
-      <div className="p-4 bg-white border-b border-gray-200">
+      <div className="p-4 bg-surface border-b border-hair">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <span className="text-xl">👥</span>
-            <h1 className="text-lg font-semibold text-gray-800">Neighbors Overview</h1>
+            <h1 className="text-lg font-semibold text-strong">Neighbors Overview</h1>
           </div>
-          <span className="text-sm text-gray-500">{routers.length} routers detected</span>
+          <span className="text-sm text-muted">{routers.length} routers detected</span>
         </div>
 
         {/* Search and Filter */}
@@ -494,19 +494,19 @@ export function NeighborsPage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search by IP, Router ID, or AS number..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border border-hair rounded-lg text-sm focus:ring-2 focus:ring-accent focus:border-accent"
             />
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500">Filter:</span>
+            <span className="text-xs text-muted">Filter:</span>
             {(['all', 'alerts', 'open', 'inactive'] as const).map((type) => (
               <button
                 key={type}
                 onClick={() => setFilterType(type)}
                 className={`px-3 py-1.5 text-xs rounded transition-colors ${
                   filterType === type
-                    ? 'bg-blue-500 text-white'
-                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    ? 'bg-accent text-accent-fg'
+                    : 'bg-surface-sunken text-muted hover:bg-surface-raised'
                 }`}
               >
                 {type === 'all' ? 'All' :
@@ -521,67 +521,67 @@ export function NeighborsPage() {
       {/* Main Content */}
       <div className="flex-1 flex min-h-0">
         {/* Router List */}
-        <div className="w-1/3 border-r border-gray-200 bg-white flex flex-col min-h-0">
+        <div className="w-1/3 border-r border-hair bg-surface flex flex-col min-h-0">
           <div className="flex-1 overflow-auto">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 sticky top-0">
-                <tr className="text-left text-gray-600">
+              <thead className="bg-surface-sunken sticky top-0">
+                <tr className="text-left text-muted">
                   <th className="px-4 py-2 font-medium">Router ID / IP</th>
                   <th className="px-4 py-2 font-medium">AS</th>
                   <th className="px-4 py-2 font-medium text-right">Msgs</th>
                   <th className="px-4 py-2 font-medium">Message Types</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-hair">
                 {filteredRouters.map((router) => (
                   <tr
                     key={router.routerId}
                     onClick={() => setSelectedRouter(router.routerId)}
-                    className={`cursor-pointer hover:bg-gray-50 ${
-                      selectedRouter === router.routerId ? 'bg-blue-50' : ''
+                    className={`cursor-pointer hover:bg-surface-sunken ${
+                      selectedRouter === router.routerId ? 'bg-accent-subtle' : ''
                     }`}
                   >
                     <td className="px-4 py-2">
-                      <div className="font-mono text-gray-800">{router.displayName}</div>
+                      <div className="font-mono text-strong">{router.displayName}</div>
                       {router.ips.length > 1 && (
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-muted">
                           {router.ips.length} IPs
                         </div>
                       )}
                       {router.ips.length === 1 && router.displayName !== router.ips[0] && (
-                        <div className="text-xs text-gray-500">{router.ips[0]}</div>
+                        <div className="text-xs text-muted">{router.ips[0]}</div>
                       )}
                     </td>
-                    <td className="px-4 py-2 font-mono text-gray-600">
+                    <td className="px-4 py-2 font-mono text-muted">
                       {router.asNumber || '-'}
                     </td>
-                    <td className="px-4 py-2 text-right text-gray-600">
+                    <td className="px-4 py-2 text-right text-muted">
                       {router.totalMessages}
                     </td>
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-1.5 text-xs flex-wrap">
                         {router.messageCounts.open > 0 && (
-                          <span className="text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded">
+                          <span className="text-bgp-open bg-bgp-open/10 px-1.5 py-0.5 rounded">
                             OPEN:{router.messageCounts.open}
                           </span>
                         )}
                         {router.messageCounts.update > 0 && (
-                          <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
+                          <span className="text-bgp-update bg-bgp-update/10 px-1.5 py-0.5 rounded">
                             UPDATE:{router.messageCounts.update}
                           </span>
                         )}
                         {router.messageCounts.notification > 0 && (
-                          <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                          <span className="text-bgp-notification bg-bgp-notification/10 px-1.5 py-0.5 rounded">
                             NOTIFICATION:{router.messageCounts.notification}
                           </span>
                         )}
                         {router.messageCounts.keepalive > 0 && (
-                          <span className="text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">
+                          <span className="text-bgp-keepalive bg-bgp-keepalive/10 px-1.5 py-0.5 rounded">
                             KEEPALIVE:{router.messageCounts.keepalive}
                           </span>
                         )}
                         {router.messageCounts.routeRefresh > 0 && (
-                          <span className="text-gray-700 bg-gray-100 px-1.5 py-0.5 rounded">
+                          <span className="text-bgp-route-refresh bg-bgp-route-refresh/10 px-1.5 py-0.5 rounded">
                             REFRESH:{router.messageCounts.routeRefresh}
                           </span>
                         )}
@@ -592,7 +592,7 @@ export function NeighborsPage() {
               </tbody>
             </table>
             {filteredRouters.length === 0 && (
-              <div className="text-center text-gray-400 py-8">
+              <div className="text-center text-dim py-8">
                 No routers found
               </div>
             )}
@@ -604,26 +604,26 @@ export function NeighborsPage() {
           {selectedRouterInfo ? (
             <div className="space-y-4">
               {/* Router Detail Header */}
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+              <div className="bg-surface rounded-lg shadow-sm border border-hair p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold text-gray-800">
+                    <h2 className="text-lg font-semibold text-strong">
                       {selectedRouterInfo.displayName}
                       {selectedRouterInfo.asNumber && (
-                        <span className="ml-2 text-gray-500 font-normal">
+                        <span className="ml-2 text-muted font-normal">
                           (AS{selectedRouterInfo.asNumber})
                         </span>
                       )}
                     </h2>
                     {selectedRouterInfo.ips.length > 0 && (
-                      <div className="text-sm text-gray-500">
+                      <div className="text-sm text-muted">
                         IPs: {selectedRouterInfo.ips.join(', ')}
                       </div>
                     )}
                   </div>
                   <button
                     onClick={() => setSelectedRouter(null)}
-                    className="text-gray-400 hover:text-gray-600"
+                    className="text-dim hover:text-strong"
                   >
                     ✕
                   </button>
@@ -633,17 +633,17 @@ export function NeighborsPage() {
               {/* Message Summary & Sessions */}
               <div className="grid grid-cols-2 gap-4">
                 {/* Message Summary */}
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                  <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
-                    <span className="text-sm font-medium text-gray-700">📊 Message Summary</span>
+                <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+                    <span className="text-sm font-medium text-strong">📊 Message Summary</span>
                   </div>
                   <div className="p-4">
                     {messageSummary && (
                       <table className="w-full text-sm">
                         <tbody>
                           {Object.entries(messageSummary).map(([type, count]) => (
-                            <tr key={type} className="border-b border-gray-100 last:border-0">
-                              <td className="py-1 text-gray-600 uppercase">{type}</td>
+                            <tr key={type} className="border-b border-hair last:border-0">
+                              <td className="py-1 text-muted uppercase">{type}</td>
                               <td className="py-1 text-right font-mono">{count}</td>
                             </tr>
                           ))}
@@ -654,11 +654,11 @@ export function NeighborsPage() {
                 </div>
 
                 {/* Sessions */}
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                  <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
-                    <span className="text-sm font-medium text-gray-700">🔗 Sessions</span>
+                <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+                    <span className="text-sm font-medium text-strong">🔗 Sessions</span>
                   </div>
-                  <div className="divide-y divide-gray-100 max-h-48 overflow-auto">
+                  <div className="divide-y divide-hair max-h-48 overflow-auto">
                     {sessions.map((session) => {
                       // Find the local IP that communicates with this peer
                       const localIp = selectedIps.find(ip => {
@@ -672,22 +672,22 @@ export function NeighborsPage() {
                         <div
                           key={session.peerIp}
                           onClick={() => setSelectedPeer(session.peerIp)}
-                          className={`px-4 py-2 cursor-pointer hover:bg-gray-50 flex items-center justify-between ${
-                            selectedPeer === session.peerIp ? 'bg-blue-50' : ''
+                          className={`px-4 py-2 cursor-pointer hover:bg-surface-sunken flex items-center justify-between ${
+                            selectedPeer === session.peerIp ? 'bg-accent-subtle' : ''
                           }`}
                         >
-                          <span className="font-mono text-xs text-gray-600">
+                          <span className="font-mono text-xs text-muted">
                             {localIp} ↔ {session.peerIp}
                           </span>
                           <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-500">{session.messageCount} msgs</span>
-                            {session.hasNotification && <span className="text-red-500">⚠</span>}
+                            <span className="text-xs text-muted">{session.messageCount} msgs</span>
+                            {session.hasNotification && <span className="text-critical">⚠</span>}
                           </div>
                         </div>
                       )
                     })}
                     {sessions.length === 0 && (
-                      <div className="px-4 py-4 text-center text-gray-400 text-sm">
+                      <div className="px-4 py-4 text-center text-dim text-sm">
                         No sessions found
                       </div>
                     )}
@@ -697,33 +697,33 @@ export function NeighborsPage() {
 
               {/* Session Messages (OPEN/NOTIFICATION) */}
               {sessionMessages.length > 0 && (
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                  <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
-                    <span className="text-sm font-medium text-gray-700">📋 Session Messages ({sessionMessages.length})</span>
+                <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+                    <span className="text-sm font-medium text-strong">📋 Session Messages ({sessionMessages.length})</span>
                   </div>
-                  <div className="divide-y divide-gray-100 max-h-48 overflow-auto">
+                  <div className="divide-y divide-hair max-h-48 overflow-auto">
                     {sessionMessages.map((msg, idx) => (
                       <div
                         key={idx}
                         onClick={() => handleViewEventAtIndex(msg.peerIp, msg.packetIndex)}
-                        className={`px-4 py-2 cursor-pointer hover:bg-gray-50 ${
-                          msg.type === 'OPEN' ? 'bg-blue-50/50' : 'bg-amber-50/50'
+                        className={`px-4 py-2 cursor-pointer hover:bg-surface-sunken ${
+                          msg.type === 'OPEN' ? 'bg-bgp-open/5' : 'bg-bgp-notification/5'
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                            msg.type === 'OPEN' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+                            msg.type === 'OPEN' ? 'bg-bgp-open/10 text-bgp-open' : 'bg-bgp-notification/10 text-bgp-notification'
                           }`}>
                             {msg.type}
                           </span>
-                          <span className="font-mono text-xs text-gray-600">
+                          <span className="font-mono text-xs text-muted">
                             {msg.srcIp} → {msg.dstIp}
                           </span>
-                          <span className="text-xs text-gray-400">
+                          <span className="text-xs text-dim">
                             {formatTime(msg.timestamp)}
                           </span>
                         </div>
-                        <div className="text-xs text-gray-500 mt-1 ml-14">
+                        <div className="text-xs text-muted mt-1 ml-14">
                           {msg.detail}
                         </div>
                       </div>
@@ -734,12 +734,12 @@ export function NeighborsPage() {
 
               {/* Announced Prefixes */}
               {announcedPrefixes.length > 0 && (
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                  <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700">📡 Announced Prefixes ({announcedPrefixes.length})</span>
+                <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
+                    <span className="text-sm font-medium text-strong">📡 Announced Prefixes ({announcedPrefixes.length})</span>
                     <button
                       onClick={handleViewRoutes}
-                      className="text-xs text-blue-600 hover:text-blue-800"
+                      className="text-xs text-accent hover:text-accent-hover"
                     >
                       View all routes →
                     </button>
@@ -749,13 +749,13 @@ export function NeighborsPage() {
                       {announcedPrefixes.slice(0, 100).map((prefix) => (
                         <span
                           key={prefix}
-                          className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-mono"
+                          className="px-2 py-0.5 bg-accent-subtle text-accent rounded text-xs font-mono"
                         >
                           {prefix}
                         </span>
                       ))}
                       {announcedPrefixes.length > 100 && (
-                        <span className="px-2 py-0.5 text-gray-500 text-xs">
+                        <span className="px-2 py-0.5 text-muted text-xs">
                           +{announcedPrefixes.length - 100} more
                         </span>
                       )}
@@ -767,57 +767,57 @@ export function NeighborsPage() {
               {/* Session Timeline (when peer selected) */}
               {selectedPeer && (
                 <>
-                  <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                    <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-                      <span className="text-sm font-medium text-gray-700">
+                  <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                    <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
+                      <span className="text-sm font-medium text-strong">
                         📜 Session Timeline: {selectedRouterInfo?.displayName} ↔ {selectedPeer}
                       </span>
                       <button
                         onClick={handleViewMessages}
-                        className="text-xs text-blue-600 hover:text-blue-800"
+                        className="text-xs text-accent hover:text-accent-hover"
                       >
                         Show all messages →
                       </button>
                     </div>
                     <div className="max-h-64 overflow-auto">
                       <table className="w-full text-sm">
-                        <thead className="bg-gray-50 sticky top-0">
-                          <tr className="text-left text-gray-600">
+                        <thead className="bg-surface-sunken sticky top-0">
+                          <tr className="text-left text-muted">
                             <th className="px-4 py-2 font-medium w-28">Time</th>
                             <th className="px-4 py-2 font-medium">Source → Dest</th>
                             <th className="px-4 py-2 font-medium w-28">Type</th>
                             <th className="px-4 py-2 font-medium">Summary</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-100">
+                        <tbody className="divide-y divide-hair">
                           {sessionTimeline.slice(0, 50).map((msg, idx) => (
                             <tr
                               key={idx}
                               onClick={() => handleViewMessageAtIndex(msg.packetIndex)}
-                              className={`cursor-pointer hover:bg-gray-100 ${
-                                msg.type === 'NOTIFICATION' ? 'bg-amber-50' :
-                                msg.type === 'OPEN' ? 'bg-blue-50' :
-                                msg.type === 'KEEPALIVE' ? 'bg-gray-50' : ''
+                              className={`cursor-pointer hover:bg-surface-raised ${
+                                msg.type === 'NOTIFICATION' ? 'bg-bgp-notification/5' :
+                                msg.type === 'OPEN' ? 'bg-bgp-open/5' :
+                                msg.type === 'KEEPALIVE' ? 'bg-surface-sunken' : ''
                               }`}
                             >
-                              <td className="px-4 py-1.5 font-mono text-gray-600">
+                              <td className="px-4 py-1.5 font-mono text-muted">
                                 {formatTime(msg.timestamp)}
                               </td>
-                              <td className="px-4 py-1.5 font-mono text-xs text-gray-600">
+                              <td className="px-4 py-1.5 font-mono text-xs text-muted">
                                 {msg.srcIp} → {msg.dstIp}
                               </td>
                               <td className="px-4 py-1.5">
                                 <span className={`px-2 py-0.5 rounded text-xs ${
-                                  msg.type === 'OPEN' ? 'bg-blue-100 text-blue-700' :
-                                  msg.type === 'UPDATE' ? 'bg-emerald-100 text-emerald-700' :
-                                  msg.type === 'NOTIFICATION' ? 'bg-amber-100 text-amber-700' :
-                                  msg.type === 'KEEPALIVE' ? 'bg-purple-100 text-purple-700' :
-                                  'bg-gray-100 text-gray-700'
+                                  msg.type === 'OPEN' ? 'bg-bgp-open/10 text-bgp-open' :
+                                  msg.type === 'UPDATE' ? 'bg-bgp-update/10 text-bgp-update' :
+                                  msg.type === 'NOTIFICATION' ? 'bg-bgp-notification/10 text-bgp-notification' :
+                                  msg.type === 'KEEPALIVE' ? 'bg-bgp-keepalive/10 text-bgp-keepalive' :
+                                  'bg-bgp-route-refresh/10 text-bgp-route-refresh'
                                 }`}>
                                   {msg.type}
                                 </span>
                               </td>
-                              <td className="px-4 py-1.5 text-gray-600 truncate max-w-xs">
+                              <td className="px-4 py-1.5 text-muted truncate max-w-xs">
                                 {msg.summary}
                               </td>
                             </tr>
@@ -825,7 +825,7 @@ export function NeighborsPage() {
                         </tbody>
                       </table>
                       {sessionTimeline.length > 50 && (
-                        <div className="text-center text-xs text-gray-500 py-2">
+                        <div className="text-center text-xs text-muted py-2">
                           Showing 50 of {sessionTimeline.length} messages
                         </div>
                       )}
@@ -834,9 +834,9 @@ export function NeighborsPage() {
 
                   {/* OPEN Comparison / Capability diff */}
                   {openComparison && (
-                    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                      <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
-                        <span className="text-sm font-medium text-gray-700">
+                    <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                      <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+                        <span className="text-sm font-medium text-strong">
                           🔍 Capability Diff
                         </span>
                       </div>
@@ -853,38 +853,38 @@ export function NeighborsPage() {
 
                   {/* Prefix Activity */}
                   {prefixActivity && (
-                    <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-                      <div className="px-4 py-2 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-                        <span className="text-sm font-medium text-gray-700">
+                    <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                      <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
+                        <span className="text-sm font-medium text-strong">
                           📈 Prefix Activity ({selectedRouterInfo?.displayName} → {selectedPeer})
                         </span>
                         <button
                           onClick={handleViewRoutes}
-                          className="text-xs text-blue-600 hover:text-blue-800"
+                          className="text-xs text-accent hover:text-accent-hover"
                         >
                           View Route Details →
                         </button>
                       </div>
                       <div className="p-4 grid grid-cols-4 gap-4 text-center">
                         <div>
-                          <div className="text-2xl font-bold text-green-600">{prefixActivity.announced}</div>
-                          <div className="text-xs text-gray-500">Announced</div>
+                          <div className="text-2xl font-bold text-ok">{prefixActivity.announced}</div>
+                          <div className="text-xs text-muted">Announced</div>
                         </div>
                         <div>
-                          <div className="text-2xl font-bold text-red-600">{prefixActivity.withdrawn}</div>
-                          <div className="text-xs text-gray-500">Withdrawn</div>
+                          <div className="text-2xl font-bold text-critical">{prefixActivity.withdrawn}</div>
+                          <div className="text-xs text-muted">Withdrawn</div>
                         </div>
                         <div>
-                          <div className={`text-2xl font-bold ${prefixActivity.netChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          <div className={`text-2xl font-bold ${prefixActivity.netChange >= 0 ? 'text-ok' : 'text-critical'}`}>
                             {prefixActivity.netChange >= 0 ? '+' : ''}{prefixActivity.netChange}
                           </div>
-                          <div className="text-xs text-gray-500">Net Change</div>
+                          <div className="text-xs text-muted">Net Change</div>
                         </div>
                         <div>
-                          <div className="text-2xl font-bold text-gray-700">
+                          <div className="text-2xl font-bold text-strong">
                             {Math.max(0, prefixActivity.netChange)}
                           </div>
-                          <div className="text-xs text-gray-500">Est. Prefixes</div>
+                          <div className="text-xs text-muted">Est. Prefixes</div>
                         </div>
                       </div>
                     </div>
@@ -896,14 +896,14 @@ export function NeighborsPage() {
               <div className="flex gap-3">
                 <button
                   onClick={handleViewMessages}
-                  className="px-4 py-2 bg-blue-500 text-white text-sm rounded-lg hover:bg-blue-600"
+                  className="px-4 py-2 bg-accent text-accent-fg text-sm rounded-lg hover:bg-accent-hover"
                 >
                   Show all messages →
                 </button>
               </div>
             </div>
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-400">
+            <div className="flex items-center justify-center h-full text-dim">
               Select a router to view details
             </div>
           )}

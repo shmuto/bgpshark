@@ -7,12 +7,12 @@ interface SummaryCardDef {
 }
 
 const CARD_DEFS: SummaryCardDef[] = [
-  { key: 'total', label: 'Packets', colorClass: 'text-gray-800' },
+  { key: 'total', label: 'Packets', colorClass: 'text-strong' },
   { key: 'OPEN', label: 'OPEN', colorClass: 'text-bgp-open' },
   { key: 'UPDATE', label: 'UPDATE', colorClass: 'text-bgp-update' },
   { key: 'NOTIFICATION', label: 'NOTIFICATION', colorClass: 'text-bgp-notification' },
   { key: 'KEEPALIVE', label: 'KEEPALIVE', colorClass: 'text-bgp-keepalive' },
-  { key: 'ROUTE_REFRESH', label: 'ROUTE REFRESH', colorClass: 'text-gray-600' },
+  { key: 'ROUTE_REFRESH', label: 'ROUTE REFRESH', colorClass: 'text-bgp-route-refresh' },
 ]
 
 interface SummaryCardsProps {
@@ -30,10 +30,10 @@ export function SummaryCards({ summary, onSelect }: SummaryCardsProps) {
           <button
             key={label}
             onClick={() => onSelect(filter)}
-            className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 text-left hover:border-blue-400 hover:shadow-md transition-all"
+            className="bg-surface rounded-lg shadow-sm border border-hair p-4 text-left hover:border-hair-strong hover:shadow-md transition-all"
           >
             <div className={`text-2xl font-bold font-mono ${colorClass}`}>{value.toLocaleString()}</div>
-            <div className="text-xs text-gray-500 mt-1 uppercase tracking-wide">{label}</div>
+            <div className="text-xs text-muted mt-1 uppercase tracking-wide">{label}</div>
           </button>
         )
       })}

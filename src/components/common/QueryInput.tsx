@@ -141,7 +141,7 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
     <div className="relative flex-1">
       <div className="relative">
         <svg
-          className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dim"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -166,10 +166,10 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
           placeholder={placeholder ?? 'type=OPEN and src=10.0.0.1'}
           className={`w-full pl-8 pr-3 py-1.5 text-sm font-mono border rounded
                      focus:outline-none focus:ring-2 focus:border-transparent
-                     placeholder:text-gray-400
+                     placeholder:text-dim
                      ${hasError
-                       ? 'border-red-400 bg-red-50 focus:ring-red-500'
-                       : 'border-gray-300 focus:ring-blue-500'
+                       ? 'border-critical bg-critical-subtle focus:ring-critical'
+                       : 'border-hair-strong focus:ring-accent'
                      }`}
           spellCheck={false}
           autoComplete="off"
@@ -180,7 +180,7 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
               onChange('')
               inputRef.current?.focus()
             }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-dim hover:text-strong"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -193,7 +193,7 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
       {showSuggestions && suggestions.length > 0 && (
         <div
           ref={suggestionsRef}
-          className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200
+          className="absolute top-full left-0 right-0 mt-1 bg-surface-raised border border-hair
                      rounded shadow-lg z-20 max-h-60 overflow-auto"
         >
           {suggestions.map((suggestion, index) => (
@@ -206,11 +206,11 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
               onMouseEnter={() => setSelectedIndex(index)}
               className={`
                 w-full px-3 py-2 text-left text-sm flex items-center justify-between
-                ${index === selectedIndex ? 'bg-blue-50' : 'hover:bg-gray-50'}
+                ${index === selectedIndex ? 'bg-accent-subtle' : 'hover:bg-surface-sunken'}
               `}
             >
-              <span className="font-mono font-medium">{suggestion.text}</span>
-              <span className="text-gray-500 text-xs">{suggestion.description}</span>
+              <span className="font-mono font-medium text-strong">{suggestion.text}</span>
+              <span className="text-muted text-xs">{suggestion.description}</span>
             </button>
           ))}
         </div>

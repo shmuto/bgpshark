@@ -18,7 +18,7 @@ export function NeighborSummary({ packets, onFilterByNeighbor }: NeighborSummary
 
   if (neighborGroups.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+      <div className="flex items-center justify-center h-full text-dim text-sm">
         No BGP messages found
       </div>
     )
@@ -54,24 +54,24 @@ function NeighborGroupCard({
   const hasError = group.sessions.some((s) => s.hasNotification)
 
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
+    <div className="border border-hair rounded-lg overflow-hidden">
       {/* Header: Source IP */}
       <div
         className={`px-4 py-2 flex items-center justify-between ${
-          hasError ? 'bg-red-50 border-b border-red-200' : 'bg-gray-50 border-b border-gray-200'
+          hasError ? 'bg-critical-subtle border-b border-hair-strong' : 'bg-surface-sunken border-b border-hair'
         }`}
       >
         <div className="flex items-center gap-2">
           <span className="font-mono font-medium text-sm">{group.srcIp}</span>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-muted">
             → {group.sessions.length} peer{group.sessions.length > 1 ? 's' : ''}
           </span>
         </div>
-        <span className="text-xs text-gray-500">{totalMessages} msgs</span>
+        <span className="text-xs text-muted">{totalMessages} msgs</span>
       </div>
 
       {/* Sessions */}
-      <div className="divide-y divide-gray-100">
+      <div className="divide-y divide-hair">
         {group.sessions.map((session) => (
           <SessionCard key={session.dstIp} session={session} onFilter={onFilter} />
         ))}
@@ -103,26 +103,26 @@ function SessionCard({
   }
 
   return (
-    <div className="p-3 hover:bg-gray-50">
+    <div className="p-3 hover:bg-surface-sunken">
       {/* Destination IP and Filter button */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
-          <span className="text-gray-400">→</span>
+          <span className="text-dim">→</span>
           <span className="font-mono text-sm">{session.dstIp}</span>
           {session.hasNotification && (
-            <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Error</span>
+            <span className="text-xs bg-critical-subtle text-critical px-1.5 py-0.5 rounded">Error</span>
           )}
           {onFilter && (
             <button
               onClick={handleFilterClick}
-              className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+              className="text-xs text-accent hover:text-accent-hover hover:underline"
               title="Filter packets for this session"
             >
               Filter
             </button>
           )}
         </div>
-        <span className="text-xs text-gray-400">{totalMessages} msgs</span>
+        <span className="text-xs text-dim">{totalMessages} msgs</span>
       </div>
 
       {/* OPEN info */}
@@ -130,15 +130,15 @@ function SessionCard({
         <div className="ml-5 space-y-1">
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
             <span>
-              <span className="text-gray-500">AS:</span>{' '}
+              <span className="text-muted">AS:</span>{' '}
               <span className="font-mono">{latestOpen.asNumber}</span>
             </span>
             <span>
-              <span className="text-gray-500">Router ID:</span>{' '}
+              <span className="text-muted">Router ID:</span>{' '}
               <span className="font-mono">{latestOpen.routerId}</span>
             </span>
             <span>
-              <span className="text-gray-500">Hold:</span>{' '}
+              <span className="text-muted">Hold:</span>{' '}
               <span className="font-mono">{latestOpen.holdTime}s</span>
             </span>
           </div>
@@ -147,7 +147,7 @@ function SessionCard({
           {capabilities.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
               {capabilities.map((cap, i) => (
-                <span key={i} className="text-xs bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+                <span key={i} className="text-xs bg-accent-subtle text-accent px-1.5 py-0.5 rounded">
                   {cap}
                 </span>
               ))}
@@ -161,42 +161,42 @@ function SessionCard({
         {session.messageCount.open > 0 && (
           <span>
             <span className="text-bgp-open font-medium">{session.messageCount.open}</span>
-            <span className="text-gray-400 ml-0.5">OPEN</span>
+            <span className="text-dim ml-0.5">OPEN</span>
           </span>
         )}
         {session.messageCount.update > 0 && (
           <span>
             <span className="text-bgp-update font-medium">{session.messageCount.update}</span>
-            <span className="text-gray-400 ml-0.5">UPD</span>
+            <span className="text-dim ml-0.5">UPD</span>
           </span>
         )}
         {session.messageCount.keepalive > 0 && (
           <span>
             <span className="text-bgp-keepalive font-medium">{session.messageCount.keepalive}</span>
-            <span className="text-gray-400 ml-0.5">KA</span>
+            <span className="text-dim ml-0.5">KA</span>
           </span>
         )}
         {session.messageCount.notification > 0 && (
           <span>
             <span className="text-bgp-notification font-medium">{session.messageCount.notification}</span>
-            <span className="text-gray-400 ml-0.5">NOTIF</span>
+            <span className="text-dim ml-0.5">NOTIF</span>
           </span>
         )}
         {session.messageCount.routeRefresh > 0 && (
           <span>
-            <span className="text-cyan-500 font-medium">{session.messageCount.routeRefresh}</span>
-            <span className="text-gray-400 ml-0.5">RR</span>
+            <span className="text-bgp-route-refresh font-medium">{session.messageCount.routeRefresh}</span>
+            <span className="text-dim ml-0.5">RR</span>
           </span>
         )}
       </div>
 
       {/* Notification Error */}
       {session.hasNotification && session.notificationInfo && (
-        <div className="ml-5 mt-2 bg-red-50 border border-red-200 rounded p-2">
-          <div className="text-xs text-red-700 font-medium">
+        <div className="ml-5 mt-2 bg-critical-subtle border border-hair-strong rounded p-2">
+          <div className="text-xs text-critical font-medium">
             {session.notificationInfo.errorCode} / {session.notificationInfo.errorSubcode}
           </div>
-          <div className="text-xs text-red-600 mt-1">{session.notificationInfo.hint}</div>
+          <div className="text-xs text-critical mt-1">{session.notificationInfo.hint}</div>
         </div>
       )}
     </div>

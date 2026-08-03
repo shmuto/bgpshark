@@ -12,11 +12,11 @@ export function WarningBanner({ warnings }: WarningBannerProps) {
   }
 
   return (
-    <div className="bg-amber-50 border-b border-amber-200">
+    <div className="bg-warning-subtle border-b border-warning/30">
       <div className="px-4 py-2">
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="flex items-center gap-2 text-amber-700 hover:text-amber-800 text-sm w-full"
+          className="flex items-center gap-2 text-warning hover:opacity-80 transition-opacity text-sm w-full"
         >
           <svg
             className="w-4 h-4 flex-shrink-0"
@@ -47,7 +47,7 @@ export function WarningBanner({ warnings }: WarningBannerProps) {
         {isExpanded && (
           <div className="mt-2 space-y-1">
             {warnings.map((warning, index) => (
-              <div key={index} className="text-sm text-amber-600 pl-6">
+              <div key={index} className="text-sm text-warning pl-6">
                 {warning}
               </div>
             ))}

@@ -238,14 +238,14 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="flex-1 overflow-auto bg-gray-50">
+    <div className="flex-1 overflow-auto bg-canvas">
       <div className="max-w-6xl mx-auto p-6 space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-xl">📊</span>
-            <h1 className="text-lg font-semibold text-gray-800">Dashboard</h1>
+            <h1 className="text-lg font-semibold text-strong">Dashboard</h1>
           </div>
-          {fileName && <span className="text-sm text-gray-500">📁 {fileName}</span>}
+          {fileName && <span className="text-sm text-muted">📁 {fileName}</span>}
         </div>
 
         <SummaryCards summary={summary} onSelect={handleSummarySelect} />

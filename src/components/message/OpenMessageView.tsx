@@ -11,7 +11,7 @@ export function OpenMessageView({ message }: OpenMessageViewProps) {
   return (
     <div className="space-y-3">
       {/* Basic Fields */}
-      <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-2">
+      <div className="bg-surface-sunken rounded-lg p-3 text-sm space-y-2">
         <FieldRow label="Version" value={message.version.toString()} />
         <FieldRow
           label="My AS"
@@ -28,7 +28,7 @@ export function OpenMessageView({ message }: OpenMessageViewProps) {
       {/* Capabilities */}
       {message.capabilities.length > 0 && (
         <div>
-          <h4 className="text-sm font-medium text-gray-700 mb-2">
+          <h4 className="text-sm font-medium text-strong mb-2">
             Capabilities ({message.capabilities.length})
           </h4>
           <div className="space-y-2">
@@ -45,7 +45,7 @@ export function OpenMessageView({ message }: OpenMessageViewProps) {
 function FieldRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between">
-      <span className="text-gray-500">{label}</span>
+      <span className="text-muted">{label}</span>
       <span className="font-mono">{value}</span>
     </div>
   )
@@ -57,19 +57,19 @@ function CapabilityItem({ capability }: { capability: BgpCapability }) {
   const hasDetails = capability.parsed && capability.parsed.type !== 'UNKNOWN'
 
   return (
-    <div className="bg-gray-50 rounded-lg overflow-hidden">
+    <div className="bg-surface-sunken rounded-lg overflow-hidden">
       <button
         onClick={() => hasDetails && setIsExpanded(!isExpanded)}
         className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between
-          ${hasDetails ? 'hover:bg-gray-100 cursor-pointer' : 'cursor-default'}`}
+          ${hasDetails ? 'hover:bg-surface-raised cursor-pointer' : 'cursor-default'}`}
       >
         <div className="flex items-center gap-2">
-          <span className="text-gray-400 font-mono text-xs">[{capability.code}]</span>
+          <span className="text-dim font-mono text-xs">[{capability.code}]</span>
           <span className="font-medium">{capability.name}</span>
         </div>
         {hasDetails && (
           <svg
-            className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+            className={`w-4 h-4 text-dim transition-transform ${isExpanded ? 'rotate-180' : ''}`}
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -92,15 +92,15 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
   switch (parsed.type) {
     case 'MULTIPROTOCOL':
       return (
-        <div className="bg-white rounded p-2 space-y-1">
+        <div className="bg-surface rounded p-2 space-y-1">
           <div className="flex justify-between">
-            <span className="text-gray-500">AFI</span>
+            <span className="text-muted">AFI</span>
             <span className="font-mono">
               {parsed.afi} ({parsed.afiName})
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">SAFI</span>
+            <span className="text-muted">SAFI</span>
             <span className="font-mono">
               {parsed.safi} ({parsed.safiName})
             </span>
@@ -110,9 +110,9 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
 
     case 'FOUR_OCTET_AS':
       return (
-        <div className="bg-white rounded p-2">
+        <div className="bg-surface rounded p-2">
           <div className="flex justify-between">
-            <span className="text-gray-500">AS Number</span>
+            <span className="text-muted">AS Number</span>
             <span className="font-mono">{parsed.asNumber}</span>
           </div>
         </div>
@@ -120,21 +120,21 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
 
     case 'GRACEFUL_RESTART':
       return (
-        <div className="bg-white rounded p-2 space-y-2">
+        <div className="bg-surface rounded p-2 space-y-2">
           <div className="flex justify-between">
-            <span className="text-gray-500">Restart Time</span>
+            <span className="text-muted">Restart Time</span>
             <span className="font-mono">{parsed.restartTime} seconds</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">Restart Flags</span>
+            <span className="text-muted">Restart Flags</span>
             <span className="font-mono">0x{parsed.restartFlags.toString(16).padStart(2, '0')}</span>
           </div>
           {parsed.addressFamilies.length > 0 && (
             <div>
-              <span className="text-gray-500 text-xs">Address Families:</span>
+              <span className="text-muted text-xs">Address Families:</span>
               <div className="mt-1 space-y-1">
                 {parsed.addressFamilies.map((af, i) => (
-                  <div key={i} className="text-xs font-mono bg-gray-100 rounded px-2 py-1">
+                  <div key={i} className="text-xs font-mono bg-surface-sunken rounded px-2 py-1">
                     {af.afiName}/{af.safiName} (flags: 0x{af.flags.toString(16).padStart(2, '0')})
                   </div>
                 ))}
@@ -146,11 +146,11 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
 
     case 'ADD_PATH':
       return (
-        <div className="bg-white rounded p-2">
-          <span className="text-gray-500 text-xs">Address Families:</span>
+        <div className="bg-surface rounded p-2">
+          <span className="text-muted text-xs">Address Families:</span>
           <div className="mt-1 space-y-1">
             {parsed.addressFamilies.map((af, i) => (
-              <div key={i} className="text-xs font-mono bg-gray-100 rounded px-2 py-1">
+              <div key={i} className="text-xs font-mono bg-surface-sunken rounded px-2 py-1">
                 {af.afiName}/{af.safiName}: {af.sendReceive}
               </div>
             ))}
@@ -160,11 +160,11 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
 
     case 'EXTENDED_NEXT_HOP':
       return (
-        <div className="bg-white rounded p-2">
-          <span className="text-gray-500 text-xs">Next Hop Encodings:</span>
+        <div className="bg-surface rounded p-2">
+          <span className="text-muted text-xs">Next Hop Encodings:</span>
           <div className="mt-1 space-y-1">
             {parsed.entries.map((entry, i) => (
-              <div key={i} className="text-xs font-mono bg-gray-100 rounded px-2 py-1">
+              <div key={i} className="text-xs font-mono bg-surface-sunken rounded px-2 py-1">
                 {entry.nlriAfiName}/{entry.nlriSafiName} uses {entry.nexthopAfiName} next-hop
               </div>
             ))}
@@ -175,7 +175,7 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
     case 'ROUTE_REFRESH':
     case 'ENHANCED_ROUTE_REFRESH':
       return (
-        <div className="bg-white rounded p-2 text-gray-500 text-sm">Supported</div>
+        <div className="bg-surface rounded p-2 text-muted text-sm">Supported</div>
       )
 
     default:

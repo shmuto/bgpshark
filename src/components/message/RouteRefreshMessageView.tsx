@@ -6,15 +6,15 @@ interface RouteRefreshMessageViewProps {
 
 export function RouteRefreshMessageView({ message }: RouteRefreshMessageViewProps) {
   return (
-    <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3 text-sm space-y-2">
+    <div className="bg-bgp-route-refresh/10 border border-bgp-route-refresh/30 rounded-lg p-3 text-sm space-y-2 text-bgp-route-refresh">
       <div className="flex justify-between">
-        <span className="text-cyan-700">AFI</span>
+        <span>AFI</span>
         <span className="font-mono">
           {message.afi} ({message.afiName})
         </span>
       </div>
       <div className="flex justify-between">
-        <span className="text-cyan-700">SAFI</span>
+        <span>SAFI</span>
         <span className="font-mono">
           {message.safi} ({message.safiName})
         </span>

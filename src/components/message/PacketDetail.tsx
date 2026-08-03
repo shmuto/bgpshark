@@ -17,29 +17,29 @@ export function PacketDetail({ packet }: PacketDetailProps) {
     <div className="h-full overflow-auto p-4 space-y-4">
       {/* Packet Info */}
       <section>
-        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
+        <h3 className="text-sm font-semibold text-dim uppercase tracking-wide mb-2">
           Packet Info
         </h3>
-        <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-1">
+        <div className="bg-surface-sunken rounded-lg p-3 text-sm space-y-1">
           <div className="flex justify-between">
-            <span className="text-gray-500">Time</span>
+            <span className="text-muted">Time</span>
             <span className="font-mono">{packet.timestamp.toISOString()}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">Source</span>
+            <span className="text-muted">Source</span>
             <span className="font-mono">
               {packet.srcIp}:{packet.srcPort}
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">Destination</span>
+            <span className="text-muted">Destination</span>
             <span className="font-mono">
               {packet.dstIp}:{packet.dstPort}
             </span>
           </div>
           {messages.length > 1 && (
             <div className="flex justify-between">
-              <span className="text-gray-500">Messages</span>
+              <span className="text-muted">Messages</span>
               <span className="font-mono">{messages.length}</span>
             </div>
           )}
@@ -49,9 +49,9 @@ export function PacketDetail({ packet }: PacketDetailProps) {
       {/* Parse Warnings */}
       {parseWarnings.length > 0 && (
         <section>
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-            <h4 className="text-sm font-medium text-amber-700 mb-1">Parse Warnings</h4>
-            <ul className="text-sm text-amber-600 space-y-1">
+          <div className="bg-warning-subtle border border-warning/30 rounded-lg p-3">
+            <h4 className="text-sm font-medium text-warning mb-1">Parse Warnings</h4>
+            <ul className="text-sm text-warning space-y-1">
               {parseWarnings.map((warning, i) => (
                 <li key={i}>{warning}</li>
               ))}
@@ -67,7 +67,7 @@ export function PacketDetail({ packet }: PacketDetailProps) {
 
       {/* Hex Dump */}
       <section>
-        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
+        <h3 className="text-sm font-semibold text-dim uppercase tracking-wide mb-2">
           Raw Data ({rawData.length} bytes)
         </h3>
         <HexDump data={rawData} />
@@ -81,7 +81,7 @@ function MessageSection({ message, index, total }: { message: BgpMessage; index:
 
   return (
     <section>
-      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
+      <h3 className="text-sm font-semibold text-dim uppercase tracking-wide mb-2">
         {title}
       </h3>
       {message.type === 'OPEN' && <OpenMessageView message={message} />}

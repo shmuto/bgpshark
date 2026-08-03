@@ -21,7 +21,7 @@ const ALL_COLUMNS: ColumnDef[] = [
     width: 'w-12',
     getValue: (dp) => {
       const frameIndex = dp.kind === 'bgp' ? dp.packet.frameIndex : dp.packet.frameIndex
-      return <span className="text-gray-500 font-mono">{frameIndex}</span>
+      return <span className="text-muted font-mono">{frameIndex}</span>
     },
   },
   {
@@ -29,7 +29,7 @@ const ALL_COLUMNS: ColumnDef[] = [
     label: 'Relative',
     width: 'w-20',
     getValue: (dp, _, base) => (
-      <span className="font-mono text-gray-600">{formatRelativeTime(dp.timestamp, base)}</span>
+      <span className="font-mono text-muted">{formatRelativeTime(dp.timestamp, base)}</span>
     ),
   },
   {
@@ -37,7 +37,7 @@ const ALL_COLUMNS: ColumnDef[] = [
     label: 'Absolute',
     width: 'w-28',
     getValue: (dp) => (
-      <span className="font-mono text-gray-600">{formatAbsoluteTime(dp.timestamp)}</span>
+      <span className="font-mono text-muted">{formatAbsoluteTime(dp.timestamp)}</span>
     ),
   },
   {
@@ -54,7 +54,7 @@ const ALL_COLUMNS: ColumnDef[] = [
     width: 'w-16',
     getValue: (dp) => {
       const port = dp.kind === 'bgp' ? dp.packet.srcPort : dp.packet.srcPort
-      return <span className="font-mono text-gray-500">{port ?? '-'}</span>
+      return <span className="font-mono text-muted">{port ?? '-'}</span>
     },
   },
   {
@@ -71,7 +71,7 @@ const ALL_COLUMNS: ColumnDef[] = [
     width: 'w-16',
     getValue: (dp) => {
       const port = dp.kind === 'bgp' ? dp.packet.dstPort : dp.packet.dstPort
-      return <span className="font-mono text-gray-500">{port ?? '-'}</span>
+      return <span className="font-mono text-muted">{port ?? '-'}</span>
     },
   },
   {
@@ -79,14 +79,15 @@ const ALL_COLUMNS: ColumnDef[] = [
     label: 'Proto',
     width: 'w-16',
     getValue: (dp) => {
+      // Protocol is a category, not a state, so it is ranked by prominence
+      // rather than hue. Tinting UDP green and ICMP amber would read as health
+      // and warning in a tool people open to find faults; and the severity and
+      // msg-* palettes have to keep meaning what they say. BGP rows carry the
+      // subject of the app, so they stay prominent while the rest recede.
       if (dp.kind === 'bgp') {
-        return <span className="text-xs font-medium text-purple-700">BGP</span>
+        return <span className="text-xs font-semibold text-strong">BGP</span>
       }
-      const proto = dp.packet.protocol
-      const colorClass = proto === 'TCP' ? 'text-blue-600' :
-                        proto === 'UDP' ? 'text-green-600' :
-                        proto === 'ICMP' ? 'text-yellow-600' : 'text-gray-600'
-      return <span className={`text-xs font-medium ${colorClass}`}>{proto}</span>
+      return <span className="text-xs font-medium text-dim">{dp.packet.protocol}</span>
     },
   },
   {
@@ -97,7 +98,7 @@ const ALL_COLUMNS: ColumnDef[] = [
       if (dp.kind === 'bgp') {
         const messages = dp.packet.messages
         if (messages.length === 1) {
-          const typeClass = messageTypeColors[messages[0].type] ?? 'bg-gray-500 text-white'
+          const typeClass = messageTypeColors[messages[0].type] ?? 'bg-surface-sunken text-muted'
           return (
             <span className={`px-2 py-0.5 rounded text-xs font-medium ${typeClass}`}>
               {messages[0].type}
@@ -106,7 +107,7 @@ const ALL_COLUMNS: ColumnDef[] = [
         }
         // Multiple messages - show count and primary type
         const primaryType = messages[0].type
-        const typeClass = messageTypeColors[primaryType] ?? 'bg-gray-500 text-white'
+        const typeClass = messageTypeColors[primaryType] ?? 'bg-surface-sunken text-muted'
         return (
           <span className={`px-2 py-0.5 rounded text-xs font-medium ${typeClass}`}>
             {primaryType} +{messages.length - 1}
@@ -121,9 +122,9 @@ const ALL_COLUMNS: ColumnDef[] = [
         if (dp.packet.tcpFlags.fin) flags.push('F')
         if (dp.packet.tcpFlags.rst) flags.push('R')
         if (dp.packet.tcpFlags.psh) flags.push('P')
-        return <span className="font-mono text-xs text-gray-500">[{flags.join('')}]</span>
+        return <span className="font-mono text-xs text-muted">[{flags.join('')}]</span>
       }
-      return <span className="text-gray-400">-</span>
+      return <span className="text-dim">-</span>
     },
   },
   {
@@ -133,15 +134,15 @@ const ALL_COLUMNS: ColumnDef[] = [
       if (dp.kind === 'bgp') {
         const messages = dp.packet.messages
         if (messages.length === 1) {
-          return <span className="text-gray-600 truncate">{getMessageSummary(messages[0])}</span>
+          return <span className="text-muted truncate">{getMessageSummary(messages[0])}</span>
         }
         // Multiple messages - show count
-        return <span className="text-gray-600 truncate">{messages.length} msgs</span>
+        return <span className="text-muted truncate">{messages.length} msgs</span>
       }
       // For generic packets, show port info
       const src = dp.packet.srcPort ?? '?'
       const dst = dp.packet.dstPort ?? '?'
-      return <span className="text-gray-500 truncate">{src} → {dst}</span>
+      return <span className="text-muted truncate">{src} → {dst}</span>
     },
   },
   {
@@ -150,9 +151,9 @@ const ALL_COLUMNS: ColumnDef[] = [
     width: 'w-14',
     getValue: (dp) => {
       if (dp.kind === 'generic') {
-        return <span className="font-mono text-gray-500">{dp.packet.payloadLength}</span>
+        return <span className="font-mono text-muted">{dp.packet.payloadLength}</span>
       }
-      return <span className="font-mono text-gray-500">-</span>
+      return <span className="font-mono text-muted">-</span>
     },
   },
   {
@@ -167,7 +168,7 @@ const ALL_COLUMNS: ColumnDef[] = [
         const asPathAttr = update.pathAttributes?.find((a) => a.typeName === 'AS_PATH')
         if (!asPathAttr?.parsed || asPathAttr.parsed.type !== 'AS_PATH') continue
         const asns = asPathAttr.parsed.segments.flatMap((s) => s.asNumbers)
-        return <span className="font-mono text-xs text-gray-600">{asns.join(' ')}</span>
+        return <span className="font-mono text-xs text-muted">{asns.join(' ')}</span>
       }
       return null
     },
@@ -185,7 +186,7 @@ const ALL_COLUMNS: ColumnDef[] = [
           total += (msg as BgpUpdateMessage).nlri?.length ?? 0
         }
       }
-      return total > 0 ? <span className="font-mono text-green-600">{total}</span> : null
+      return total > 0 ? <span className="font-mono text-ok">{total}</span> : null
     },
   },
   {
@@ -201,7 +202,7 @@ const ALL_COLUMNS: ColumnDef[] = [
           total += (msg as BgpUpdateMessage).withdrawnRoutes?.length ?? 0
         }
       }
-      return total > 0 ? <span className="font-mono text-red-600">{total}</span> : null
+      return total > 0 ? <span className="font-mono text-critical">{total}</span> : null
     },
   },
 ]
@@ -216,12 +217,19 @@ interface PacketListProps {
   highlightedIndex?: number | null
 }
 
+// Message-type badges use a tinted background derived from the message colour
+// itself (opacity modifier) rather than a solid fill: the msg-* tokens are
+// calibrated as *text* colours that stay legible on the canvas in both
+// palettes (e.g. msg-open flips from a dark green in light mode to a bright
+// green in dark mode). A solid fill with a fixed white foreground would lose
+// contrast in dark mode once the token brightens, so text stays the message
+// colour and only the background gets a low-opacity tint of the same colour.
 const messageTypeColors: Record<string, string> = {
-  OPEN: 'bg-bgp-open text-white',
-  UPDATE: 'bg-bgp-update text-white',
-  NOTIFICATION: 'bg-bgp-notification text-white',
-  KEEPALIVE: 'bg-bgp-keepalive text-white',
-  ROUTE_REFRESH: 'bg-cyan-500 text-white',
+  OPEN: 'bg-bgp-open/15 text-bgp-open',
+  UPDATE: 'bg-bgp-update/15 text-bgp-update',
+  NOTIFICATION: 'bg-bgp-notification/15 text-bgp-notification',
+  KEEPALIVE: 'bg-bgp-keepalive/15 text-bgp-keepalive',
+  ROUTE_REFRESH: 'bg-bgp-route-refresh/15 text-bgp-route-refresh',
 }
 
 // Virtualization tuning. Row/header heights are measured from the live DOM
@@ -467,7 +475,7 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
   return (
     <div
       ref={listRef}
-      className="h-full overflow-auto relative focus-within:ring-2 focus-within:ring-blue-400 focus-within:ring-inset"
+      className="h-full overflow-auto relative focus-within:ring-2 focus-within:ring-accent focus-within:ring-inset"
       onScroll={handleScroll}
     >
       {/* The grid role belongs on the table itself: a role="grid" wrapper around a
@@ -484,8 +492,8 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
         aria-activedescendant={selectedIndex !== null ? `packet-row-${selectedIndex}` : undefined}
         onKeyDown={handleKeyDown}
       >
-        <thead ref={measureHeaderRef} className="bg-gray-100 sticky top-0 z-10" role="rowgroup">
-          <tr className="text-left text-gray-600" role="row">
+        <thead ref={measureHeaderRef} className="bg-surface-sunken sticky top-0 z-10" role="rowgroup">
+          <tr className="text-left text-muted" role="row">
             {columns.map((col) => (
               <th key={col.id} role="columnheader" className={`px-2 py-2 font-medium ${col.width ?? ''}`}>
                 {col.label}
@@ -494,7 +502,7 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
             <th role="columnheader" className="px-2 py-2 w-8">
               <button
                 onClick={() => setShowColumnPicker(!showColumnPicker)}
-                className="text-gray-400 hover:text-gray-600 p-0.5 rounded hover:bg-gray-200"
+                className="text-dim hover:text-muted p-0.5 rounded hover:bg-surface-sunken"
                 title="Configure columns"
                 aria-label="Configure columns"
               >
@@ -533,9 +541,9 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
                 aria-rowindex={index + 1}
                 onClick={() => handleRowClick(index)}
                 className={`
-                  cursor-pointer border-b border-gray-100 transition-colors duration-300
-                  ${isHighlighted ? 'animate-flash bg-yellow-200' : ''}
-                  ${isSelected ? 'bg-blue-100' : isBgp ? 'hover:bg-gray-50' : 'hover:bg-gray-50 bg-gray-50/50'}
+                  cursor-pointer border-b border-hair transition-colors duration-300
+                  ${isHighlighted ? 'animate-flash' : ''}
+                  ${isSelected ? 'bg-accent-subtle' : isBgp ? 'hover:bg-surface-sunken' : 'bg-surface-sunken/50 hover:bg-surface-raised'}
                 `}
               >
                 {columns.map((col) => (
@@ -559,29 +567,29 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
       {showColumnPicker && (
         <div
           ref={columnPickerRef}
-          className="absolute top-8 right-2 bg-white border border-gray-200 rounded-lg shadow-lg p-2 z-20 min-w-48"
+          className="absolute top-8 right-2 bg-surface-raised border border-hair rounded-lg shadow-lg p-2 z-20 min-w-48"
         >
-          <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 px-2">
+          <div className="text-xs font-medium text-dim uppercase tracking-wide mb-2 px-2">
             Visible Columns
           </div>
           {ALL_COLUMNS.map((col) => (
             <label
               key={col.id}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-50 rounded cursor-pointer"
+              className="flex items-center gap-2 px-2 py-1.5 hover:bg-surface-sunken rounded cursor-pointer"
             >
               <input
                 type="checkbox"
                 checked={visibleColumns.includes(col.id)}
                 onChange={() => toggleColumn(col.id)}
-                className="rounded border-gray-300 text-blue-500 focus:ring-blue-500"
+                className="rounded border-hair-strong text-accent focus:ring-accent"
               />
-              <span className="text-sm text-gray-700">{col.label}</span>
+              <span className="text-sm text-body">{col.label}</span>
             </label>
           ))}
-          <div className="border-t border-gray-200 mt-2 pt-2 px-2">
+          <div className="border-t border-hair mt-2 pt-2 px-2">
             <button
               onClick={() => setVisibleColumns(DEFAULT_COLUMNS)}
-              className="text-xs text-blue-600 hover:text-blue-800"
+              className="text-xs text-accent hover:text-accent-hover"
             >
               Reset to default
             </button>

@@ -109,7 +109,7 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
         className={`
           border-2 border-dashed rounded-lg p-12 text-center cursor-pointer
           transition-colors duration-200
-          ${isDragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}
+          ${isDragOver ? 'border-accent bg-accent-subtle' : 'border-hair-strong hover:border-accent hover:bg-surface-sunken'}
           ${busy ? 'opacity-50 pointer-events-none' : ''}
         `}
       >
@@ -124,14 +124,14 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
 
         {busy ? (
           <div className="flex flex-col items-center gap-4">
-            <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" />
-            <p className="text-gray-600">{isSampleLoading ? 'Loading sample...' : 'Parsing file...'}</p>
+            <div className="animate-spin w-8 h-8 border-4 border-accent border-t-transparent rounded-full" />
+            <p className="text-muted">{isSampleLoading ? 'Loading sample...' : 'Parsing file...'}</p>
           </div>
         ) : (
           <>
             <div className="mb-4">
               <svg
-                className="w-12 h-12 mx-auto text-gray-400"
+                className="w-12 h-12 mx-auto text-muted"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -144,10 +144,10 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
                 />
               </svg>
             </div>
-            <p className="text-gray-600 mb-2">
-              <span className="font-medium">Drop pcap file here</span> or click to select
+            <p className="text-muted mb-2">
+              <span className="font-medium text-strong">Drop pcap file here</span> or click to select
             </p>
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-dim">
               Supports .pcap and .pcapng files up to {MAX_FILE_SIZE_LABEL}
             </p>
           </>
@@ -159,17 +159,17 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
           type="button"
           onClick={handleSampleClick}
           disabled={busy}
-          className="text-sm text-blue-600 hover:text-blue-700 hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline disabled:text-gray-400"
+          className="text-sm text-accent hover:text-accent-hover hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline disabled:text-dim"
         >
           {isSampleLoading ? 'Loading sample.pcapng...' : 'Try with sample.pcapng'}
         </button>
-        <p className="mt-1 text-xs text-gray-400">
+        <p className="mt-1 text-xs text-dim">
           Includes session resets and NOTIFICATION messages between two BGP peers
         </p>
       </div>
 
       {error && (
-        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <div className="mt-4 p-3 bg-critical-subtle border border-critical/30 rounded-lg text-critical text-sm">
           {error}
         </div>
       )}
