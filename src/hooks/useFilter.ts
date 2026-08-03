@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import type { BgpPacket } from '../lib/bgp/types'
 import { parseQuery, matchPacket } from '../lib/filter'
-import { isInitialized, getPackets } from '../lib/db'
+import { isInitialized, getMatchingFrameIndexes } from '../lib/db'
 
 interface UseFilterOptions {
   useDuckDB?: boolean
@@ -53,12 +53,15 @@ export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) 
     setIsFiltering(true)
 
     const timer = setTimeout(() => {
-      getPackets(query)
-        .then((results) => {
-          if (!cancelled) {
-            setAsyncFilteredPackets(results)
-            setIsFiltering(false)
-          }
+      getMatchingFrameIndexes(query)
+        .then((frameIndexes) => {
+          if (cancelled) return
+          // DuckDB only says which frames matched. The packets themselves come
+          // from the parsed objects we already hold, so nothing the SQL schema
+          // cannot represent gets lost on the way to the UI.
+          const matched = new Set(frameIndexes)
+          setAsyncFilteredPackets(packets.filter((p) => matched.has(p.frameIndex)))
+          setIsFiltering(false)
         })
         .catch((err) => {
           console.error('DuckDB filter error:', err)
@@ -74,7 +77,10 @@ export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) 
       clearTimeout(timer)
       setIsFiltering(false)
     }
-  }, [query, useDuckDB, parsedQuery.errors.length])
+    // packets is a dependency because the matched frame indexes are resolved
+    // against it; loading a different capture must re-run the query rather than
+    // resolve against the previous file's packets.
+  }, [query, useDuckDB, parsedQuery.errors.length, packets])
 
   // Use DuckDB results if available, otherwise fallback to sync filtering
   const filteredPackets = asyncFilteredPackets ?? syncFilteredPackets

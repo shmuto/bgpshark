@@ -359,14 +359,29 @@ in-memory evaluation in `filter/parser.ts` and only the SQL console is unavailab
 
 #### DuckDB's role is intentionally narrow
 
-`db/queries.ts` exposes exactly two entry points: `getPackets` (SQL-accelerated
-filtering, called from `useFilter.ts`) and `executeRawSql` (the SQL console, called
-from `SqlConsolePage.tsx`). Earlier revisions also had DuckDB-backed queries for
-packet counts, single-packet lookup, and neighbor/AS-path/prefix statistics, but
-nothing outside `src/lib/db/` ever called them and they were removed. Neighbor
-Analysis and Route Analysis compute their aggregations in memory with `useMemo`
-over the already-parsed `BgpPacket[]` instead of querying DuckDB, which is what
-keeps those screens usable when DuckDB fails to initialize.
+`db/queries.ts` exposes exactly two entry points: `getMatchingFrameIndexes`
+(SQL-accelerated filtering, called from `useFilter.ts`) and `executeRawSql` (the SQL
+console, called from `SqlConsolePage.tsx`). Earlier revisions also had DuckDB-backed
+queries for packet counts, single-packet lookup, and neighbor/AS-path/prefix
+statistics, but nothing outside `src/lib/db/` ever called them and they were removed.
+Neighbor Analysis and Route Analysis compute their aggregations in memory with
+`useMemo` over the already-parsed `BgpPacket[]` instead of querying DuckDB, which is
+what keeps those screens usable when DuckDB fails to initialize.
+
+**DuckDB selects, it does not reconstitute.** `getMatchingFrameIndexes` returns frame
+indexes and nothing else; the caller resolves them against the `BgpPacket[]` it
+already holds. The tables are a flattened projection built for querying and cannot
+represent everything the parser produces — the `capabilities` table has columns for a
+single AFI/SAFI pair and one AS number, which cannot hold ADD-PATH's per-family list,
+Graceful Restart's forwarding state, or Extended Next Hop's entries, and
+`raw_data_base64` is not a substitute for the parsed structure.
+
+An earlier `getPackets` rebuilt whole `BgpPacket` objects from those rows. It cast
+every capability to `MULTIPROTOCOL | FOUR_OCTET_AS`, so any other capability came back
+with its list missing, and the OPEN detail view threw as soon as a filter was applied
+— visible only under a filter, because the unfiltered path used the parsed objects.
+Keeping frame indexes as the only thing crossing this boundary makes that class of
+loss structurally impossible rather than something each new field has to remember.
 
 ### 4.4 Key Type Definitions
 
