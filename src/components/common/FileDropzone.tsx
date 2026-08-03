@@ -13,7 +13,10 @@ interface FileDropzoneProps {
 export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isSampleLoading, setIsSampleLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  const busy = isLoading || isSampleLoading
 
   const validateAndLoad = useCallback(
     (file: File) => {
@@ -29,6 +32,29 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
     },
     [onFileLoad]
   )
+
+  const handleSampleClick = useCallback(async () => {
+    setError(null)
+    setIsSampleLoading(true)
+
+    try {
+      const url = `${import.meta.env.BASE_URL}sample.pcap`
+      const response = await fetch(url)
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`)
+      }
+
+      const blob = await response.blob()
+      const file = new File([blob], 'sample.pcap', { type: 'application/vnd.tcpdump.pcap' })
+      // Go through the same validation as a user-supplied file, so the sample can
+      // never bypass the limits the rest of the app enforces.
+      validateAndLoad(file)
+    } catch {
+      setError('Could not load the sample capture. Check your connection and try again.')
+    } finally {
+      setIsSampleLoading(false)
+    }
+  }, [validateAndLoad])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -48,17 +74,20 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
       e.stopPropagation()
       setIsDragOver(false)
 
+      if (busy) return
+
       const files = e.dataTransfer.files
       if (files.length > 0) {
         validateAndLoad(files[0])
       }
     },
-    [validateAndLoad]
+    [busy, validateAndLoad]
   )
 
   const handleClick = useCallback(() => {
+    if (busy) return
     inputRef.current?.click()
-  }, [])
+  }, [busy])
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -81,7 +110,7 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
           border-2 border-dashed rounded-lg p-12 text-center cursor-pointer
           transition-colors duration-200
           ${isDragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}
-          ${isLoading ? 'opacity-50 pointer-events-none' : ''}
+          ${busy ? 'opacity-50 pointer-events-none' : ''}
         `}
       >
         <input
@@ -90,13 +119,13 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
           accept={ACCEPT_ATTRIBUTE}
           onChange={handleFileChange}
           className="hidden"
-          disabled={isLoading}
+          disabled={busy}
         />
 
-        {isLoading ? (
+        {busy ? (
           <div className="flex flex-col items-center gap-4">
             <div className="animate-spin w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full" />
-            <p className="text-gray-600">Parsing file...</p>
+            <p className="text-gray-600">{isSampleLoading ? 'Loading sample...' : 'Parsing file...'}</p>
           </div>
         ) : (
           <>
@@ -123,6 +152,20 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
             </p>
           </>
         )}
+      </div>
+
+      <div className="mt-4 text-center">
+        <button
+          type="button"
+          onClick={handleSampleClick}
+          disabled={busy}
+          className="text-sm text-blue-600 hover:text-blue-700 hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline disabled:text-gray-400"
+        >
+          {isSampleLoading ? 'Loading sample.pcap...' : 'Try with sample.pcap'}
+        </button>
+        <p className="mt-1 text-xs text-gray-400">
+          Includes session resets and NOTIFICATION messages between two BGP peers
+        </p>
       </div>
 
       {error && (
