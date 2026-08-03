@@ -1,11 +1,14 @@
 import { useCallback, useState, useRef } from 'react'
+import {
+  ACCEPT_ATTRIBUTE,
+  MAX_FILE_SIZE_LABEL,
+  validateCaptureFile,
+} from '../../lib/file-constraints'
 
 interface FileDropzoneProps {
   onFileLoad: (file: File) => void
   isLoading: boolean
 }
-
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 
 export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
   const [isDragOver, setIsDragOver] = useState(false)
@@ -16,14 +19,9 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
     (file: File) => {
       setError(null)
 
-      if (file.size > MAX_FILE_SIZE) {
-        setError(`File too large. Maximum size is 10MB (got ${(file.size / 1024 / 1024).toFixed(1)}MB)`)
-        return
-      }
-
-      const extension = file.name.toLowerCase().split('.').pop()
-      if (extension !== 'pcap' && extension !== 'cap' && extension !== 'pcapng') {
-        setError('Invalid file type. Please upload a .pcap, .pcapng, or .cap file.')
+      const validationError = validateCaptureFile(file)
+      if (validationError) {
+        setError(validationError)
         return
       }
 
@@ -89,7 +87,7 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
         <input
           ref={inputRef}
           type="file"
-          accept=".pcap,.pcapng,.cap"
+          accept={ACCEPT_ATTRIBUTE}
           onChange={handleFileChange}
           className="hidden"
           disabled={isLoading}
@@ -120,7 +118,9 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
             <p className="text-gray-600 mb-2">
               <span className="font-medium">Drop pcap file here</span> or click to select
             </p>
-            <p className="text-sm text-gray-400">Supports .pcap and .pcapng files up to 10MB</p>
+            <p className="text-sm text-gray-400">
+              Supports .pcap and .pcapng files up to {MAX_FILE_SIZE_LABEL}
+            </p>
           </>
         )}
       </div>

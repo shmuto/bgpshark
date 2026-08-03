@@ -203,8 +203,8 @@ not (type = KEEPALIVE)
 │         │         or click to browse                │          │
 │         │                                           │          │
 │         │    ─────────────────────────────          │          │
-│         │    Supported: .pcap (libpcap format)      │          │
-│         │    Max size: 50MB                         │          │
+│         │    Supported: .pcap / .pcapng / .cap      │          │
+│         │    Max size: 10MB                         │          │
 │         │                                           │          │
 │         └───────────────────────────────────────────┘          │
 │                                                                 │
@@ -235,10 +235,13 @@ not (type = KEEPALIVE)
 
 **ファイルバリデーション**
 
+上限値と対応拡張子は `src/lib/file-constraints.ts` が唯一の定義元。
+UI の文言もそこから生成するため、本書と実装がずれた場合は実装が正となる。
+
 | チェック項目 | エラーメッセージ |
 |--------------|------------------|
-| 拡張子が .pcap でない | "Only .pcap files are supported" |
-| ファイルサイズ > 50MB | "File too large. Maximum size is 50MB" |
+| 拡張子が .pcap / .pcapng / .cap でない | "Invalid file type. Please upload a .pcap, .pcapng, .cap file." |
+| ファイルサイズ > 10MB | "File too large. Maximum size is 10MB (got N.NMB)" |
 | マジックナンバー不正 | "Invalid pcap format" |
 | BGPパケットなし | "No BGP packets found in this capture" |
 

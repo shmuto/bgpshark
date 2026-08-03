@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+import { validateCaptureFile } from '../lib/file-constraints'
 
 interface UseFileDropzoneOptions {
   onFileLoad: (file: File) => void
@@ -15,14 +14,9 @@ export function useFileDropzone({ onFileLoad, disabled = false }: UseFileDropzon
     (file: File) => {
       setError(null)
 
-      if (file.size > MAX_FILE_SIZE) {
-        setError(`File too large. Maximum size is 10MB (got ${(file.size / 1024 / 1024).toFixed(1)}MB)`)
-        return
-      }
-
-      const extension = file.name.toLowerCase().split('.').pop()
-      if (extension !== 'pcap' && extension !== 'cap' && extension !== 'pcapng') {
-        setError('Invalid file type. Please upload a .pcap, .pcapng, or .cap file.')
+      const validationError = validateCaptureFile(file)
+      if (validationError) {
+        setError(validationError)
         return
       }
 
