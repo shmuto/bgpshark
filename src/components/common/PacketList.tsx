@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { BgpMessage, BgpUpdateMessage } from '../../lib/bgp/types'
 import type { DisplayPacket } from '../layout/MainContent'
 
@@ -224,6 +224,13 @@ const messageTypeColors: Record<string, string> = {
   ROUTE_REFRESH: 'bg-cyan-500 text-white',
 }
 
+// Virtualization tuning. Row/header heights are measured from the live DOM
+// once rows exist; these are just first-paint estimates so the initial
+// windowed range is roughly right before real measurements land.
+const ESTIMATED_ROW_HEIGHT = 29
+const ESTIMATED_HEADER_HEIGHT = 33
+const OVERSCAN_ROWS = 8
+
 function formatRelativeTime(timestamp: Date, base?: Date): string {
   if (base) {
     const diff = timestamp.getTime() - base.getTime()
@@ -277,10 +284,18 @@ function loadSavedColumns(): ColumnId[] {
 
 export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, highlightedIndex }: PacketListProps) {
   const listRef = useRef<HTMLDivElement>(null)
+  // The scroll container (listRef) and the grid (gridRef) are separate elements:
+  // scrolling happens on the div, focus and grid semantics live on the table.
+  const gridRef = useRef<HTMLTableElement>(null)
   const columnPickerRef = useRef<HTMLDivElement>(null)
   const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(loadSavedColumns)
   const [showColumnPicker, setShowColumnPicker] = useState(false)
+  const [rowHeight, setRowHeight] = useState(ESTIMATED_ROW_HEIGHT)
+  const [headerHeight, setHeaderHeight] = useState(ESTIMATED_HEADER_HEIGHT)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(0)
   const base = baseTimestamp ?? packets[0]?.timestamp
+  const totalCount = packets.length
 
   // Save columns to localStorage when they change
   useEffect(() => {
@@ -305,8 +320,71 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
     })
   }, [])
 
+  // Track the scrollable viewport's height synchronously (before paint) so the
+  // very first windowed render already covers the visible area, then keep it
+  // updated as the container is resized (e.g. pane resizing, window resize).
+  useLayoutEffect(() => {
+    const el = listRef.current
+    if (!el) return
+    setViewportHeight(el.clientHeight)
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (entry) setViewportHeight(entry.contentRect.height)
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  const handleScroll = useCallback(() => {
+    const el = listRef.current
+    if (el) setScrollTop(el.scrollTop)
+  }, [])
+
+  // Measure the real rendered row/header height from the DOM instead of
+  // trusting the estimate forever - fonts/zoom/DPI can shift it slightly.
+  // Only updates state when the measurement actually differs, so this
+  // converges after one or two renders rather than looping.
+  const measureRowRef = useCallback((el: HTMLTableRowElement | null) => {
+    if (!el) return
+    const measured = el.getBoundingClientRect().height
+    if (measured > 0) {
+      setRowHeight((prev) => (Math.abs(prev - measured) > 0.5 ? measured : prev))
+    }
+  }, [])
+
+  const measureHeaderRef = useCallback((el: HTMLTableSectionElement | null) => {
+    if (!el) return
+    const measured = el.getBoundingClientRect().height
+    if (measured > 0) {
+      setHeaderHeight((prev) => (Math.abs(prev - measured) > 0.5 ? measured : prev))
+    }
+  }, [])
+
+  // Windowing: only rows within [startIndex, endIndex) are mounted, padded
+  // above/below with spacer rows so the scrollbar length/position stays
+  // correct for the full (unwindowed) dataset.
+  const availableHeight = Math.max(0, viewportHeight - headerHeight)
+  const rawStartIndex = Math.floor(scrollTop / rowHeight)
+  const visibleRowCount = Math.ceil(availableHeight / rowHeight) + 1
+  const startIndex = Math.max(0, rawStartIndex - OVERSCAN_ROWS)
+  const endIndex = Math.min(totalCount, rawStartIndex + visibleRowCount + OVERSCAN_ROWS)
+  const topSpacerHeight = startIndex * rowHeight
+  const bottomSpacerHeight = Math.max(0, (totalCount - endIndex) * rowHeight)
+
+  // If the dataset shrinks (new capture, filter applied) while scrolled far
+  // down, clamp back into range instead of leaving an empty overscroll.
+  useEffect(() => {
+    const el = listRef.current
+    if (!el) return
+    const maxScrollTop = Math.max(0, totalCount * rowHeight - availableHeight)
+    if (el.scrollTop > maxScrollTop) {
+      el.scrollTop = maxScrollTop
+      setScrollTop(maxScrollTop)
+    }
+  }, [totalCount, rowHeight, availableHeight])
+
   const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
+    (e: React.KeyboardEvent<HTMLElement>) => {
       if (packets.length === 0) return
 
       const current = selectedIndex ?? -1
@@ -326,11 +404,6 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
     },
     [packets.length, selectedIndex, onSelect]
   )
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
 
   // Close column picker when clicking outside
   useEffect(() => {
@@ -353,31 +426,79 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
     }
   }, [showColumnPicker])
 
-  // Scroll selected item into view
-  useEffect(() => {
-    if (selectedIndex !== null && listRef.current) {
-      const item = listRef.current.querySelector(`[data-index="${selectedIndex}"]`)
-      item?.scrollIntoView({ block: 'nearest' })
+  // Keep the selected row scrolled into view, whether it moved via keyboard
+  // navigation or an external prop change (e.g. jumping to a packet from
+  // elsewhere in the UI). This works purely from index/height math rather
+  // than querying the DOM, since a keyboard-selected row may currently be
+  // outside the windowed range and thus not mounted at all. Runs in a layout
+  // effect so the resulting scrollTop update lands before paint.
+  useLayoutEffect(() => {
+    const el = listRef.current
+    if (selectedIndex === null || !el) return
+
+    const rowTop = selectedIndex * rowHeight
+    const rowBottom = rowTop + rowHeight
+    const viewTop = el.scrollTop
+    const viewBottom = el.scrollTop + el.clientHeight - headerHeight
+
+    let nextScrollTop: number | null = null
+    if (rowTop < viewTop) {
+      nextScrollTop = rowTop
+    } else if (rowBottom > viewBottom) {
+      nextScrollTop = rowBottom - el.clientHeight + headerHeight
     }
-  }, [selectedIndex])
+
+    if (nextScrollTop !== null) {
+      el.scrollTop = nextScrollTop
+      setScrollTop(nextScrollTop)
+    }
+  }, [selectedIndex, rowHeight, headerHeight])
+
+  const handleRowClick = useCallback(
+    (index: number) => {
+      onSelect(index)
+      // Keep the grid focused so keyboard navigation continues to work
+      // right after a mouse selection.
+      gridRef.current?.focus()
+    },
+    [onSelect]
+  )
 
   return (
-    <div ref={listRef} className="h-full overflow-auto relative">
-      <table className="w-full text-sm">
-        <thead className="bg-gray-100 sticky top-0 z-10">
-          <tr className="text-left text-gray-600">
+    <div
+      ref={listRef}
+      className="h-full overflow-auto relative focus-within:ring-2 focus-within:ring-blue-400 focus-within:ring-inset"
+      onScroll={handleScroll}
+    >
+      {/* The grid role belongs on the table itself: a role="grid" wrapper around a
+          plain <table> leaves the grid owning no rows, so aria-rowcount and
+          aria-activedescendant would refer to nothing. The div is scroll-only. */}
+      <table
+        ref={gridRef}
+        className="w-full text-sm focus:outline-none"
+        tabIndex={0}
+        role="grid"
+        aria-rowcount={totalCount}
+        aria-colcount={columns.length + 1}
+        aria-multiselectable="false"
+        aria-activedescendant={selectedIndex !== null ? `packet-row-${selectedIndex}` : undefined}
+        onKeyDown={handleKeyDown}
+      >
+        <thead ref={measureHeaderRef} className="bg-gray-100 sticky top-0 z-10" role="rowgroup">
+          <tr className="text-left text-gray-600" role="row">
             {columns.map((col) => (
-              <th key={col.id} className={`px-2 py-2 font-medium ${col.width ?? ''}`}>
+              <th key={col.id} role="columnheader" className={`px-2 py-2 font-medium ${col.width ?? ''}`}>
                 {col.label}
               </th>
             ))}
-            <th className="px-2 py-2 w-8">
+            <th role="columnheader" className="px-2 py-2 w-8">
               <button
                 onClick={() => setShowColumnPicker(!showColumnPicker)}
                 className="text-gray-400 hover:text-gray-600 p-0.5 rounded hover:bg-gray-200"
                 title="Configure columns"
+                aria-label="Configure columns"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -389,8 +510,14 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
             </th>
           </tr>
         </thead>
-        <tbody>
-          {packets.map((dp, index) => {
+        <tbody role="rowgroup">
+          {topSpacerHeight > 0 && (
+            <tr role="presentation" aria-hidden="true" style={{ height: topSpacerHeight }}>
+              <td colSpan={columns.length + 1} style={{ padding: 0, border: 0 }} />
+            </tr>
+          )}
+          {packets.slice(startIndex, endIndex).map((dp, i) => {
+            const index = startIndex + i
             const isSelected = index === selectedIndex
             const isHighlighted = index === highlightedIndex
             const isBgp = dp.kind === 'bgp'
@@ -398,8 +525,13 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
             return (
               <tr
                 key={index}
+                id={`packet-row-${index}`}
                 data-index={index}
-                onClick={() => onSelect(index)}
+                ref={index === startIndex ? measureRowRef : undefined}
+                role="row"
+                aria-selected={isSelected}
+                aria-rowindex={index + 1}
+                onClick={() => handleRowClick(index)}
                 className={`
                   cursor-pointer border-b border-gray-100 transition-colors duration-300
                   ${isHighlighted ? 'animate-flash bg-yellow-200' : ''}
@@ -407,14 +539,19 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
                 `}
               >
                 {columns.map((col) => (
-                  <td key={col.id} className={`px-2 py-1.5 ${col.width ?? ''}`}>
+                  <td key={col.id} role="gridcell" className={`px-2 py-1.5 ${col.width ?? ''}`}>
                     {col.getValue(dp, index, base)}
                   </td>
                 ))}
-                <td className="px-2 py-1.5 w-8" />
+                <td role="gridcell" className="px-2 py-1.5 w-8" />
               </tr>
             )
           })}
+          {bottomSpacerHeight > 0 && (
+            <tr role="presentation" aria-hidden="true" style={{ height: bottomSpacerHeight }}>
+              <td colSpan={columns.length + 1} style={{ padding: 0, border: 0 }} />
+            </tr>
+          )}
         </tbody>
       </table>
 
