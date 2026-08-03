@@ -984,13 +984,15 @@ function OpenComparisonTable({
 
 function getMessageSummary(msg: BgpMessage): string {
   switch (msg.type) {
-    case 'OPEN':
+    case 'OPEN': {
       const as = msg.fourByteAs ?? msg.myAs
       return `AS${as} Hold=${msg.holdTime}`
-    case 'UPDATE':
+    }
+    case 'UPDATE': {
       const nlri = msg.nlri?.length || 0
       const withdrawn = msg.withdrawnRoutes?.length || 0
       return `+${nlri} prefixes, -${withdrawn} withdrawn`
+    }
     case 'NOTIFICATION':
       return `${msg.errorCodeName}/${msg.errorSubcodeName}`
     case 'KEEPALIVE':

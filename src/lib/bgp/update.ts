@@ -134,13 +134,14 @@ function parsePathAttributeValue(
   const reader = new BinaryReader(data, false) // BGP uses network byte order (big-endian)
 
   switch (typeCode) {
-    case 1: // ORIGIN
+    case 1: { // ORIGIN
       const originValue = reader.readUint8()
       const origins = ['IGP', 'EGP', 'INCOMPLETE'] as const
       return {
         type: 'ORIGIN',
         value: origins[originValue] ?? 'INCOMPLETE',
       }
+    }
 
     case 2: // AS_PATH
     case 17: // AS4_PATH
@@ -168,13 +169,14 @@ function parsePathAttributeValue(
       return { type: 'ATOMIC_AGGREGATE' }
 
     case 7: // AGGREGATOR
-    case 18: // AS4_AGGREGATOR
+    case 18: { // AS4_AGGREGATOR
       const is4byte = typeCode === 18
       return {
         type: 'AGGREGATOR',
         asNumber: is4byte ? reader.readUint32() : reader.readUint16(),
         address: reader.readIpv4Address(),
       }
+    }
 
     case 8: // COMMUNITIES
       return parseCommunities(reader, data.length)

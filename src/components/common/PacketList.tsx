@@ -239,9 +239,10 @@ function formatAbsoluteTime(timestamp: Date): string {
 
 function getMessageSummary(message: BgpMessage): string {
   switch (message.type) {
-    case 'OPEN':
+    case 'OPEN': {
       const as = message.fourByteAs ?? message.myAs
       return `AS${as} Hold=${message.holdTime}`
+    }
     case 'UPDATE':
       return `WR=${message.withdrawnRoutesLength} PA=${message.totalPathAttrLength}`
     case 'NOTIFICATION':
