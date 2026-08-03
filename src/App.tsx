@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AppProvider, useApp } from './context/AppContext'
 import { AppHeader } from './components/layout/AppHeader'
+import { ErrorBoundary } from './components/common'
 import { useFileDropzone } from './hooks/useFileDropzone'
 import {
   FileUploadPage,
@@ -23,36 +24,40 @@ function AppContent() {
 
   return (
     <div className="h-screen flex flex-col relative overflow-hidden">
-      <AppHeader />
+      <ErrorBoundary>
+        <AppHeader />
+      </ErrorBoundary>
 
-      <Routes>
-        {/* File Upload - always accessible */}
-        <Route path="/" element={<FileUploadPage />} />
+      <ErrorBoundary>
+        <Routes>
+          {/* File Upload - always accessible */}
+          <Route path="/" element={<FileUploadPage />} />
 
-        {/* Protected routes - redirect to / if no file loaded */}
-        <Route
-          path="/neighbors"
-          element={isReady ? <NeighborsPage /> : <Navigate to="/" replace />}
-        />
-        <Route
-          path="/messages"
-          element={isReady ? <MessagesPage /> : <Navigate to="/" replace />}
-        />
-        <Route
-          path="/routes"
-          element={isReady ? <RoutesPage /> : <Navigate to="/" replace />}
-        />
-        <Route
-          path="/sql"
-          element={isReady ? <SqlConsolePage /> : <Navigate to="/" replace />}
-        />
+          {/* Protected routes - redirect to / if no file loaded */}
+          <Route
+            path="/neighbors"
+            element={isReady ? <NeighborsPage /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/messages"
+            element={isReady ? <MessagesPage /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/routes"
+            element={isReady ? <RoutesPage /> : <Navigate to="/" replace />}
+          />
+          <Route
+            path="/sql"
+            element={isReady ? <SqlConsolePage /> : <Navigate to="/" replace />}
+          />
 
-        {/* Catch all - redirect to messages or home */}
-        <Route
-          path="*"
-          element={<Navigate to={isReady ? '/messages' : '/'} replace />}
-        />
-      </Routes>
+          {/* Catch all - redirect to messages or home */}
+          <Route
+            path="*"
+            element={<Navigate to={isReady ? '/messages' : '/'} replace />}
+          />
+        </Routes>
+      </ErrorBoundary>
 
       {/* Global drop overlay */}
       {isDragOver && (

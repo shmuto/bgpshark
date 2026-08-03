@@ -1,3 +1,4 @@
+export { ErrorBoundary } from './ErrorBoundary'
 export { FileDropzone } from './FileDropzone'
 export { PacketList } from './PacketList'
 export { QueryInput } from './QueryInput'
