@@ -38,14 +38,14 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
     setIsSampleLoading(true)
 
     try {
-      const url = `${import.meta.env.BASE_URL}sample.pcap`
+      const url = `${import.meta.env.BASE_URL}sample.pcapng`
       const response = await fetch(url)
       if (!response.ok) {
         throw new Error(`Request failed with status ${response.status}`)
       }
 
       const blob = await response.blob()
-      const file = new File([blob], 'sample.pcap', { type: 'application/vnd.tcpdump.pcap' })
+      const file = new File([blob], 'sample.pcapng', { type: 'application/x-pcapng' })
       // Go through the same validation as a user-supplied file, so the sample can
       // never bypass the limits the rest of the app enforces.
       validateAndLoad(file)
@@ -161,7 +161,7 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
           disabled={busy}
           className="text-sm text-blue-600 hover:text-blue-700 hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline disabled:text-gray-400"
         >
-          {isSampleLoading ? 'Loading sample.pcap...' : 'Try with sample.pcap'}
+          {isSampleLoading ? 'Loading sample.pcapng...' : 'Try with sample.pcapng'}
         </button>
         <p className="mt-1 text-xs text-gray-400">
           Includes session resets and NOTIFICATION messages between two BGP peers

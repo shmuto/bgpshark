@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import type { BgpMessage, BgpOpenMessage, BgpUpdateMessage, BgpNotificationMessage } from '../lib/bgp/types'
 import { extractNeighbors, getLatestOpen, type OpenMessageRecord } from '../lib/bgp/neighbor'
+import { CapabilityDiff } from '../components/neighbor'
 
 // Group by Router ID
 interface RouterGroup {
@@ -831,18 +832,18 @@ export function NeighborsPage() {
                     </div>
                   </div>
 
-                  {/* OPEN Comparison */}
+                  {/* OPEN Comparison / Capability diff */}
                   {openComparison && (
                     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
                       <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
                         <span className="text-sm font-medium text-gray-700">
-                          🔍 OPEN Comparison
+                          🔍 Capability Diff
                         </span>
                       </div>
                       <div className="p-4">
-                        <OpenComparisonTable
-                          localIp={selectedRouterInfo?.displayName || ''}
-                          remoteIp={selectedPeer!}
+                        <CapabilityDiff
+                          localLabel={selectedRouterInfo?.displayName || ''}
+                          remoteLabel={selectedPeer!}
                           localOpen={openComparison.local}
                           remoteOpen={openComparison.remote}
                         />
@@ -909,76 +910,6 @@ export function NeighborsPage() {
         </div>
       </div>
     </div>
-  )
-}
-
-function OpenComparisonTable({
-  localIp,
-  remoteIp,
-  localOpen,
-  remoteOpen,
-}: {
-  localIp: string
-  remoteIp: string
-  localOpen: BgpOpenMessage | null
-  remoteOpen: BgpOpenMessage | null
-}) {
-  if (!localOpen && !remoteOpen) {
-    return <div className="text-gray-400 text-center">No OPEN messages found</div>
-  }
-
-  const localCaps = new Set(localOpen?.capabilities.map(c => c.name) || [])
-  const remoteCaps = new Set(remoteOpen?.capabilities.map(c => c.name) || [])
-  const allCaps = new Set([...localCaps, ...remoteCaps])
-
-  return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b border-gray-200">
-          <th className="text-left py-2 text-gray-600 font-medium"></th>
-          <th className="text-left py-2 text-gray-600 font-medium">{localIp}</th>
-          <th className="text-left py-2 text-gray-600 font-medium">{remoteIp}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr className="border-b border-gray-100">
-          <td className="py-1.5 text-gray-600">AS Number</td>
-          <td className="py-1.5 font-mono">{localOpen?.fourByteAs ?? localOpen?.myAs ?? '-'}</td>
-          <td className="py-1.5 font-mono">{remoteOpen?.fourByteAs ?? remoteOpen?.myAs ?? '-'}</td>
-        </tr>
-        <tr className="border-b border-gray-100">
-          <td className="py-1.5 text-gray-600">Hold Time</td>
-          <td className="py-1.5 font-mono">{localOpen?.holdTime ?? '-'}s</td>
-          <td className="py-1.5 font-mono">{remoteOpen?.holdTime ?? '-'}s</td>
-        </tr>
-        <tr className="border-b border-gray-100">
-          <td className="py-1.5 text-gray-600">Router ID</td>
-          <td className="py-1.5 font-mono">{localOpen?.bgpIdentifier ?? '-'}</td>
-          <td className="py-1.5 font-mono">{remoteOpen?.bgpIdentifier ?? '-'}</td>
-        </tr>
-        <tr>
-          <td colSpan={3} className="pt-3 pb-1 text-gray-600 font-medium">Capabilities</td>
-        </tr>
-        {Array.from(allCaps).map((cap) => {
-          const hasLocal = localCaps.has(cap)
-          const hasRemote = remoteCaps.has(cap)
-          const mismatch = hasLocal !== hasRemote
-
-          return (
-            <tr key={cap} className="border-b border-gray-100">
-              <td className="py-1.5 text-gray-600">{cap}</td>
-              <td className={`py-1.5 ${mismatch ? 'text-amber-600' : ''}`}>
-                {hasLocal ? '✓' : '✗'}
-              </td>
-              <td className={`py-1.5 ${mismatch ? 'text-amber-600' : ''}`}>
-                {hasRemote ? '✓' : '✗'}
-                {mismatch && ' ⚠'}
-              </td>
-            </tr>
-          )
-        })}
-      </tbody>
-    </table>
   )
 }
 

@@ -108,9 +108,12 @@ NLRI and withdrawn routes are expanded per prefix, including IPv6 prefixes carri
 in MP_REACH_NLRI / MP_UNREACH_NLRI.
 
 #### 2.1.8 Analysis Views
+- **Dashboard** (`/dashboard`): summary counts, severity-sorted alerts, neighbor table
+  and a message timeline. Aggregations are computed in memory, so the screen works
+  even when DuckDB failed to initialize
 - **Message Explorer** (`/messages`): packet list, detail view, hex dump, filtering
 - **Neighbor Analysis** (`/neighbors`): sessions grouped by Router ID, capability and
-  session-event summaries
+  session-event summaries, plus the capability diff (§2.1.10)
 - **Route Analysis** (`/routes`): per-prefix announce/withdraw history and flap count
 - **SQL Console** (`/sql`): raw SQL against the DuckDB tables, with query templates
 
@@ -124,12 +127,33 @@ Grammar: `field (= | != | contains | not contains) value`, combined with
 `src/lib/filter/parser.ts`. The expression is evaluated either in memory
 (`filter/parser.ts`) or compiled to SQL (`db/filter-to-sql.ts`) when DuckDB is available.
 
+#### 2.1.10 Capability Diff
+
+On the Neighbor Analysis page (`/neighbors`), selecting a peer within a session shows a
+side-by-side diff of the two OPEN messages exchanged on that session
+(`CapabilityDiff` in `src/components/neighbor/CapabilityDiff.tsx`):
+
+- Non-capability fields (BGP version, My AS, Hold Time, BGP Identifier) are compared
+  first. Hold Time differences are marked informational, not an error, since only the
+  minimum is negotiated. A BGP Identifier collision (same Router ID on both sides) and
+  an internally inconsistent 4-byte/2-byte AS field are flagged as errors; version
+  mismatches are flagged as errors too.
+- Capabilities are compared as a three-state diff — advertised by both, only the local
+  side, or only the remote side — using an icon *and* text label so the states don't
+  rely on colour alone. Multiprotocol Extensions and ADD-PATH are compared per AFI/SAFI
+  pair rather than by capability code, so "both support Multiprotocol" doesn't hide one
+  side offering IPv4 unicast and the other IPv6 unicast. Repeated capability entries
+  within one OPEN are deduplicated.
+- Mismatches are listed before matches, since that's what an operator troubleshooting a
+  session is scanning for.
+- A missing OPEN on one or both sides is handled without breaking the page (one-sided
+  comparison notice, or an empty-state message when neither side has one).
+
 ### 2.2 Future Features
 
-- Dashboard screen with summary, alerts and timeline (specified in `ui-design.md` §4.2)
-- Side-by-side OPEN comparison (Capability diff)
 - URL fragment state sharing
 - IPv6 transport (BGP sessions over IPv6)
+- Dark mode
 
 ---
 
@@ -505,7 +529,8 @@ analysis layout, though files can be dropped anywhere in the app at any time.
 - pcap and pcapng parsing, Ethernet / Linux SLL, VLAN and QinQ tags
 - BGP parsing: OPEN (with capabilities), UPDATE (with path attributes), NOTIFICATION,
   KEEPALIVE, ROUTE-REFRESH
-- Message Explorer, Neighbor Analysis, Route Analysis, SQL Console
+- Dashboard, Message Explorer, Neighbor Analysis, Route Analysis, SQL Console
+- Sample capture offered on the upload screen
 - Filter expression language with in-memory and SQL backends
 - DuckDB WASM query engine, IndexedDB persistence
 - TCP segment reassembly, so messages split across segments are parsed
@@ -513,10 +538,10 @@ analysis layout, though files can be dropped anywhere in the app at any time.
 - Error boundary with a reset path out of a crash loop
 - GitHub Pages deployment via GitHub Actions
 - ContainerLab test topology (`testlab/`) for generating capture fixtures
+- Capability diff: side-by-side OPEN comparison on the Neighbor Analysis page
 
 ### Next
 
-- Capability comparison (OPEN diff)
 - Dark mode
 - IPv6 transport (BGP sessions carried over IPv6)
 

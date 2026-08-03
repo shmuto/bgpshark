@@ -207,7 +207,7 @@ not (type = KEEPALIVE)
 │         │                                           │          │
 │         └───────────────────────────────────────────┘          │
 │                                                                 │
-│         [Try with sample.pcap]                                  │
+│         [Try with sample.pcapng]                                │
 │                                                                 │
 │                                                                 │
 │  ─────────────────────────────────────────────────────────────  │
@@ -245,7 +245,7 @@ UI の文言もそこから生成するため、本書と実装がずれた場�
 | BGPパケットなし | "No BGP packets found in this capture" |
 
 **サンプルファイルリンク**
-- クリックで `/sample.pcap` を自動読み込み
+- クリックで `/sample.pcapng` を自動読み込み（実体は pcapng 形式）
 - 初めてのユーザー向けデモ用
 
 #### 4.1.4 状態遷移
@@ -505,20 +505,22 @@ UI の文言もそこから生成するため、本書と実装がずれた場�
 - KEEPALIVE: グレー
 - NOTIFICATION: 赤背景
 
-**OPEN Comparison**
+**Capability Diff（実装済、`CapabilityDiff` コンポーネント）**
 
-ピアペア間のOPENメッセージを並べて比較。
+ピアペア間のOPENメッセージを並べて比較（`src/components/neighbor/CapabilityDiff.tsx`）。
 
 | 表示項目 | 説明 |
 |----------|------|
-| 基本情報 | AS Number, Hold Time, Router ID |
-| Capabilities | 各Capabilityの対応状況を並列表示 |
-| 差分ハイライト | 片方のみサポートの場合 ⚠ マーク |
+| Session Fields | BGP Version, My AS, Hold Time, BGP Identifier。Hold Time不一致はエラー扱いしない（最小値がネゴシエートされるため）。Router ID衝突（双方が同一値）とAS不整合はエラー表示 |
+| Capability Mismatches | 片方のみサポートのCapabilityを先頭に表示。Multiprotocol/ADD-PATHはAFI/SAFI単位で比較（コード単位ではない） |
+| Matching Capabilities | 双方サポート済みのCapability（折りたたみ表示） |
+| 三値の状態表示 | advertised by both / only local / only remote を色だけでなくアイコン＋テキストで表現 |
 
 トラブルシューティングに有用:
-- Capabilityミスマッチの検出
-- Hold Time不一致の確認
-- AS番号の確認
+- Capabilityミスマッチの検出（AFI/SAFI粒度）
+- Hold Time不一致の確認（エラーではない旨を明示）
+- Router ID衝突・AS不整合の検出
+- 片側のOPENしか取得できていない場合も一方比較として表示継続
 
 **Prefix Activity**
 
@@ -1049,7 +1051,6 @@ UI の文言もそこから生成するため、本書と実装がずれた場�
 
 | 機能 | 概要 |
 |------|------|
-| OPEN比較 | 2つのOPENメッセージを並べてCapability差分表示 |
 | pcapng対応 | pcapng形式の読み込み |
 | URL共有 | フィルタ状態をURLフラグメントで共有 |
 | ダークモード | ダークテーマ切り替え |
