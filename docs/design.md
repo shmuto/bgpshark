@@ -89,7 +89,7 @@ GitHub Pages (fully static site)
 - Hierarchical field display
 - Hex dump of relevant bytes
 
-#### 2.1.6 UPDATE Message Analysis
+#### 2.1.7 UPDATE Message Analysis
 Path attributes parsed into structured values:
 
 | Code | Attribute | Code | Attribute |
@@ -107,14 +107,14 @@ Path attributes parsed into structured values:
 NLRI and withdrawn routes are expanded per prefix, including IPv6 prefixes carried
 in MP_REACH_NLRI / MP_UNREACH_NLRI.
 
-#### 2.1.7 Analysis Views
+#### 2.1.8 Analysis Views
 - **Message Explorer** (`/messages`): packet list, detail view, hex dump, filtering
 - **Neighbor Analysis** (`/neighbors`): sessions grouped by Router ID, capability and
   session-event summaries
 - **Route Analysis** (`/routes`): per-prefix announce/withdraw history and flap count
 - **SQL Console** (`/sql`): raw SQL against the DuckDB tables, with query templates
 
-#### 2.1.8 Filtering
+#### 2.1.9 Filtering
 Two modes over the same expression language:
 - **Simple**: field/operator/value rules built from dropdowns
 - **Advanced**: free-form expression with autocomplete
@@ -129,7 +129,6 @@ Grammar: `field (= | != | contains | not contains) value`, combined with
 - Dashboard screen with summary, alerts and timeline (specified in `ui-design.md` §4.2)
 - Side-by-side OPEN comparison (Capability diff)
 - URL fragment state sharing
-- BGP messages spanning multiple TCP segments (reassembly)
 - IPv6 transport (BGP sessions over IPv6)
 
 ---
@@ -180,8 +179,12 @@ Pages cannot provide. Self-hosting adds roughly 74 MB to `dist/` (two `.wasm` fi
 a browser downloads only the one bundle it selects.
 
 ### 3.4 Accessibility
-- Keyboard navigation support
-- Basic screen reader support
+- Keyboard navigation: the packet list is focusable and supports arrow-key selection,
+  scrolling the selection into view even when the row is outside the rendered window
+- Screen readers: the packet list is exposed as a grid, with `aria-rowcount` reporting
+  the total packet count rather than the virtualized slice, plus `aria-rowindex`,
+  `aria-selected` and `aria-activedescendant`
+- Not yet covered: the remaining screens have no dedicated ARIA work
 
 ---
 
@@ -233,7 +236,6 @@ bgpshark/
 │   │   └── sidebar/             # BgpPeersSidebar
 │   ├── hooks/
 │   │   ├── useBgpAnalyzer.ts    # Load → parse → DuckDB → state
-│   │   ├── useDuckDB.ts
 │   │   ├── useFileDropzone.ts
 │   │   ├── useFilter.ts
 │   │   └── useResizablePanes.ts
@@ -322,7 +324,7 @@ bgpshark/
         ▼                              ▼
 ┌───────────────────────┬─────────────────────────────────────────┐
 │  Pages / Components   │  db/queries.ts                          │
-│  - PacketList         │  - getPackets(filter) / getNeighborStats│
+│  - PacketList         │  - getPackets(filter)                   │
 │  - PacketDetail       │  - executeRawSql (SQL console)          │
 │  - HexDump            │  - filter-to-sql.ts for filter → SQL    │
 └───────────────────────┴─────────────────────────────────────────┘
@@ -330,6 +332,17 @@ bgpshark/
 
 If DuckDB WASM fails to initialize, the app stays usable: filtering falls back to
 in-memory evaluation in `filter/parser.ts` and only the SQL console is unavailable.
+
+#### DuckDB's role is intentionally narrow
+
+`db/queries.ts` exposes exactly two entry points: `getPackets` (SQL-accelerated
+filtering, called from `useFilter.ts`) and `executeRawSql` (the SQL console, called
+from `SqlConsolePage.tsx`). Earlier revisions also had DuckDB-backed queries for
+packet counts, single-packet lookup, and neighbor/AS-path/prefix statistics, but
+nothing outside `src/lib/db/` ever called them and they were removed. Neighbor
+Analysis and Route Analysis compute their aggregations in memory with `useMemo`
+over the already-parsed `BgpPacket[]` instead of querying DuckDB, which is what
+keeps those screens usable when DuckDB fails to initialize.
 
 ### 4.4 Key Type Definitions
 
@@ -495,22 +508,26 @@ analysis layout, though files can be dropped anywhere in the app at any time.
 - Message Explorer, Neighbor Analysis, Route Analysis, SQL Console
 - Filter expression language with in-memory and SQL backends
 - DuckDB WASM query engine, IndexedDB persistence
+- TCP segment reassembly, so messages split across segments are parsed
+- Virtualized packet list with grid accessibility semantics
+- Error boundary with a reset path out of a crash loop
 - GitHub Pages deployment via GitHub Actions
 - ContainerLab test topology (`testlab/`) for generating capture fixtures
 
 ### Next
 
-- Dashboard screen (summary, alerts, timeline)
 - Capability comparison (OPEN diff)
 - Dark mode
-- TCP segment reassembly
+- IPv6 transport (BGP sessions carried over IPv6)
 
 ---
 
 ## 7. Constraints & Assumptions
 
-- BGP messages spanning TCP segments are not reassembled; a message must fit within
-  a single segment
+- BGP messages spanning TCP segments are reassembled per directional flow. The
+  leftover buffer is capped at `BGP_MAX_MESSAGE_LENGTH`; beyond that the flow is
+  treated as desynced and dropped with a warning, so a permanently misaligned or
+  heavily retransmitting flow cannot grow it without bound
 - IPv4 transport only. IPv6 prefixes are supported inside UPDATE messages via
   MP_REACH_NLRI / MP_UNREACH_NLRI, but BGP sessions carried over IPv6 are not parsed
 - Link layer: Ethernet II (link type 1) and Linux cooked capture / SLL (113).

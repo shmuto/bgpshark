@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { parsePcap, isPcapng, parsePcapng, type GenericPacket } from '../lib/pcap'
 import { parseBgpFromPackets, type BgpPacket } from '../lib/bgp'
-import { initDatabase, loadPackets, getPackets, isInitialized } from '../lib/db'
+import { initDatabase, loadPackets, isInitialized } from '../lib/db'
 import { savePcapFile, loadPcapFile, clearPcapFile } from '../lib/storage'
 
 interface AnalyzerState {
@@ -185,23 +185,10 @@ export function useBgpAnalyzer() {
     }))
   }, [])
 
-  // Query packets using DuckDB
-  const queryPackets = useCallback(
-    async (filterExpr?: string): Promise<BgpPacket[]> => {
-      if (!isInitialized()) {
-        // Fallback to in-memory filtering
-        return state.packets
-      }
-      return getPackets(filterExpr)
-    },
-    [state.packets]
-  )
-
   return {
     state,
     loadFile,
     selectPacket,
     reset,
-    queryPackets,
   }
 }
