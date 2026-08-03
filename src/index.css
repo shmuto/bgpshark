@@ -2,6 +2,198 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-gray-50 text-gray-900;
+/* ---------------------------------------------------------------------------
+   Typography
+
+   Self-hosted so the app makes no third-party request and works under the
+   production CSP (font-src 'self'). Latin subsets only; the content here is IP
+   addresses, ASNs and protocol field names.
+
+   IBM Plex Sans for interface chrome, JetBrains Mono for data. Both were drawn
+   for technical contexts, which is what this instrument displays.
+--------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/ibm-plex-sans-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/ibm-plex-sans-600.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/jetbrains-mono-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./assets/fonts/jetbrains-mono-500.woff2') format('woff2');
+}
+
+/* ---------------------------------------------------------------------------
+   Design tokens
+
+   Values are space-separated RGB channels so Tailwind can apply opacity
+   modifiers, e.g. bg-surface/60. Consume them through the Tailwind names in
+   tailwind.config.js (canvas, surface, hair, ...) rather than reaching for raw
+   gray scales, so both themes stay in step.
+
+   Light is the default. The dark palette applies automatically when the OS asks
+   for it, and an explicit data-theme on <html> overrides either way. Defaulting
+   through the media query matters: the production CSP forbids inline scripts,
+   so there is no way to stamp the theme before first paint, and a JS-only
+   default would flash light before switching.
+--------------------------------------------------------------------------- */
+
+@layer base {
+  :root {
+    /* Surfaces, furthest back to nearest */
+    --canvas: 250 250 251;
+    --surface: 255 255 255;
+    --surface-sunken: 244 244 246;
+    --surface-raised: 255 255 255;
+
+    /* Hairlines */
+    --hair: 228 228 233;
+    --hair-strong: 205 205 213;
+
+    /* Text, most to least prominent */
+    --text-strong: 23 23 26;
+    --text-body: 45 45 52;
+    --text-muted: 92 92 103;
+    --text-dim: 138 138 149;
+
+    /* Interactive */
+    --accent: 37 99 235;
+    --accent-hover: 29 78 216;
+    --accent-fg: 255 255 255;
+    --accent-subtle: 239 244 255;
+
+    /* BGP message types. These carry meaning, so they are the only colours
+       allowed to vary by content rather than by state. */
+    --msg-open: 22 163 74;
+    --msg-update: 37 99 235;
+    --msg-notification: 220 38 38;
+    --msg-keepalive: 147 51 234;
+    --msg-route-refresh: 13 148 136;
+
+    /* Severity */
+    --critical: 220 38 38;
+    --critical-subtle: 254 242 242;
+    --warning: 180 83 9;
+    --warning-subtle: 255 247 237;
+    --ok: 21 128 61;
+    --ok-subtle: 240 253 244;
+
+    color-scheme: light;
+  }
+
+  /* Follow the OS unless the user explicitly chose light */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --canvas: 12 13 17;
+      --surface: 20 22 28;
+      --surface-sunken: 16 18 24;
+      --surface-raised: 27 30 38;
+
+      --hair: 35 38 47;
+      --hair-strong: 51 55 67;
+
+      --text-strong: 237 238 242;
+      --text-body: 214 216 223;
+      --text-muted: 158 162 173;
+      --text-dim: 108 112 121;
+
+      --accent: 96 141 255;
+      --accent-hover: 129 173 255;
+      --accent-fg: 12 13 17;
+      --accent-subtle: 22 32 58;
+
+      --msg-open: 74 222 128;
+      --msg-update: 96 165 250;
+      --msg-notification: 248 113 113;
+      --msg-keepalive: 192 132 252;
+      --msg-route-refresh: 45 212 191;
+
+      --critical: 248 113 113;
+      --critical-subtle: 45 21 24;
+      --warning: 251 191 36;
+      --warning-subtle: 43 32 15;
+      --ok: 74 222 128;
+      --ok-subtle: 17 38 26;
+
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme='dark'] {
+    --canvas: 12 13 17;
+    --surface: 20 22 28;
+    --surface-sunken: 16 18 24;
+    --surface-raised: 27 30 38;
+
+    --hair: 35 38 47;
+    --hair-strong: 51 55 67;
+
+    --text-strong: 237 238 242;
+    --text-body: 214 216 223;
+    --text-muted: 158 162 173;
+    --text-dim: 108 112 121;
+
+    --accent: 96 141 255;
+    --accent-hover: 129 173 255;
+    --accent-fg: 12 13 17;
+    --accent-subtle: 22 32 58;
+
+    --msg-open: 74 222 128;
+    --msg-update: 96 165 250;
+    --msg-notification: 248 113 113;
+    --msg-keepalive: 192 132 252;
+    --msg-route-refresh: 45 212 191;
+
+    --critical: 248 113 113;
+    --critical-subtle: 45 21 24;
+    --warning: 251 191 36;
+    --warning-subtle: 43 32 15;
+    --ok: 74 222 128;
+    --ok-subtle: 17 38 26;
+
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-canvas text-body;
+    font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Tabular figures wherever numbers are compared down a column, which in this
+     app is nearly everywhere. */
+  code,
+  pre,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* One focus treatment for the whole app, drawn from the accent token so it
+     stays visible on either theme. */
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 1px;
+  }
 }
