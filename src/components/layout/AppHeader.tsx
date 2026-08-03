@@ -25,6 +25,7 @@ export function AppHeader() {
         {/* Navigation */}
         {isReady && (
           <nav className="flex items-center gap-1">
+            <NavItem to="/dashboard">Dashboard</NavItem>
             <NavItem to="/messages">Messages</NavItem>
             <NavItem to="/neighbors">Neighbors</NavItem>
             <NavItem to="/routes">Routes</NavItem>

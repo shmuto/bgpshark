@@ -1,4 +1,5 @@
 export { FileUploadPage } from './FileUploadPage'
+export { DashboardPage } from './DashboardPage'
 export { NeighborsPage } from './NeighborsPage'
 export { MessagesPage } from './MessagesPage'
 export { RoutesPage } from './RoutesPage'

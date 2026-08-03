@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/common'
 import { useFileDropzone } from './hooks/useFileDropzone'
 import {
   FileUploadPage,
+  DashboardPage,
   NeighborsPage,
   MessagesPage,
   RoutesPage,
@@ -34,6 +35,10 @@ function AppContent() {
           <Route path="/" element={<FileUploadPage />} />
 
           {/* Protected routes - redirect to / if no file loaded */}
+          <Route
+            path="/dashboard"
+            element={isReady ? <DashboardPage /> : <Navigate to="/" replace />}
+          />
           <Route
             path="/neighbors"
             element={isReady ? <NeighborsPage /> : <Navigate to="/" replace />}
