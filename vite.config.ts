@@ -1,3 +1,5 @@
+import { copyFileSync, existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -49,12 +51,38 @@ function cspPlugin(): Plugin {
   }
 }
 
+/**
+ * Copies the built index.html to 404.html.
+ *
+ * GitHub Pages is a static file server with no SPA rewrite, so a deep link like
+ * /bgpshark/messages has no matching file and returns its 404 page. Serving a copy
+ * of index.html as that 404 page lets React Router read the path and render the
+ * right route, which is what makes direct links, reloads and bookmarks work.
+ *
+ * The copy is taken after the build has written the file so it includes the CSP
+ * meta tag and the hashed asset URLs.
+ */
+function spaFallbackPlugin(): Plugin {
+  return {
+    name: 'spa-fallback-404',
+    apply: 'build',
+    enforce: 'post',
+    closeBundle() {
+      const outDir = resolve(__dirname, 'dist')
+      const indexHtml = resolve(outDir, 'index.html')
+      if (!existsSync(indexHtml)) return
+      copyFileSync(indexHtml, resolve(outDir, '404.html'))
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), cspPlugin()],
+  plugins: [react(), cspPlugin(), spaFallbackPlugin()],
   base: '/bgpshark/',
   build: {
     outDir: 'dist',
   },
-  // Vite handles SPA fallback automatically with appType: 'spa' (default)
+  // In dev and preview Vite handles the SPA fallback itself (appType: 'spa').
+  // Static hosts need the 404.html copy emitted by spaFallbackPlugin.
 })
