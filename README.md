@@ -1,0 +1,119 @@
+# 🦈 BGPShark
+
+A browser-based pcap analyzer specialized for BGP session troubleshooting.
+Inspect OPEN, UPDATE, NOTIFICATION, KEEPALIVE and ROUTE-REFRESH messages without
+launching Wireshark.
+
+**Everything runs in the browser** — the capture file is parsed locally and never
+uploaded to a server.
+
+## Features
+
+- **pcap / pcapng** input, auto-detected. Ethernet and Linux SLL link types,
+  802.1Q / QinQ tags stripped
+- **Full BGP decode** — OPEN capabilities, UPDATE path attributes (AS_PATH,
+  communities, large communities, MP_REACH/MP_UNREACH including IPv6 NLRI, …),
+  NOTIFICATION error codes with troubleshooting hints
+- **Message Explorer** — packet list, hierarchical detail view, hex dump
+- **Neighbor Analysis** — sessions grouped by Router ID with capability summaries
+- **Route Analysis** — per-prefix announce / withdraw history and flap counts
+- **SQL Console** — query the capture directly with DuckDB WASM
+- **Filter expressions** — `type = NOTIFICATION and src_ip = 10.0.0.1`, with
+  autocomplete and a rule-builder mode
+- Loaded captures persist in IndexedDB and are restored on reload
+
+## Getting started
+
+Requires [Bun](https://bun.sh/).
+
+```bash
+bun install
+bun run dev        # http://localhost:5173/bgpshark/
+```
+
+Other scripts:
+
+```bash
+bun test           # Run the parser test suite
+bun run build      # Type-check and build to dist/
+bun run preview    # Serve the production build
+bun run lint       # ESLint
+```
+
+## Filter syntax
+
+```
+type = OPEN
+type = NOTIFICATION and src_ip = 10.0.0.1
+src_ip = 10.0.0.1 or dst_ip = 10.0.0.1
+asn = 65001
+prefix = 10.0.0.0/8
+community = 65000:100
+capability contains "Route Refresh"
+not (type = KEEPALIVE)
+```
+
+| Field | Matches |
+|-------|---------|
+| `type` | Message type (`OPEN`, `UPDATE`, `NOTIFICATION`, `KEEPALIVE`, `ROUTE_REFRESH`) |
+| `src_ip` / `dst_ip` | Source / destination IP (prefix match supported) |
+| `router_id` | BGP Identifier from an OPEN message |
+| `src_as` | AS number advertised in an OPEN message |
+| `asn` | AS number appearing anywhere in AS_PATH |
+| `origin` | `IGP` / `EGP` / `INCOMPLETE` |
+| `next_hop` | NEXT_HOP or MP_REACH next hop |
+| `prefix` | Announced NLRI prefix |
+| `withdrawn` | Withdrawn prefix |
+| `community` | Standard or large community |
+| `capability` | Capability name from an OPEN message |
+
+Aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `nlri`.
+Operators: `=`, `!=`, `contains`, `not contains`, combined with `and` / `or` / `not`
+and parentheses.
+
+## Architecture
+
+```
+pcap/pcapng → BGP parser → ┬→ React state (AppContext)
+                           ├→ DuckDB WASM (SQL queries, filtering)
+                           └→ IndexedDB (reload persistence)
+```
+
+Filter expressions are parsed once into an AST, then either evaluated in memory or
+compiled to SQL depending on whether DuckDB initialized. If DuckDB is unavailable the
+app still works, minus the SQL console.
+
+| Path | Contents |
+|------|----------|
+| `src/lib/pcap/` | pcap and pcapng parsers, binary reader |
+| `src/lib/bgp/` | BGP message and path attribute parsers, error hints |
+| `src/lib/db/` | DuckDB schema, loader, queries, filter→SQL compiler |
+| `src/lib/filter/` | Filter expression lexer, parser and evaluator |
+| `src/pages/` | One component per route |
+| `src/components/` | `common/`, `layout/`, `message/`, `neighbor/`, `sidebar/` |
+| `testlab/` | ContainerLab topology for generating test captures |
+| `docs/` | Design documents |
+
+## Test lab
+
+`testlab/` contains a ContainerLab topology of four SR Linux nodes (two ASes, iBGP
+plus a full eBGP mesh) for producing realistic captures, including session flaps and
+administrative shutdowns. See [testlab/README.md](testlab/README.md).
+
+## Documentation
+
+- [docs/design.md](docs/design.md) — requirements and technical design
+- [docs/ui-design.md](docs/ui-design.md) — screen specifications
+- [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — DuckDB WASM design
+
+## Deployment
+
+Pushes to `main` run tests, build, and deploy to GitHub Pages via
+`.github/workflows/deploy.yml`. The app is served under the `/bgpshark/` base path.
+
+## Privacy
+
+The app makes no third-party requests. Captures are parsed in the browser and stored
+only in IndexedDB, and the DuckDB WASM runtime is self-hosted rather than loaded from
+a CDN. The production build ships a Content Security Policy restricting every fetch
+to the app's own origin.

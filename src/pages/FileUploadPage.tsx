@@ -7,10 +7,10 @@ export function FileUploadPage() {
   const { status, loadFile, error, reset } = useApp()
   const navigate = useNavigate()
 
-  // Navigate to dashboard when ready
+  // Navigate to the message explorer when ready
   useEffect(() => {
     if (status === 'ready') {
-      navigate('/dashboard')
+      navigate('/messages')
     }
   }, [status, navigate])
 
