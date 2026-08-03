@@ -18,18 +18,87 @@ const BGP_MIN_MESSAGE_LENGTH = 19
 const BGP_MAX_MESSAGE_LENGTH = 4096
 
 /**
- * Parse BGP messages from raw TCP packets
+ * TCP segment reassembly
+ * -----------------------
+ * BGP messages are carried over a TCP byte stream, so a single BGP message may be
+ * split across two or more captured TCP segments (common with large UPDATE bursts
+ * or full-table dumps), and a single segment may contain the tail of one message,
+ * several complete messages, and the start of another.
+ *
+ * We track one leftover byte buffer per TCP flow, where a flow is the directional
+ * 4-tuple (srcIp, srcPort, dstIp, dstPort). The two directions of a session are
+ * deliberately kept as separate flows since each direction is an independent TCP
+ * byte stream. Before parsing a packet's payload, any leftover bytes from a
+ * previous segment of the same flow are prepended to it.
+ *
+ * Frame attribution: a reassembled message is attributed to the frame in which it
+ * COMPLETED (i.e. the packet whose payload supplied the final byte of the
+ * message), not the frame where it started. This keeps frameIndex/timestamp
+ * monotonic and simple for the UI (which sorts/displays by frame): a message
+ * never gets attached to a frame index earlier than a frame it depends on, and
+ * every BgpPacket entry corresponds 1:1 to an actual captured frame.
+ *
+ * Defensive cap: whatever a segment doesn't resolve into a complete message -
+ * a message genuinely still waiting on more bytes, or a run of bytes that
+ * failed marker/length validation - is kept as the flow's leftover buffer, in
+ * case a later segment lets it resync. A well-formed pending message can never
+ * need more than BGP_MAX_MESSAGE_LENGTH bytes, so if the leftover for a flow
+ * ever grows beyond that (e.g. a run of retransmitted/duplicated segments that
+ * keeps failing validation and just keeps getting appended to), the flow is
+ * considered desynced: we drop the buffer and emit a warning instead of
+ * retaining it and growing unbounded.
+ */
+
+/**
+ * Identify a directional TCP flow for reassembly bookkeeping
+ */
+function flowKey(raw: RawPacket): string {
+  return `${raw.srcIp}:${raw.srcPort}->${raw.dstIp}:${raw.dstPort}`
+}
+
+/**
+ * Concatenate two byte buffers
+ */
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length)
+  out.set(a, 0)
+  out.set(b, a.length)
+  return out
+}
+
+/**
+ * Parse BGP messages from raw TCP packets, reassembling messages that span
+ * multiple TCP segments of the same flow.
  */
 export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
   const packets: BgpPacket[] = []
   const warnings: string[] = []
+  const flowBuffers = new Map<string, Uint8Array>()
 
   for (let i = 0; i < rawPackets.length; i++) {
     const raw = rawPackets[i]
     const packetWarnings: string[] = []
+    const key = flowKey(raw)
 
     try {
-      const messages = parseBgpMessages(raw.tcpPayload, packetWarnings, i + 1)
+      const leftover = flowBuffers.get(key)
+      const payload =
+        leftover && leftover.length > 0 ? concatBytes(leftover, raw.tcpPayload) : raw.tcpPayload
+
+      const { messages, remainder } = parseBgpMessages(payload, packetWarnings, i + 1)
+
+      if (remainder.length > BGP_MAX_MESSAGE_LENGTH) {
+        packetWarnings.push(
+          `Packet ${i + 1}: TCP flow ${key} appears desynced ` +
+            `(buffered ${remainder.length} bytes exceeds max BGP message length ` +
+            `${BGP_MAX_MESSAGE_LENGTH}). Discarding buffered data.`
+        )
+        flowBuffers.delete(key)
+      } else if (remainder.length > 0) {
+        flowBuffers.set(key, remainder)
+      } else {
+        flowBuffers.delete(key)
+      }
 
       if (messages.length > 0) {
         packets.push({
@@ -53,7 +122,28 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
     }
   }
 
+  // Flag any flow that still has an incomplete message buffered once the
+  // capture ends, rather than silently discarding it.
+  for (const [key, remainder] of flowBuffers) {
+    if (remainder.length > 0) {
+      warnings.push(
+        `Flow ${key}: capture ended with ${remainder.length} incomplete byte(s) buffered ` +
+          `(partial BGP message never completed).`
+      )
+    }
+  }
+
   return { packets, warnings }
+}
+
+/**
+ * Result of parsing all complete BGP messages out of a (possibly reassembled)
+ * TCP payload, along with any trailing bytes that belong to a message which is
+ * not yet complete and must be carried over to the next segment of the flow.
+ */
+interface BgpMessagesResult {
+  messages: BgpMessage[]
+  remainder: Uint8Array
 }
 
 /**
@@ -63,7 +153,7 @@ function parseBgpMessages(
   payload: Uint8Array,
   warnings: string[],
   packetIndex: number
-): BgpMessage[] {
+): BgpMessagesResult {
   const messages: BgpMessage[] = []
   const reader = new BinaryReader(payload, false) // BGP uses network byte order (big-endian)
 
@@ -73,7 +163,12 @@ function parseBgpMessages(
     // Validate marker
     const marker = reader.peek(16)
     if (!validateMarker(marker)) {
-      // Could be a fragmented message or corrupt data
+      // Could be a genuinely corrupt stream, or a flow whose alignment we've
+      // lost (e.g. a missed segment). Either way we can't safely resume
+      // parsing from here in this call; the unparsed tail (from startOffset
+      // onward, i.e. reader.offset, since peek() doesn't advance it) is left
+      // for the caller to decide whether to keep buffering (bounded by the
+      // per-flow cap) or give up on.
       warnings.push(
         `Packet ${packetIndex}: Invalid BGP marker at offset ${startOffset}. ` +
           `Possible TCP segment fragmentation or corrupt data.`
@@ -92,11 +187,8 @@ function parseBgpMessages(
     }
 
     if (reader.remaining() < length) {
-      // Message spans multiple TCP segments
-      warnings.push(
-        `Packet ${packetIndex}: BGP message spans multiple TCP segments ` +
-          `(need ${length} bytes, have ${reader.remaining()}). Partial message skipped.`
-      )
+      // Message spans multiple TCP segments - stop here so the unparsed tail
+      // (still at startOffset) is buffered for the next segment of this flow.
       break
     }
 
@@ -118,7 +210,14 @@ function parseBgpMessages(
     }
   }
 
-  return messages
+  // Whatever hasn't been consumed into a complete message - whether because
+  // the loop ran out of bytes for even a header, hit an invalid marker/length,
+  // or is waiting on more bytes for a message in progress - is returned as the
+  // remainder. The caller (parseBgpFromPackets) is responsible for bounding
+  // how large this is allowed to grow across segments of the same flow.
+  const remainder = payload.slice(reader.offset)
+
+  return { messages, remainder }
 }
 
 /**

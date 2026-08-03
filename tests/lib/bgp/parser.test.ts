@@ -278,6 +278,212 @@ describe('parseBgpFromPackets', () => {
     })
   })
 
+  describe('TCP segment reassembly', () => {
+    test('parses a BGP message split across exactly two segments', () => {
+      const keepalive = createBgpMessage(4, [])
+      const openBody = [
+        0x04, 0xfd, 0xe9, 0x00, 0x5a, 0x0a, 0x00, 0x00, 0x01, 0x00,
+      ]
+      const open = createBgpMessage(1, openBody)
+      const combined = new Uint8Array([...keepalive, ...open])
+
+      // Split the combined stream mid-OPEN-message (after the KEEPALIVE and
+      // partway through the OPEN header/body).
+      const splitPoint = keepalive.length + 10
+      const segment1 = combined.slice(0, splitPoint)
+      const segment2 = combined.slice(splitPoint)
+
+      const packet1 = createRawPacket(segment1, 1)
+      const packet2 = createRawPacket(segment2, 2)
+
+      const result = parseBgpFromPackets([packet1, packet2])
+
+      // First frame only yields the complete KEEPALIVE; the partial OPEN is
+      // buffered rather than dropped.
+      expect(result.packets).toHaveLength(2)
+      expect(result.packets[0].frameIndex).toBe(1)
+      expect(result.packets[0].messages).toHaveLength(1)
+      expect(result.packets[0].messages[0].type).toBe('KEEPALIVE')
+
+      // The reassembled OPEN is attributed to the completing frame (frame 2).
+      expect(result.packets[1].frameIndex).toBe(2)
+      expect(result.packets[1].messages).toHaveLength(1)
+      const open2 = result.packets[1].messages[0] as BgpOpenMessage
+      expect(open2.type).toBe('OPEN')
+      expect(open2.myAs).toBe(65001)
+      expect(open2.bgpIdentifier).toBe('10.0.0.1')
+
+      expect(result.warnings.some((w) => w.includes('Partial message skipped'))).toBe(false)
+    })
+
+    test('parses a BGP message split across three segments', () => {
+      const notifBody = [0x06, 0x02, 0xaa, 0xbb, 0xcc]
+      const message = createBgpMessage(3, notifBody)
+
+      // Split into three uneven pieces: header only, mid-body, rest.
+      const segment1 = message.slice(0, 10)
+      const segment2 = message.slice(10, 21)
+      const segment3 = message.slice(21)
+
+      const packets = [
+        createRawPacket(segment1, 1),
+        createRawPacket(segment2, 2),
+        createRawPacket(segment3, 3),
+      ]
+
+      const result = parseBgpFromPackets(packets)
+
+      expect(result.packets).toHaveLength(1)
+      expect(result.packets[0].frameIndex).toBe(3)
+      const notif = result.packets[0].messages[0] as BgpNotificationMessage
+      expect(notif.type).toBe('NOTIFICATION')
+      expect(notif.errorCode).toBe(6)
+      expect(notif.errorSubcode).toBe(2)
+      expect(notif.data).toEqual(new Uint8Array([0xaa, 0xbb, 0xcc]))
+    })
+
+    test('handles a segment ending mid-message followed by one completing it and starting another', () => {
+      const first = createBgpMessage(4, []) // KEEPALIVE
+      const second = createBgpMessage(4, []) // KEEPALIVE
+      const third = createBgpMessage(4, []) // KEEPALIVE
+
+      const combined = new Uint8Array([...first, ...second, ...third])
+
+      // Segment 1 ends partway through `second`.
+      const splitPoint = first.length + 5
+      const segment1 = combined.slice(0, splitPoint)
+      // Segment 2 completes `second` and fully contains `third`.
+      const segment2 = combined.slice(splitPoint)
+
+      const packet1 = createRawPacket(segment1, 1)
+      const packet2 = createRawPacket(segment2, 2)
+
+      const result = parseBgpFromPackets([packet1, packet2])
+
+      expect(result.packets).toHaveLength(2)
+      expect(result.packets[0].messages).toHaveLength(1) // `first`
+
+      // `second` (completed) and `third` (fully contained) both land on frame 2.
+      expect(result.packets[1].frameIndex).toBe(2)
+      expect(result.packets[1].messages).toHaveLength(2)
+      expect(result.packets[1].messages[0].type).toBe('KEEPALIVE')
+      expect(result.packets[1].messages[1].type).toBe('KEEPALIVE')
+    })
+
+    test('keeps two interleaved flows separate with no cross-contamination', () => {
+      // Flow A->B: OPEN split across two segments.
+      const openBody = [
+        0x04, 0xfd, 0xe9, 0x00, 0x5a, 0x0a, 0x00, 0x00, 0x01, 0x00,
+      ]
+      const openMsg = createBgpMessage(1, openBody)
+      const openSeg1 = openMsg.slice(0, 12)
+      const openSeg2 = openMsg.slice(12)
+
+      // Flow B->A: NOTIFICATION split across two segments.
+      const notifBody = [0x02, 0x02, 0xfd, 0xea]
+      const notifMsg = createBgpMessage(3, notifBody)
+      const notifSeg1 = notifMsg.slice(0, 15)
+      const notifSeg2 = notifMsg.slice(15)
+
+      const flowA = (payload: Uint8Array, frameIndex: number): RawPacket => ({
+        frameIndex,
+        timestamp: new Date('2024-01-01T00:00:00Z'),
+        capturedLength: payload.length,
+        originalLength: payload.length,
+        srcIp: '10.0.0.1',
+        dstIp: '10.0.0.2',
+        srcPort: 54321,
+        dstPort: 179,
+        tcpPayload: payload,
+        tcpFlags: { fin: false, syn: false, rst: false, psh: true, ack: true, urg: false },
+      })
+
+      const flowB = (payload: Uint8Array, frameIndex: number): RawPacket => ({
+        frameIndex,
+        timestamp: new Date('2024-01-01T00:00:00Z'),
+        capturedLength: payload.length,
+        originalLength: payload.length,
+        srcIp: '10.0.0.2',
+        dstIp: '10.0.0.1',
+        srcPort: 179,
+        dstPort: 54321,
+        tcpPayload: payload,
+        tcpFlags: { fin: false, syn: false, rst: false, psh: true, ack: true, urg: false },
+      })
+
+      // Interleave: A1, B1, A2, B2
+      const packets = [
+        flowA(openSeg1, 1),
+        flowB(notifSeg1, 2),
+        flowA(openSeg2, 3),
+        flowB(notifSeg2, 4),
+      ]
+
+      const result = parseBgpFromPackets(packets)
+
+      expect(result.packets).toHaveLength(2)
+
+      const openPacket = result.packets.find((p) => p.frameIndex === 3)
+      const notifPacket = result.packets.find((p) => p.frameIndex === 4)
+
+      expect(openPacket).toBeDefined()
+      expect(openPacket!.messages).toHaveLength(1)
+      const open = openPacket!.messages[0] as BgpOpenMessage
+      expect(open.type).toBe('OPEN')
+      expect(open.myAs).toBe(65001)
+
+      expect(notifPacket).toBeDefined()
+      expect(notifPacket!.messages).toHaveLength(1)
+      const notif = notifPacket!.messages[0] as BgpNotificationMessage
+      expect(notif.type).toBe('NOTIFICATION')
+      expect(notif.errorCode).toBe(2)
+      expect(notif.errorSubcode).toBe(2)
+    })
+
+    test('does not grow the buffer unboundedly for a desynced/garbage flow', () => {
+      // Bytes that never form a valid BGP marker (e.g. a permanently
+      // misaligned stream, or garbage from retransmitted/duplicated
+      // segments). Each segment fails marker validation, so it's held as the
+      // flow's leftover buffer in case a later segment lets it resync - but
+      // since resync never happens here, that buffer keeps being appended to
+      // and would grow without bound if not capped.
+      const garbageSegment = new Uint8Array(500).fill(0xab)
+
+      const packets: RawPacket[] = []
+      for (let f = 1; f <= 10; f++) {
+        packets.push(createRawPacket(garbageSegment, f))
+      }
+
+      const result = parseBgpFromPackets(packets)
+
+      // No message ever completes.
+      expect(result.packets).toHaveLength(0)
+
+      // The buffer must have been capped/discarded well before reaching
+      // 10 * 500 = 5000 bytes; a desync warning must be emitted.
+      expect(result.warnings.some((w) => w.includes('desynced'))).toBe(true)
+    })
+
+    test('warns when a flow ends with an incomplete message still buffered', () => {
+      const openBody = [
+        0x04, 0xfd, 0xe9, 0x00, 0x5a, 0x0a, 0x00, 0x00, 0x01, 0x00,
+      ]
+      const open = createBgpMessage(1, openBody)
+      const segment1 = open.slice(0, 10) // never completed
+
+      const rawPacket = createRawPacket(segment1, 1)
+
+      const result = parseBgpFromPackets([rawPacket])
+
+      expect(result.packets).toHaveLength(0)
+      expect(
+        result.warnings.some(
+          (w) => w.includes('192.168.1.1:12345->192.168.1.2:179') && w.includes('incomplete')
+        )
+      ).toBe(true)
+    })
+  })
+
   describe('packet metadata', () => {
     test('preserves packet metadata', () => {
       const payload = createBgpMessage(4, [])
