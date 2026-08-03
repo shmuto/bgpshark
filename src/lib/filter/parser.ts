@@ -95,6 +95,11 @@ export const FILTER_FIELDS = {
     values: [] as string[],
     valueType: 'number' as const,
   },
+  asn: {
+    description: 'AS in AS_PATH (as_path.asn)',
+    values: [] as string[],
+    valueType: 'number' as const,
+  },
 
   // Path attributes (SQL: path_attributes table)
   origin: {
@@ -232,7 +237,7 @@ export class Tokenizer {
   }
 
   private isWordChar(char: string): boolean {
-    return /[\w\-.:\/]/.test(char)
+    return /[\w\-.:/]/.test(char)
   }
 
   private readQuoted(): string {
@@ -778,6 +783,9 @@ function matchNumber(fieldValue: number, operator: Operator, queryValue: FilterV
 }
 
 function matchNumberArray(fieldValues: number[], operator: Operator, queryValue: FilterValue): boolean {
+  // A quoted numeric value ("65001") is equivalent to the bare number
+  queryValue = coerceNumericValue(queryValue)
+
   // Query is a single number
   if (typeof queryValue === 'number') {
     switch (operator) {
@@ -812,6 +820,23 @@ function matchNumberArray(fieldValues: number[], operator: Operator, queryValue:
   }
 
   return false
+}
+
+/**
+ * Numeric fields accept quoted values, e.g. `asn = "65001"` from the value dropdown.
+ * Convert those to real numbers so numeric matching applies; leave anything else as is.
+ */
+function coerceNumericValue(value: FilterValue): FilterValue {
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    return Number(value.trim())
+  }
+  if (Array.isArray(value)) {
+    const coerced = value.map((v) =>
+      typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v.trim()) : v
+    )
+    if (coerced.every((v) => typeof v === 'number')) return coerced as number[]
+  }
+  return value
 }
 
 function matchStringArray(fieldValues: string[], operator: Operator, queryValue: FilterValue): boolean {

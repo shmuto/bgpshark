@@ -46,8 +46,8 @@ function comparisonToSql(expr: Comparison): string {
     case 'capability':
       return capabilitySql(operator, value)
 
-    case 'my_as':
-      return messageFieldSql('my_as', operator, value, "type = 'OPEN'")
+    case 'src_as':
+      return numericMessageFieldSql('my_as', operator, value, "type = 'OPEN'")
 
     case 'asn':
       return asPathSql(operator, value)
@@ -93,6 +93,64 @@ function messageFieldSql(column: string, operator: Operator, value: FilterValue,
 }
 
 /**
+ * SQL for integer message-level columns (e.g. my_as).
+ * Compares numerically when possible, and casts explicitly for substring matching
+ * so the column type never has to be inferred.
+ */
+function numericMessageFieldSql(
+  column: string,
+  operator: Operator,
+  value: FilterValue,
+  extraCondition?: string
+): string {
+  const condition = extraCondition ? `${extraCondition} AND ` : ''
+  const numeric = coerceNumericValue(value)
+  const exists = (predicate: string) =>
+    `EXISTS (SELECT 1 FROM messages m WHERE m.frame_index = p.frame_index AND ${condition}${predicate})`
+
+  if (typeof numeric === 'number') {
+    switch (operator) {
+      case '=':
+      case 'contains':
+        return exists(`m.${column} = ${numeric}`)
+      case '!=':
+      case 'not contains':
+        return `NOT ${exists(`m.${column} = ${numeric}`)}`
+    }
+  }
+
+  // Non-numeric input: fall back to text matching on the casted column
+  const strValue = escapeString(String(value))
+  switch (operator) {
+    case '=':
+      return exists(`CAST(m.${column} AS VARCHAR) = '${strValue}'`)
+    case '!=':
+      return `NOT ${exists(`CAST(m.${column} AS VARCHAR) = '${strValue}'`)}`
+    case 'contains':
+      return exists(`CAST(m.${column} AS VARCHAR) LIKE '%${strValue}%'`)
+    case 'not contains':
+      return `NOT ${exists(`CAST(m.${column} AS VARCHAR) LIKE '%${strValue}%'`)}`
+  }
+}
+
+/**
+ * Numeric fields accept quoted values, e.g. `asn = "65001"` from the value dropdown.
+ * Convert those to real numbers so numeric comparison applies; leave anything else as is.
+ */
+function coerceNumericValue(value: FilterValue): FilterValue {
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    return Number(value.trim())
+  }
+  if (Array.isArray(value)) {
+    const coerced = value.map((v) =>
+      typeof v === 'string' && /^\d+$/.test(v.trim()) ? Number(v.trim()) : v
+    )
+    if (coerced.every((v) => typeof v === 'number')) return coerced as number[]
+  }
+  return value
+}
+
+/**
  * SQL for IP address fields (supports prefix matching)
  */
 function ipFieldSql(column: string, operator: Operator, value: FilterValue): string {
@@ -107,7 +165,7 @@ function ipFieldSql(column: string, operator: Operator, value: FilterValue): str
 
     // Calculate how many full octets to match
     const fullOctets = Math.floor(maskBits / 8)
-    const matchPrefix = octets.slice(0, fullOctets).join('.')
+    const matchPrefix = escapeString(octets.slice(0, fullOctets).join('.'))
 
     switch (operator) {
       case '=':
@@ -171,6 +229,9 @@ function capabilitySql(operator: Operator, value: FilterValue): string {
  * SQL for AS_PATH search
  */
 function asPathSql(operator: Operator, value: FilterValue): string {
+  // A quoted numeric value ("65001") is equivalent to the bare number
+  value = coerceNumericValue(value)
+
   // Single AS number
   if (typeof value === 'number') {
     switch (operator) {
@@ -379,6 +440,7 @@ function prefixSql(table: 'nlri' | 'withdrawn', operator: Operator, value: Filte
   // Handle prefix/length format (e.g., "10.0.0.0/8")
   if (strValue.includes('/')) {
     const escaped = escapeString(strValue)
+    const escapedNetwork = escapeString(strValue.split('/')[0])
     switch (operator) {
       case '=':
         return `EXISTS (
@@ -401,7 +463,7 @@ function prefixSql(table: 'nlri' | 'withdrawn', operator: Operator, value: Filte
           JOIN messages m ON t.message_id = m.id
           WHERE m.frame_index = p.frame_index
           AND (t.prefix || '/' || t.prefix_length LIKE '%${escaped}%'
-               OR t.prefix LIKE '${strValue.split('/')[0]}%')
+               OR t.prefix LIKE '${escapedNetwork}%')
         )`
       case 'not contains':
         return `NOT EXISTS (
@@ -409,7 +471,7 @@ function prefixSql(table: 'nlri' | 'withdrawn', operator: Operator, value: Filte
           JOIN messages m ON t.message_id = m.id
           WHERE m.frame_index = p.frame_index
           AND (t.prefix || '/' || t.prefix_length LIKE '%${escaped}%'
-               OR t.prefix LIKE '${strValue.split('/')[0]}%')
+               OR t.prefix LIKE '${escapedNetwork}%')
         )`
     }
   }
