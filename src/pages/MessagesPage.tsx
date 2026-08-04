@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useFilter } from '../hooks/useFilter'
-import { PacketList, QueryInput } from '../components/common'
+import { PacketList, QueryInput, type DisplayPacket } from '../components/common'
 import { PacketDetail } from '../components/message/PacketDetail'
 import type {
   BgpPacket,
@@ -17,10 +17,6 @@ import type {
 } from '../lib/bgp/types'
 import type { GenericPacket } from '../lib/pcap'
 import { FILTER_FIELDS, type FilterFieldName } from '../lib/filter/parser'
-
-export type DisplayPacket =
-  | { kind: 'bgp'; packet: BgpPacket; timestamp: Date }
-  | { kind: 'generic'; packet: GenericPacket; timestamp: Date }
 
 type FilterMode = 'simple' | 'advanced'
 type Operator = '=' | '!='
@@ -43,35 +39,41 @@ export function MessagesPage() {
 
   // Get initial filter from URL
   const initialFilter = searchParams.get('filter') || ''
-  const initialSelected = searchParams.get('selected')
+  // A `?selected=` link is honoured once, when the packet it names first becomes
+  // reachable; after that the user's own clicks own the selection.
+  const selectionAppliedRef = useRef(false)
 
   const {
     query,
     setQuery,
     filteredPackets,
-    hasParseErrors,
+    showParseErrors,
     parseErrors,
     isFiltering,
   } = useFilter(packets, { initialQuery: initialFilter })
 
   // Set initial selection from URL - find the packet in filtered results by frameIndex
   useEffect(() => {
-    if (initialSelected) {
-      const originalIdx = parseInt(initialSelected, 10)
-      if (!isNaN(originalIdx) && originalIdx >= 0 && originalIdx < packets.length) {
-        // Find the target packet's frameIndex
-        const targetPacket = packets[originalIdx]
-        // Find this packet in the filtered list
-        const filteredIdx = filteredPackets.findIndex(
-          (p) => p.frameIndex === targetPacket.frameIndex
-        )
-        if (filteredIdx >= 0) {
-          selectPacket(filteredIdx)
-          setHighlightedIndex(filteredIdx)
-        }
-      }
-    }
-  }, [initialSelected, packets, filteredPackets, selectPacket])
+    if (selectionAppliedRef.current) return
+
+    const selected = searchParams.get('selected')
+    if (selected === null) return
+
+    // The capture arrives asynchronously, so this runs again as packets load.
+    const originalIdx = parseInt(selected, 10)
+    if (isNaN(originalIdx) || originalIdx < 0 || originalIdx >= packets.length) return
+
+    // Find the target packet's frameIndex, then find it in the filtered list
+    const targetPacket = packets[originalIdx]
+    const filteredIdx = filteredPackets.findIndex(
+      (p) => p.frameIndex === targetPacket.frameIndex
+    )
+    if (filteredIdx < 0) return
+
+    selectionAppliedRef.current = true
+    selectPacket(filteredIdx)
+    setHighlightedIndex(filteredIdx)
+  }, [searchParams, packets, filteredPackets, selectPacket])
 
   // Clear highlight after animation
   useEffect(() => {
@@ -85,13 +87,18 @@ export function MessagesPage() {
   useEffect(() => {
     const currentFilter = searchParams.get('filter') || ''
     // Only update if the query actually changed from what's in the URL
-    if (query !== currentFilter) {
-      if (query) {
-        setSearchParams({ filter: query }, { replace: true })
-      } else {
-        setSearchParams({}, { replace: true })
-      }
+    if (query === currentFilter) return
+
+    // Edit the existing parameters rather than replacing them wholesale: writing
+    // a bare object used to drop `?selected=` off links arriving from the
+    // dashboard and the route history.
+    const next = new URLSearchParams(searchParams)
+    if (query) {
+      next.set('filter', query)
+    } else {
+      next.delete('filter')
     }
+    setSearchParams(next, { replace: true })
   }, [query, searchParams, setSearchParams])
 
   // Create display packets based on mode
@@ -390,7 +397,7 @@ export function MessagesPage() {
                 value={query}
                 onChange={setQuery}
                 packets={packets}
-                hasError={hasParseErrors}
+                hasError={showParseErrors}
               />
             </div>
           </div>
@@ -504,7 +511,7 @@ export function MessagesPage() {
             {showAllPackets && ` (${packets.length} BGP)`}
           </span>
           {isFiltering && <span>filtering...</span>}
-          {hasParseErrors && (
+          {showParseErrors && (
             <span className="text-critical" title={parseErrors.map(e => e.message).join('; ')}>
               {parseErrors[0]?.message}
             </span>
@@ -512,10 +519,10 @@ export function MessagesPage() {
         </div>
       </div>
 
-      {/* Main content - split view */}
-      <div ref={containerRef} className="flex-1 flex min-h-0">
+      {/* Main content - split view, stacked when there is no room for two columns */}
+      <div ref={containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0">
         {/* Packet List */}
-        <div className="w-1/2 border-r border-hair flex flex-col min-h-0">
+        <div className="w-full basis-1/2 lg:w-1/2 lg:basis-auto border-b lg:border-b-0 lg:border-r border-hair flex flex-col min-h-0">
           <div className="flex-1 overflow-auto">
             <PacketList
               packets={displayPackets}
@@ -527,7 +534,7 @@ export function MessagesPage() {
         </div>
 
         {/* Packet Detail */}
-        <div className="w-1/2 flex flex-col min-h-0 bg-surface">
+        <div className="w-full basis-1/2 lg:w-1/2 lg:basis-auto flex flex-col min-h-0 bg-surface">
           <div className="px-4 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between shrink-0">
             <span className="text-sm font-semibold text-strong">
               {selectedPacketIndex !== null ? `Packet #${displayPackets[selectedPacketIndex]?.packet.frameIndex}` : 'Packet Detail'}

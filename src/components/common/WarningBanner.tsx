@@ -4,6 +4,13 @@ interface WarningBannerProps {
   warnings: string[]
 }
 
+/**
+ * A malformed capture can warn once per packet, and there is nothing to learn
+ * from the ten thousandth copy of the same message — so the list is capped and
+ * the rest is counted.
+ */
+const MAX_LISTED = 100
+
 export function WarningBanner({ warnings }: WarningBannerProps) {
   const [isExpanded, setIsExpanded] = useState(false)
 
@@ -45,12 +52,17 @@ export function WarningBanner({ warnings }: WarningBannerProps) {
         </button>
 
         {isExpanded && (
-          <div className="mt-2 space-y-1">
-            {warnings.map((warning, index) => (
+          <div className="mt-2 max-h-48 space-y-1 overflow-auto">
+            {warnings.slice(0, MAX_LISTED).map((warning, index) => (
               <div key={index} className="text-sm text-warning pl-6">
                 {warning}
               </div>
             ))}
+            {warnings.length > MAX_LISTED && (
+              <div className="pl-6 text-sm text-muted">
+                …and {warnings.length - MAX_LISTED} more
+              </div>
+            )}
           </div>
         )}
       </div>

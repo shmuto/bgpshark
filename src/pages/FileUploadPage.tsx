@@ -1,18 +1,23 @@
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { FileDropzone } from '../components'
 
 export function FileUploadPage() {
   const { status, loadFile, error, reset } = useApp()
   const navigate = useNavigate()
+  const location = useLocation()
 
-  // Navigate to the message explorer when ready
+  // Where the user was headed before being sent here for a capture, if anywhere.
+  const from = (location.state as { from?: string } | null)?.from
+
+  // Take the user to the screen they asked for once the capture is ready,
+  // falling back to the message explorer when they came here directly.
   useEffect(() => {
     if (status === 'ready') {
-      navigate('/messages')
+      navigate(from ?? '/messages', { replace: true })
     }
-  }, [status, navigate])
+  }, [status, from, navigate])
 
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 bg-canvas">

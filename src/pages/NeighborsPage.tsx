@@ -487,7 +487,7 @@ export function NeighborsPage() {
         </div>
 
         {/* Search and Filter */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex-1">
             <input
               type="text"
@@ -497,13 +497,13 @@ export function NeighborsPage() {
               className="w-full px-3 py-2 border border-hair rounded-lg text-sm focus:ring-2 focus:ring-accent focus:border-accent"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted">Filter:</span>
+          <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1">
+            <span className="shrink-0 text-xs text-muted">Filter:</span>
             {(['all', 'alerts', 'open', 'inactive'] as const).map((type) => (
               <button
                 key={type}
                 onClick={() => setFilterType(type)}
-                className={`px-3 py-1.5 text-xs rounded transition-colors ${
+                className={`shrink-0 px-3 py-1.5 text-xs rounded transition-colors ${
                   filterType === type
                     ? 'bg-accent text-accent-fg'
                     : 'bg-surface-sunken text-muted hover:bg-surface-raised'
@@ -518,10 +518,10 @@ export function NeighborsPage() {
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex min-h-0">
+      {/* Main Content - stacked when there is no room for two columns */}
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0">
         {/* Router List */}
-        <div className="w-1/3 border-r border-hair bg-surface flex flex-col min-h-0">
+        <div className="w-full basis-1/2 lg:w-1/3 lg:basis-auto border-b lg:border-b-0 lg:border-r border-hair bg-surface flex flex-col min-h-0">
           <div className="flex-1 overflow-auto">
             <table className="w-full text-sm">
               <thead className="bg-surface-sunken sticky top-0">

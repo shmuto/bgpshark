@@ -1,10 +1,25 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
-import type { BgpUpdateMessage } from '../lib/bgp/types'
+import type { BgpPrefix, BgpUpdateMessage } from '../lib/bgp/types'
+import {
+  contains,
+  equals,
+  formatPrefix,
+  parseBgpPrefix,
+  parsePrefix,
+  type ParsedPrefix,
+} from '../lib/net/prefix'
 
 interface PrefixStats {
-  prefix: string
+  /**
+   * `prefix/length`. The address alone is not an identity: 10.0.12.0/24 and
+   * 10.0.12.0/23 are different routes and must not share a row.
+   */
+  key: string
+  parsed: ParsedPrefix | null
+  /** Every AS seen in an AS_PATH announcing this prefix, for AS number searches. */
+  asns: Set<string>
   announced: number
   withdrawn: number
   lastSeen: Date
@@ -20,9 +35,18 @@ interface PrefixEvent {
   packetIndex: number
 }
 
+/** What the text in the search box turned out to be. */
+type Search =
+  | { kind: 'prefix'; prefix: ParsedPrefix }
+  | { kind: 'asn'; asn: string }
+  | { kind: 'text'; text: string }
+
 export function RoutesPage() {
   const { packets } = useApp()
   const navigate = useNavigate()
+  // The box holds a draft until Search (or Enter) commits it, so the button does
+  // what it says. Emptying the box clears the filter without a round trip.
+  const [searchDraft, setSearchDraft] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [includeSubnets, setIncludeSubnets] = useState(true)
   const [selectedPrefix, setSelectedPrefix] = useState<string | null>(null)
@@ -31,17 +55,66 @@ export function RoutesPage() {
   const prefixStats = useMemo(() => {
     const stats = new Map<string, PrefixStats>()
 
+    /**
+     * Records one announce or withdraw against `prefix/length`. Every caller
+     * goes through here so the four NLRI sources cannot drift apart on how a
+     * route is keyed.
+     */
+    const record = (
+      prefix: BgpPrefix,
+      action: 'announce' | 'withdraw',
+      timestamp: Date,
+      packetIndex: number,
+      detail: { asPath?: string; nextHop?: string; asns?: string[] } = {}
+    ) => {
+      const key = formatPrefix(prefix)
+      let stat = stats.get(key)
+      if (!stat) {
+        stat = {
+          key,
+          parsed: parseBgpPrefix(prefix),
+          asns: new Set(),
+          announced: 0,
+          withdrawn: 0,
+          lastSeen: timestamp,
+          flap: 0,
+          history: [],
+        }
+        stats.set(key, stat)
+      }
+
+      if (action === 'announce') {
+        stat.announced++
+      } else {
+        stat.withdrawn++
+      }
+      stat.flap++
+      stat.lastSeen = timestamp
+      for (const asn of detail.asns ?? []) {
+        stat.asns.add(asn)
+      }
+      stat.history.push({
+        timestamp,
+        action,
+        asPath: detail.asPath,
+        nextHop: detail.nextHop,
+        packetIndex,
+      })
+    }
+
     packets.forEach((packet, packetIndex) => {
       for (const msg of packet.messages) {
         if (msg.type !== 'UPDATE') continue
         const update = msg as BgpUpdateMessage
 
         // Get AS_PATH and NEXT_HOP from path attributes
+        let asNumbers: string[] = []
         let asPath = ''
         let nextHop = ''
         for (const attr of update.pathAttributes || []) {
           if (attr.parsed?.type === 'AS_PATH') {
-            asPath = attr.parsed.segments.flatMap(s => s.asNumbers).join(' ')
+            asNumbers = attr.parsed.segments.flatMap(s => s.asNumbers).map(String)
+            asPath = asNumbers.join(' ')
           }
           if (attr.parsed?.type === 'NEXT_HOP') {
             nextHop = attr.parsed.address
@@ -50,104 +123,28 @@ export function RoutesPage() {
 
         // Process NLRI (announced prefixes)
         for (const nlri of update.nlri || []) {
-          const prefix = nlri.prefix
-          if (!stats.has(prefix)) {
-            stats.set(prefix, {
-              prefix,
-              announced: 0,
-              withdrawn: 0,
-              lastSeen: packet.timestamp,
-              flap: 0,
-              history: [],
-            })
-          }
-          const stat = stats.get(prefix)!
-          stat.announced++
-          stat.flap++
-          stat.lastSeen = packet.timestamp
-          stat.history.push({
-            timestamp: packet.timestamp,
-            action: 'announce',
-            asPath,
-            nextHop,
-            packetIndex,
-          })
+          record(nlri, 'announce', packet.timestamp, packetIndex, { asPath, nextHop, asns: asNumbers })
         }
 
         // Process withdrawn routes
         for (const wr of update.withdrawnRoutes || []) {
-          const prefix = wr.prefix
-          if (!stats.has(prefix)) {
-            stats.set(prefix, {
-              prefix,
-              announced: 0,
-              withdrawn: 0,
-              lastSeen: packet.timestamp,
-              flap: 0,
-              history: [],
-            })
-          }
-          const stat = stats.get(prefix)!
-          stat.withdrawn++
-          stat.flap++
-          stat.lastSeen = packet.timestamp
-          stat.history.push({
-            timestamp: packet.timestamp,
-            action: 'withdraw',
-            packetIndex,
-          })
+          record(wr, 'withdraw', packet.timestamp, packetIndex)
         }
 
-        // Process MP_REACH_NLRI (IPv6 announcements)
+        // Process MP_REACH_NLRI / MP_UNREACH_NLRI (IPv6 and other families)
         for (const attr of update.pathAttributes || []) {
           if (attr.parsed?.type === 'MP_REACH_NLRI') {
             for (const nlri of attr.parsed.nlri || []) {
-              const prefix = nlri.prefix
-              if (!stats.has(prefix)) {
-                stats.set(prefix, {
-                  prefix,
-                  announced: 0,
-                  withdrawn: 0,
-                  lastSeen: packet.timestamp,
-                  flap: 0,
-                  history: [],
-                })
-              }
-              const stat = stats.get(prefix)!
-              stat.announced++
-              stat.flap++
-              stat.lastSeen = packet.timestamp
-              stat.history.push({
-                timestamp: packet.timestamp,
-                action: 'announce',
+              record(nlri, 'announce', packet.timestamp, packetIndex, {
                 asPath,
                 nextHop: attr.parsed.nextHop,
-                packetIndex,
+                asns: asNumbers,
               })
             }
           }
           if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
             for (const nlri of attr.parsed.withdrawnRoutes || []) {
-              const prefix = nlri.prefix
-              if (!stats.has(prefix)) {
-                stats.set(prefix, {
-                  prefix,
-                  announced: 0,
-                  withdrawn: 0,
-                  lastSeen: packet.timestamp,
-                  flap: 0,
-                  history: [],
-                })
-              }
-              const stat = stats.get(prefix)!
-              stat.withdrawn++
-              stat.flap++
-              stat.lastSeen = packet.timestamp
-              stat.history.push({
-                timestamp: packet.timestamp,
-                action: 'withdraw',
-                packetIndex,
-              })
+              record(nlri, 'withdraw', packet.timestamp, packetIndex)
             }
           }
         }
@@ -162,21 +159,49 @@ export function RoutesPage() {
     return Array.from(stats.values()).sort((a, b) => b.flap - a.flap)
   }, [packets])
 
+  /** Decide what kind of search the text is before matching anything against it. */
+  const search = useMemo((): Search | null => {
+    const text = searchQuery.trim()
+    if (!text) return null
+
+    // `AS65001` or a bare AS number. Neither can be read as an address.
+    const asn = text.match(/^(?:as)?(\d+)$/i)
+    if (asn) return { kind: 'asn', asn: asn[1] }
+
+    const prefix = parsePrefix(text)
+    if (prefix) return { kind: 'prefix', prefix }
+
+    // Not an address at all (a half-typed one, say) — fall back to substring.
+    return { kind: 'text', text: text.toLowerCase() }
+  }, [searchQuery])
+
   // Filter prefixes
   const filteredPrefixes = useMemo(() => {
-    if (!searchQuery.trim()) return prefixStats
+    if (!search) return prefixStats
 
-    const query = searchQuery.toLowerCase().trim()
-    return prefixStats.filter(stat => {
-      if (stat.prefix.toLowerCase().includes(query)) return true
-      // TODO: Add subnet matching logic
-      return false
-    })
-  }, [prefixStats, searchQuery])
+    switch (search.kind) {
+      case 'asn':
+        return prefixStats.filter(stat => stat.asns.has(search.asn))
+
+      case 'prefix':
+        return prefixStats.filter(stat => {
+          if (!stat.parsed) return false
+          if (!includeSubnets) return equals(search.prefix, stat.parsed)
+          // A query carrying a mask asks for everything inside it; a bare address
+          // asks which announcements cover that address.
+          return search.prefix.hasMask
+            ? contains(search.prefix, stat.parsed)
+            : contains(stat.parsed, search.prefix)
+        })
+
+      case 'text':
+        return prefixStats.filter(stat => stat.key.toLowerCase().includes(search.text))
+    }
+  }, [prefixStats, search, includeSubnets])
 
   // Get selected prefix stats
   const selectedPrefixStats = selectedPrefix
-    ? prefixStats.find(s => s.prefix === selectedPrefix)
+    ? prefixStats.find(s => s.key === selectedPrefix)
     : null
 
   const handleHistoryClick = (event: PrefixEvent) => {
@@ -192,18 +217,32 @@ export function RoutesPage() {
             <span className="text-dim">🔍</span>
             <span className="text-sm font-medium text-strong">Prefix Search</span>
           </div>
-          <div className="mt-2 flex items-center gap-3">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              setSearchQuery(searchDraft)
+            }}
+            className="mt-2 flex items-center gap-3"
+          >
             <input
               type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="10.0.0.0/8 or AS65001"
+              value={searchDraft}
+              onChange={(e) => {
+                setSearchDraft(e.target.value)
+                // Clearing the box should restore the full list without also
+                // having to press Search.
+                if (!e.target.value.trim()) setSearchQuery('')
+              }}
+              placeholder="10.0.0.0/8, 10.0.13.1 or AS65001"
               className="flex-1 px-3 py-2 border border-hair-strong rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-sm"
             />
-            <button className="px-4 py-2 bg-accent text-accent-fg rounded-lg hover:bg-accent-hover text-sm">
+            <button
+              type="submit"
+              className="px-4 py-2 bg-accent text-accent-fg rounded-lg hover:bg-accent-hover text-sm"
+            >
               Search
             </button>
-          </div>
+          </form>
           <div className="mt-2 flex items-center gap-4">
             <label className="flex items-center gap-2 text-sm text-muted">
               <input
@@ -214,14 +253,17 @@ export function RoutesPage() {
               />
               Include subnets
             </label>
+            {search?.kind === 'asn' && (
+              <span className="text-xs text-dim">Prefixes with AS{search.asn} in their AS_PATH</span>
+            )}
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex min-h-0 p-4 gap-4">
+      <div className="flex-1 flex flex-col lg:flex-row min-h-0 p-4 gap-4">
         {/* Prefix Statistics */}
-        <div className="w-1/2 bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
+        <div className="w-full basis-1/2 lg:w-1/2 lg:basis-auto bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <span>📊</span>
             <h2 className="font-semibold text-strong">Prefix Statistics</h2>
@@ -240,13 +282,13 @@ export function RoutesPage() {
               <tbody className="divide-y divide-hair">
                 {filteredPrefixes.map((stat) => (
                   <tr
-                    key={stat.prefix}
-                    onClick={() => setSelectedPrefix(stat.prefix)}
+                    key={stat.key}
+                    onClick={() => setSelectedPrefix(stat.key)}
                     className={`cursor-pointer hover:bg-surface-sunken ${
-                      selectedPrefix === stat.prefix ? 'bg-accent-subtle' : ''
+                      selectedPrefix === stat.key ? 'bg-accent-subtle' : ''
                     }`}
                   >
-                    <td className="px-4 py-2 font-mono text-strong">{stat.prefix}</td>
+                    <td className="px-4 py-2 font-mono text-strong">{stat.key}</td>
                     <td className="px-4 py-2 text-right text-ok">{stat.announced}</td>
                     <td className="px-4 py-2 text-right text-critical">{stat.withdrawn}</td>
                     <td className="px-4 py-2 text-right">
@@ -268,7 +310,7 @@ export function RoutesPage() {
         </div>
 
         {/* Route History */}
-        <div className="w-1/2 bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
+        <div className="w-full basis-1/2 lg:w-1/2 lg:basis-auto bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <span>📜</span>
             <h2 className="font-semibold text-strong">

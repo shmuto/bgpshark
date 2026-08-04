@@ -15,6 +15,16 @@ interface UseFilterOptions {
  */
 const DUCKDB_DEBOUNCE_MS = 200
 
+/**
+ * How long a query has to stay broken before we say so.
+ *
+ * Every half-typed query is a syntax error — `type = ` is flagged the moment the
+ * operator is typed — so reporting them immediately means the box is red for
+ * most of the time the user spends typing. Errors still block filtering right
+ * away; this only delays telling the user about them.
+ */
+const PARSE_ERROR_GRACE_MS = 600
+
 export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) {
   const { useDuckDB = true, initialQuery = '' } = options
   const [query, setQuery] = useState(initialQuery)
@@ -94,6 +104,17 @@ export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) 
   const hasParseErrors = parsedQuery.errors.length > 0
   const parseErrors = parsedQuery.errors
 
+  // Hold the error back until the user pauses, so typing is not narrated.
+  const [showParseErrors, setShowParseErrors] = useState(false)
+  useEffect(() => {
+    if (!hasParseErrors) {
+      setShowParseErrors(false)
+      return
+    }
+    const timer = setTimeout(() => setShowParseErrors(true), PARSE_ERROR_GRACE_MS)
+    return () => clearTimeout(timer)
+  }, [hasParseErrors, query])
+
   return {
     query,
     setQuery,
@@ -103,6 +124,7 @@ export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) 
     clearQuery,
     hasActiveFilter,
     hasParseErrors,
+    showParseErrors,
     isFiltering,
   }
 }
