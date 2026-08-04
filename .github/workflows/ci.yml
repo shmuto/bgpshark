@@ -1,21 +1,14 @@
-name: Deploy to GitHub Pages
+name: CI
 
+# deploy.yml only runs on pushes to main, so on its own it checks a change after
+# it has already landed. This runs the same checks on the pull request, which is
+# the point at which a failure is still cheap.
 on:
-  push:
-    branches: [main]
+  pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -38,19 +31,6 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./dist
-
-  # Drives the built app in a real browser. Several of this app's failure modes
-  # are only visible here — SQL that compiles but will not run, a route guard
-  # that redirects before the capture has loaded — so a failure blocks the
-  # deploy. If it ever turns flaky, drop it from `deploy.needs` rather than
-  # letting a red run become something to ignore.
   e2e:
     runs-on: ubuntu-latest
     steps:
@@ -78,14 +58,3 @@ jobs:
           name: playwright-report
           path: playwright-report
           retention-days: 7
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: [build, e2e]
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
