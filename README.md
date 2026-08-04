@@ -14,12 +14,16 @@ uploaded to a server.
 - **Full BGP decode** — OPEN capabilities, UPDATE path attributes (AS_PATH,
   communities, large communities, MP_REACH/MP_UNREACH including IPv6 NLRI, …),
   NOTIFICATION error codes with troubleshooting hints
+- **Dashboard** — message counts, severity-sorted alerts, neighbor table and a
+  message timeline
 - **Message Explorer** — packet list, hierarchical detail view, hex dump
 - **Neighbor Analysis** — sessions grouped by Router ID with capability summaries
+  and a side-by-side OPEN / capability diff
 - **Route Analysis** — per-prefix announce / withdraw history and flap counts
 - **SQL Console** — query the capture directly with DuckDB WASM
 - **Filter expressions** — `type = NOTIFICATION and src_ip = 10.0.0.1`, with
   autocomplete and a rule-builder mode
+- Light / dark theme, following the system preference by default
 - Loaded captures persist in IndexedDB and are restored on reload
 
 ## Getting started
@@ -141,7 +145,8 @@ not (type = KEEPALIVE)
 | `community` | Standard or large community |
 | `capability` | Capability name from an OPEN message |
 
-Aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `nlri`.
+Aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `nlri`, `router-id`, `my_as`,
+`large-community`.
 Operators: `=`, `!=`, `contains`, `not contains`, combined with `and` / `or` / `not`
 and parentheses.
 
@@ -174,8 +179,9 @@ app still works, minus the SQL console.
 | `src/lib/bgp/` | BGP message and path attribute parsers, error hints |
 | `src/lib/db/` | DuckDB schema, loader, queries, filter→SQL compiler |
 | `src/lib/filter/` | Filter expression lexer, parser and evaluator |
+| `src/lib/net/` | Prefix arithmetic shared by the filter, the DB and the UI |
 | `src/pages/` | One component per route |
-| `src/components/` | `common/`, `layout/`, `message/`, `neighbor/`, `sidebar/` |
+| `src/components/` | `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `sidebar/` |
 | `testlab/` | ContainerLab topology for generating test captures |
 | `docs/` | Design documents |
 
@@ -189,12 +195,16 @@ administrative shutdowns. See [testlab/README.md](testlab/README.md).
 
 - [docs/design.md](docs/design.md) — requirements and technical design
 - [docs/ui-design.md](docs/ui-design.md) — screen specifications
-- [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — DuckDB WASM design
+- [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — the original DuckDB
+  WASM migration proposal, kept for context; `design.md` describes what shipped
+- [docs/todo.md](docs/todo.md) — log of fixed issues
 
 ## Deployment
 
-Pushes to `main` run tests, build, and deploy to GitHub Pages via
-`.github/workflows/deploy.yml`. The app is served under the `/bgpshark/` base path.
+Pull requests run lint, unit tests, build and the end-to-end suite via
+`.github/workflows/ci.yml`. Pushes to `main` run the same checks and then deploy
+to GitHub Pages via `.github/workflows/deploy.yml`. The app is served under the
+`/bgpshark/` base path.
 
 ## Privacy
 
