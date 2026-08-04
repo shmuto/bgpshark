@@ -82,6 +82,15 @@ export default defineConfig({
   base: '/bgpshark/',
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        // React changes when we upgrade it, the app changes every commit. Split
+        // so a deploy does not invalidate the cached copy of the framework.
+        manualChunks: {
+          react: ['react', 'react-dom', 'react-router-dom'],
+        },
+      },
+    },
   },
   // In dev and preview Vite handles the SPA fallback itself (appType: 'spa').
   // Static hosts need the 404.html copy emitted by spaFallbackPlugin.
