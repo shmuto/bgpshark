@@ -48,6 +48,27 @@ type SortColumn = 'prefix' | 'announced' | 'withdrawn' | 'lastSeen' | 'flap'
 type SortDirection = 'asc' | 'desc'
 
 /**
+ * Which way a prefix search reads.
+ *
+ * Containment has a direction, and the two directions are different questions:
+ * searching 10.30.0.0/11 asks what is announced inside that block, while
+ * searching 10.30.0.0/24 usually asks which announcement carries it — the
+ * 10.30.0.0/16 that covers it is an answer no downward search can give. One
+ * checkbox cannot say which is meant, so the user picks.
+ */
+type MatchMode = 'exact' | 'subnets' | 'supernets'
+
+const MATCH_MODES: { value: MatchMode; label: string; hint: string }[] = [
+  { value: 'exact', label: 'Exact', hint: 'Only the prefix and mask length typed' },
+  { value: 'subnets', label: 'Subnets', hint: 'Routes announced inside the block typed' },
+  { value: 'supernets', label: 'Supernets', hint: 'Less specific routes that cover the block typed' },
+]
+
+function isMatchMode(value: string | null): value is MatchMode {
+  return MATCH_MODES.some(mode => mode.value === value)
+}
+
+/**
  * Which way each column reads when you first click it.
  *
  * A prefix list wants to start alphabetically; a count column is being clicked
@@ -82,9 +103,11 @@ export function RoutesPage() {
   const selectedPrefix = searchParams.get('prefix')
   const sortColumn = isSortColumn(searchParams.get('sort')) ? (searchParams.get('sort') as SortColumn) : 'flap'
   const sortDirection: SortDirection = searchParams.get('dir') === 'asc' ? 'asc' : 'desc'
-  // Subnets are included unless the URL says otherwise, so a bare link behaves
-  // like a fresh visit.
-  const includeSubnets = searchParams.get('subnets') !== 'off'
+  // A bare link searches downwards, which is what a link to a block is usually
+  // about.
+  const matchMode: MatchMode = isMatchMode(searchParams.get('match'))
+    ? (searchParams.get('match') as MatchMode)
+    : 'subnets'
 
   const updateParams = useCallback(
     (changes: Record<string, string | null>) => {
@@ -109,8 +132,8 @@ export function RoutesPage() {
     (prefix: string | null) => updateParams({ prefix }),
     [updateParams]
   )
-  const setIncludeSubnets = useCallback(
-    (include: boolean) => updateParams({ subnets: include ? null : 'off' }),
+  const setMatchMode = useCallback(
+    (mode: MatchMode) => updateParams({ match: mode === 'subnets' ? null : mode }),
     [updateParams]
   )
 
@@ -260,18 +283,22 @@ export function RoutesPage() {
       case 'prefix':
         return prefixStats.filter(stat => {
           if (!stat.parsed) return false
-          if (!includeSubnets) return equals(search.prefix, stat.parsed)
-          // A query carrying a mask asks for everything inside it; a bare address
-          // asks which announcements cover that address.
-          return search.prefix.hasMask
-            ? contains(search.prefix, stat.parsed)
-            : contains(stat.parsed, search.prefix)
+          // A bare address is its own /32 and follows the same direction as
+          // everything else, so 10.0.13.1 and 10.0.13.1/32 always agree.
+          switch (matchMode) {
+            case 'exact':
+              return equals(search.prefix, stat.parsed)
+            case 'subnets':
+              return contains(search.prefix, stat.parsed)
+            case 'supernets':
+              return contains(stat.parsed, search.prefix)
+          }
         })
 
       case 'text':
         return prefixStats.filter(stat => stat.key.toLowerCase().includes(search.text))
     }
-  }, [prefixStats, search, includeSubnets])
+  }, [prefixStats, search, matchMode])
 
   const sortedPrefixes = useMemo(() => {
     const factor = sortDirection === 'asc' ? 1 : -1
@@ -374,15 +401,40 @@ export function RoutesPage() {
             </button>
           </form>
           <div className="mt-2 flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm text-muted">
-              <input
-                type="checkbox"
-                checked={includeSubnets}
-                onChange={(e) => setIncludeSubnets(e.target.checked)}
-                className="rounded border-hair-strong"
-              />
-              Include subnets
-            </label>
+            {/* Radios rather than a checkbox: these are three different
+                questions about the block typed, not one question with a
+                modifier on it. */}
+            <div role="radiogroup" aria-label="Match" className="flex items-center gap-2">
+              <span className="text-sm text-muted">Match</span>
+              {/* The focus ring goes round the whole control rather than the
+                  segment: the segments are clipped to the rounded corners, so
+                  an outline on one of them would be cut off, and arrow keys
+                  move between them anyway. */}
+              <div className="flex rounded-lg border border-hair-strong overflow-hidden has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
+                {MATCH_MODES.map(mode => (
+                  <label
+                    key={mode.value}
+                    title={mode.hint}
+                    className="relative cursor-pointer border-l border-hair-strong first:border-l-0"
+                  >
+                    {/* Laid over the whole segment rather than hidden, so the
+                        radio itself is what a click and a screen reader land
+                        on. */}
+                    <input
+                      type="radio"
+                      name="match"
+                      value={mode.value}
+                      checked={matchMode === mode.value}
+                      onChange={() => setMatchMode(mode.value)}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer peer"
+                    />
+                    <span className="block px-3 py-1 text-sm text-muted hover:bg-surface-sunken peer-checked:bg-accent peer-checked:text-accent-fg">
+                      {mode.label}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
             {search?.kind === 'asn' && (
               <span className="text-xs text-dim">Prefixes with AS{search.asn} in their AS_PATH</span>
             )}
