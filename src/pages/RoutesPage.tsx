@@ -1,8 +1,9 @@
-import { useState, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useIsCompact } from '../hooks/useMediaQuery'
-import { BackToList } from '../components/common'
+import { BackToList, PaneDivider } from '../components/common'
+import { useSplitPane } from '../hooks/useSplitPane'
 import type { BgpPrefix, BgpUpdateMessage } from '../lib/bgp/types'
 import {
   contains,
@@ -60,21 +61,67 @@ const DEFAULT_DIRECTION: Record<SortColumn, SortDirection> = {
   flap: 'desc',
 }
 
+function isSortColumn(value: string | null): value is SortColumn {
+  return value !== null && value in DEFAULT_DIRECTION
+}
+
 export function RoutesPage() {
   const { packets } = useApp()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  /**
+   * What you are looking at lives in the URL, the way it already does on the
+   * neighbors screen.
+   *
+   * Reading a capture means sending someone a link to the thing you found, and
+   * reloading without losing your place. The search, the selected prefix and the
+   * sort are all part of "the thing you found".
+   */
+  const searchQuery = searchParams.get('q') ?? ''
+  const selectedPrefix = searchParams.get('prefix')
+  const sortColumn = isSortColumn(searchParams.get('sort')) ? (searchParams.get('sort') as SortColumn) : 'flap'
+  const sortDirection: SortDirection = searchParams.get('dir') === 'asc' ? 'asc' : 'desc'
+  // Subnets are included unless the URL says otherwise, so a bare link behaves
+  // like a fresh visit.
+  const includeSubnets = searchParams.get('subnets') !== 'off'
+
+  const updateParams = useCallback(
+    (changes: Record<string, string | null>) => {
+      setSearchParams(
+        (prev) => {
+          for (const [key, value] of Object.entries(changes)) {
+            if (value === null) {
+              prev.delete(key)
+            } else {
+              prev.set(key, value)
+            }
+          }
+          return prev
+        },
+        { replace: true }
+      )
+    },
+    [setSearchParams]
+  )
+
+  const setSelectedPrefix = useCallback(
+    (prefix: string | null) => updateParams({ prefix }),
+    [updateParams]
+  )
+  const setIncludeSubnets = useCallback(
+    (include: boolean) => updateParams({ subnets: include ? null : 'off' }),
+    [updateParams]
+  )
+
   // The box holds a draft until Search (or Enter) commits it, so the button does
   // what it says. Emptying the box clears the filter without a round trip.
-  const [searchDraft, setSearchDraft] = useState('')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [includeSubnets, setIncludeSubnets] = useState(true)
-  const [selectedPrefix, setSelectedPrefix] = useState<string | null>(null)
-  const [sortColumn, setSortColumn] = useState<SortColumn>('flap')
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const [searchDraft, setSearchDraft] = useState(searchQuery)
 
   // Too narrow for two columns: show the list, or the detail, but not halves of
   // both.
   const isCompact = useIsCompact()
+  const split = useSplitPane('routes')
   const showList = !isCompact || selectedPrefix === null
   const showDetail = !isCompact || selectedPrefix !== null
 
@@ -248,10 +295,9 @@ export function RoutesPage() {
 
   const toggleSort = (column: SortColumn) => {
     if (column === sortColumn) {
-      setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'))
+      updateParams({ dir: sortDirection === 'asc' ? 'desc' : 'asc' })
     } else {
-      setSortColumn(column)
-      setSortDirection(DEFAULT_DIRECTION[column])
+      updateParams({ sort: column, dir: DEFAULT_DIRECTION[column] })
     }
   }
 
@@ -304,7 +350,7 @@ export function RoutesPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              setSearchQuery(searchDraft)
+              updateParams({ q: searchDraft.trim() || null })
             }}
             className="mt-2 flex items-center gap-3"
           >
@@ -315,7 +361,7 @@ export function RoutesPage() {
                 setSearchDraft(e.target.value)
                 // Clearing the box should restore the full list without also
                 // having to press Search.
-                if (!e.target.value.trim()) setSearchQuery('')
+                if (!e.target.value.trim()) updateParams({ q: null })
               }}
               placeholder="10.0.0.0/8, 10.0.13.1 or AS65001"
               className="flex-1 px-3 py-2 border border-hair-strong rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-sm"
@@ -345,10 +391,13 @@ export function RoutesPage() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col lg:flex-row min-h-0 p-4 gap-4">
+      <div ref={split.containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0 p-4 gap-4 lg:gap-0">
         {/* Prefix Statistics */}
         {showList && (
-        <div className="w-full flex-1 lg:w-1/2 lg:flex-none bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
+        <div
+          className="w-full flex-1 lg:flex-none bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0"
+          style={isCompact ? undefined : { width: `calc(${split.percent}% - 0.5rem)` }}
+        >
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <span>📊</span>
             <h2 className="font-semibold text-strong">Prefix Statistics</h2>
@@ -409,9 +458,19 @@ export function RoutesPage() {
         </div>
         )}
 
+        {!isCompact && (
+          <PaneDivider
+            isDragging={split.isDragging}
+            onDragStart={split.startDrag}
+            onReset={split.reset}
+            onNudge={split.nudge}
+            label="Resize the prefix list"
+          />
+        )}
+
         {/* Route History and the paths it arrived over */}
         {showDetail && (
-        <div className="w-full flex-1 lg:w-1/2 lg:flex-none flex flex-col min-h-0 gap-4">
+        <div className="w-full flex-1 flex flex-col min-h-0 gap-4 lg:ml-2">
         <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 flex-1">
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <BackToList onClick={() => setSelectedPrefix(null)} />

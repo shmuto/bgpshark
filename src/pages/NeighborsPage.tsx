@@ -2,7 +2,8 @@ import { useState, useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useIsCompact } from '../hooks/useMediaQuery'
-import { BackToList } from '../components/common'
+import { BackToList, PaneDivider } from '../components/common'
+import { useSplitPane } from '../hooks/useSplitPane'
 import type { BgpMessage, BgpOpenMessage, BgpUpdateMessage, BgpNotificationMessage } from '../lib/bgp/types'
 import { extractNeighbors, getLatestOpen, type OpenMessageRecord } from '../lib/bgp/neighbor'
 import { CapabilityDiff } from '../components/neighbor'
@@ -173,6 +174,7 @@ export function NeighborsPage() {
   // Too narrow for two columns: show the list, or the detail, but not halves of
   // both.
   const isCompact = useIsCompact()
+  const split = useSplitPane('neighbors', 33)
   const showList = !isCompact || selectedRouter === null
   const showDetail = !isCompact || selectedRouter !== null
 
@@ -527,10 +529,13 @@ export function NeighborsPage() {
       </div>
 
       {/* Main Content - stacked when there is no room for two columns */}
-      <div className="flex-1 flex flex-col lg:flex-row min-h-0">
+      <div ref={split.containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0">
         {/* Router List */}
         {showList && (
-        <div className="w-full flex-1 lg:w-1/3 lg:flex-none lg:border-r border-hair bg-surface flex flex-col min-h-0">
+        <div
+          className="w-full flex-1 lg:flex-none bg-surface flex flex-col min-h-0"
+          style={isCompact ? undefined : { width: `${split.percent}%` }}
+        >
           <div className="flex-1 overflow-auto">
             <table className="w-full text-sm">
               <thead className="bg-surface-sunken sticky top-0">
@@ -608,6 +613,16 @@ export function NeighborsPage() {
           </div>
         </div>
 
+        )}
+
+        {!isCompact && (
+          <PaneDivider
+            isDragging={split.isDragging}
+            onDragStart={split.startDrag}
+            onReset={split.reset}
+            onNudge={split.nudge}
+            label="Resize the router list"
+          />
         )}
 
         {/* Detail Panel */}
