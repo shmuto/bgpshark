@@ -10,9 +10,20 @@ interface QueryInputProps {
   hasError?: boolean
 }
 
+/** Nothing in the suggestion list is selected. Enter applies the filter instead. */
+const NO_SELECTION = -1
+
 export function QueryInput({ value, onChange, packets, placeholder, hasError }: QueryInputProps) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  /**
+   * Which suggestion the user has picked, not merely which one is first.
+   *
+   * The list is a hint about what could come next, so it also opens on input
+   * that is already complete — after `... and`, for instance, it lists every
+   * field. Pre-selecting the first entry meant Enter silently replaced the word
+   * the user had just typed, so a selection only exists once they arrow into it.
+   */
+  const [selectedIndex, setSelectedIndex] = useState(NO_SELECTION)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [isComposing, setIsComposing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -26,7 +37,7 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
       }
       const newSuggestions = getSuggestions(query, cursorPos, packets)
       setSuggestions(newSuggestions)
-      setSelectedIndex(0)
+      setSelectedIndex(NO_SELECTION)
       setShowSuggestions(newSuggestions.length > 0)
     },
     [packets, isComposing]
@@ -70,10 +81,22 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
         break
       case 'ArrowUp':
         e.preventDefault()
-        setSelectedIndex((prev) => Math.max(prev - 1, 0))
+        // Arrowing back off the top returns to "no selection", so Enter goes
+        // back to applying the filter.
+        setSelectedIndex((prev) => (prev <= 0 ? NO_SELECTION : prev - 1))
         break
       case 'Tab':
+        // Tab is the completion key, so it takes the first suggestion when the
+        // user has not picked one.
+        e.preventDefault()
+        applySuggestion(suggestions[selectedIndex === NO_SELECTION ? 0 : selectedIndex])
+        break
       case 'Enter':
+        if (selectedIndex === NO_SELECTION) {
+          // The user is applying what they typed, not accepting a suggestion.
+          setShowSuggestions(false)
+          break
+        }
         e.preventDefault()
         applySuggestion(suggestions[selectedIndex])
         break
@@ -99,18 +122,28 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
       // For operators, just append after current position
       wordStart = cursorPos
     } else {
-      // For fields/values, replace the current word
-      const match = beforeCursor.match(/[\w\-."']*$/)
-      wordStart = match ? cursorPos - match[0].length : cursorPos
+      // For fields/values, replace the word being typed — but only when the
+      // suggestion actually completes it. `and` is a finished word that no field
+      // name completes, and swallowing it turned a valid query into a broken one.
+      const currentWord = beforeCursor.match(/[\w\-."']*$/)?.[0] ?? ''
+      const completesWord =
+        currentWord.length > 0 &&
+        suggestion.text.toLowerCase().startsWith(currentWord.toLowerCase())
+      wordStart = completesWord ? cursorPos - currentWord.length : cursorPos
     }
 
-    const newValue = value.slice(0, wordStart) + suggestion.insertText + afterCursor
+    // Appending after a finished word needs a separator of its own.
+    const separator =
+      wordStart === cursorPos && wordStart > 0 && !/\s$/.test(value.slice(0, wordStart)) ? ' ' : ''
+    const insertText = separator + suggestion.insertText
+
+    const newValue = value.slice(0, wordStart) + insertText + afterCursor
     onChange(newValue)
     setShowSuggestions(false)
 
     // Set cursor position after the inserted text
     setTimeout(() => {
-      const newPos = wordStart + suggestion.insertText.length
+      const newPos = wordStart + insertText.length
       input.setSelectionRange(newPos, newPos)
       input.focus()
     }, 0)

@@ -50,13 +50,24 @@ export async function getMatchingFrameIndexes(filterQuery?: string): Promise<num
   return result.toArray().map((row) => Number((row as { frame_index: number }).frame_index))
 }
 
-export interface SqlQueryResult {
-  columns: string[]
-  rows: Record<string, unknown>[]
-  rowCount: number
-  executionTime: number
-  error?: string
-}
+/**
+ * Outcome of a raw SQL query.
+ *
+ * A failure used to be an optional `error` field alongside empty columns and
+ * rows, which reads exactly like a query that legitimately matched nothing — the
+ * console rendered "0 rows" for a typo'd table name. The discriminated union
+ * makes the caller pick a branch, so a failure cannot be mistaken for an empty
+ * result set again.
+ */
+export type SqlQueryResult =
+  | {
+      ok: true
+      columns: string[]
+      rows: Record<string, unknown>[]
+      rowCount: number
+      executionTime: number
+    }
+  | { ok: false; error: string; executionTime: number }
 
 /**
  * Execute a raw SQL query against DuckDB
@@ -92,19 +103,17 @@ export async function executeRawSql(sql: string): Promise<SqlQueryResult> {
     })
 
     return {
+      ok: true,
       columns,
       rows,
       rowCount: rows.length,
       executionTime,
     }
   } catch (error) {
-    const executionTime = performance.now() - startTime
     return {
-      columns: [],
-      rows: [],
-      rowCount: 0,
-      executionTime,
+      ok: false,
       error: error instanceof Error ? error.message : String(error),
+      executionTime: performance.now() - startTime,
     }
   }
 }

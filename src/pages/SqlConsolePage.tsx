@@ -86,6 +86,14 @@ export function SqlConsolePage() {
       const sqlResult = await executeRawSql(query)
       const executionTime = performance.now() - startTime
 
+      // A failed query is not an empty result set: show the message DuckDB gave
+      // us, and keep the query out of the history of things that worked.
+      if (!sqlResult.ok) {
+        setError(sqlResult.error)
+        setResult(null)
+        return
+      }
+
       setResult({
         columns: sqlResult.columns,
         rows: sqlResult.rows,
@@ -157,7 +165,7 @@ export function SqlConsolePage() {
         )}
       </div>
 
-      <div className="flex-1 flex gap-4 min-h-0">
+      <div className="flex-1 flex flex-col lg:flex-row gap-4 min-h-0 overflow-auto lg:overflow-visible">
         {/* Main Editor Area */}
         <div className="flex-1 flex flex-col gap-4 min-h-0">
           {/* SQL Editor */}
@@ -261,8 +269,8 @@ export function SqlConsolePage() {
           </div>
         </div>
 
-        {/* Sidebar */}
-        <div className="w-72 flex flex-col gap-4 shrink-0">
+        {/* Sidebar - drops below the editor when there is no room beside it */}
+        <div className="w-full lg:w-72 flex flex-col gap-4 shrink-0">
           {/* Templates */}
           <div className="bg-surface rounded-lg shadow-sm border border-hair">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken">

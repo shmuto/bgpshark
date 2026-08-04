@@ -15,8 +15,16 @@ interface AnalyzerState {
   dbReady: boolean
 }
 
+/**
+ * Starts at `initializing`, not `idle`.
+ *
+ * On a page load we do not yet know whether IndexedDB holds a capture, and
+ * `idle` means "there is no capture, send the user to the upload screen". Being
+ * idle for the first render is what used to bounce deep links and reloads off
+ * to the upload page before the restore had even been attempted.
+ */
 const initialState: AnalyzerState = {
-  status: 'idle',
+  status: 'initializing',
   fileName: null,
   packets: [],
   allPackets: [],
@@ -181,6 +189,8 @@ export function useBgpAnalyzer() {
 
     setState((prev) => ({
       ...initialState,
+      // Nothing is being restored here, so this is a real "no capture loaded".
+      status: 'idle',
       dbReady: prev.dbReady,
     }))
   }, [])

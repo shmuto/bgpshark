@@ -13,19 +13,21 @@ export function AppHeader() {
   }
 
   return (
-    <header className="flex shrink-0 items-center justify-between border-b border-hair bg-surface px-4 py-2.5">
-      <div className="flex items-center gap-6">
+    <header className="flex shrink-0 items-center justify-between gap-3 border-b border-hair bg-surface px-4 py-2.5">
+      {/* min-w-0 lets this side shrink so the nav can scroll instead of pushing
+          the buttons on the right off the screen */}
+      <div className="flex min-w-0 items-center gap-3 sm:gap-6">
         {/* Logo */}
-        <NavLink to={isReady ? '/messages' : '/'} className="flex items-center gap-2.5">
+        <NavLink to={isReady ? '/messages' : '/'} className="flex shrink-0 items-center gap-2.5">
           <span className="text-lg leading-none" aria-hidden="true">🦈</span>
-          <h1 className="text-sm font-semibold tracking-tight text-strong">
+          <h1 className="hidden text-sm font-semibold tracking-tight text-strong sm:block">
             BGPShark
           </h1>
         </NavLink>
 
         {/* Navigation */}
         {isReady && (
-          <nav className="flex items-center gap-1">
+          <nav className="-mx-1 flex items-center gap-1 overflow-x-auto px-1">
             <NavItem to="/dashboard">Dashboard</NavItem>
             <NavItem to="/messages">Messages</NavItem>
             <NavItem to="/neighbors">Neighbors</NavItem>
@@ -35,7 +37,7 @@ export function AppHeader() {
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {/* File name */}
         {fileName && (
           <span className="hidden max-w-[16rem] truncate rounded border border-hair bg-surface-sunken px-2 py-1 font-mono text-xs text-muted md:block">
@@ -84,7 +86,7 @@ function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+        `shrink-0 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
           isActive
             ? 'bg-accent text-accent-fg'
             : 'text-muted hover:bg-surface-sunken hover:text-strong'

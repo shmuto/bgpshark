@@ -1,7 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import type { ReactNode } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AppProvider, useApp } from './context/AppContext'
 import { AppHeader } from './components/layout/AppHeader'
-import { ErrorBoundary } from './components/common'
+import { ErrorBoundary, WarningBanner } from './components/common'
 import { useFileDropzone } from './hooks/useFileDropzone'
 import {
   FileUploadPage,
@@ -12,8 +13,44 @@ import {
   SqlConsolePage,
 } from './pages'
 
+/**
+ * Gate for the screens that need a capture.
+ *
+ * The capture is restored from IndexedDB after the first render, so for a moment
+ * "no capture" and "we have not looked yet" are the same state. Redirecting
+ * during that moment is what threw away deep links, reloads and bookmarks, so
+ * this waits for an answer instead — and when the answer really is "no capture",
+ * it remembers where the user was headed so the upload screen can send them back
+ * there.
+ */
+function RequireCapture({ children }: { children: ReactNode }) {
+  const { status } = useApp()
+  const location = useLocation()
+
+  if (status === 'initializing' || status === 'loading') {
+    return <RestoringCapture />
+  }
+
+  if (status !== 'ready') {
+    return (
+      <Navigate to="/" replace state={{ from: `${location.pathname}${location.search}` }} />
+    )
+  }
+
+  return <>{children}</>
+}
+
+function RestoringCapture() {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-canvas">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-hair-strong border-t-accent" />
+      <p className="text-sm text-muted">Restoring capture…</p>
+    </div>
+  )
+}
+
 function AppContent() {
-  const { status, loadFile } = useApp()
+  const { status, loadFile, warnings } = useApp()
 
   // Enable global drag & drop (disabled during loading)
   const { isDragOver, error: dropError, clearError } = useFileDropzone({
@@ -29,31 +66,36 @@ function AppContent() {
         <AppHeader />
       </ErrorBoundary>
 
+      {/* What the parser could not make sense of. Collapsed to a single line
+          unless the user opens it, and it belongs to the capture rather than to
+          any one screen, so it sits above the routes. */}
+      <WarningBanner warnings={warnings} />
+
       <ErrorBoundary>
         <Routes>
           {/* File Upload - always accessible */}
           <Route path="/" element={<FileUploadPage />} />
 
-          {/* Protected routes - redirect to / if no file loaded */}
+          {/* Protected routes - wait for the restore, then redirect if there is no file */}
           <Route
             path="/dashboard"
-            element={isReady ? <DashboardPage /> : <Navigate to="/" replace />}
+            element={<RequireCapture><DashboardPage /></RequireCapture>}
           />
           <Route
             path="/neighbors"
-            element={isReady ? <NeighborsPage /> : <Navigate to="/" replace />}
+            element={<RequireCapture><NeighborsPage /></RequireCapture>}
           />
           <Route
             path="/messages"
-            element={isReady ? <MessagesPage /> : <Navigate to="/" replace />}
+            element={<RequireCapture><MessagesPage /></RequireCapture>}
           />
           <Route
             path="/routes"
-            element={isReady ? <RoutesPage /> : <Navigate to="/" replace />}
+            element={<RequireCapture><RoutesPage /></RequireCapture>}
           />
           <Route
             path="/sql"
-            element={isReady ? <SqlConsolePage /> : <Navigate to="/" replace />}
+            element={<RequireCapture><SqlConsolePage /></RequireCapture>}
           />
 
           {/* Catch all - redirect to messages or home */}

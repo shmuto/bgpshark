@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { BgpMessage, BgpUpdateMessage } from '../../lib/bgp/types'
-import type { DisplayPacket } from '../layout/MainContent'
+import type { BgpMessage, BgpPacket, BgpUpdateMessage } from '../../lib/bgp/types'
+import type { GenericPacket } from '../../lib/pcap'
+
+/**
+ * A row in the packet list: either a packet the BGP parser understood, or a
+ * plain IP packet shown in "All Packets" mode.
+ */
+export type DisplayPacket =
+  | { kind: 'bgp'; packet: BgpPacket; timestamp: Date }
+  | { kind: 'generic'; packet: GenericPacket; timestamp: Date }
 
 // Column definitions
 type ColumnId = 'index' | 'time' | 'absTime' | 'src' | 'dst' | 'srcPort' | 'dstPort' | 'protocol' | 'type' | 'info' | 'asPath' | 'nlriCount' | 'withdrawnCount' | 'length'
