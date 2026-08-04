@@ -9,6 +9,12 @@ CREATE TABLE IF NOT EXISTS packets (
   timestamp       TIMESTAMP,
   src_ip          VARCHAR,
   dst_ip          VARCHAR,
+  -- Address bits as text (see lib/net/prefix.ts). Carried alongside the
+  -- printable form so a CIDR search can be answered by asking whether the
+  -- address bits start with the query's bits, which is a question SQL can ask
+  -- about IPv6 too.
+  src_ip_bits     VARCHAR,
+  dst_ip_bits     VARCHAR,
   src_port        INTEGER,
   dst_port        INTEGER,
   raw_data_base64 VARCHAR,
@@ -107,12 +113,18 @@ CREATE TABLE IF NOT EXISTS nlri (
   message_id      INTEGER NOT NULL,
   prefix          VARCHAR,
   prefix_length   INTEGER,
+  -- Network bits as text (see lib/net/prefix.ts). One prefix is inside another
+  -- exactly when its key starts with the other's, so subnet searches are a
+  -- LIKE 'bits%' this index can serve. NULL for families with no printable
+  -- address form.
+  prefix_bits     VARCHAR,
   afi             INTEGER DEFAULT 1,
   safi            INTEGER DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_nlri_message ON nlri(message_id);
 CREATE INDEX IF NOT EXISTS idx_nlri_prefix ON nlri(prefix);
+CREATE INDEX IF NOT EXISTS idx_nlri_prefix_bits ON nlri(prefix_bits);
 
 -- Withdrawn routes table
 CREATE TABLE IF NOT EXISTS withdrawn (
@@ -120,12 +132,14 @@ CREATE TABLE IF NOT EXISTS withdrawn (
   message_id      INTEGER NOT NULL,
   prefix          VARCHAR,
   prefix_length   INTEGER,
+  prefix_bits     VARCHAR,
   afi             INTEGER DEFAULT 1,
   safi            INTEGER DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_withdrawn_message ON withdrawn(message_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawn_prefix ON withdrawn(prefix);
+CREATE INDEX IF NOT EXISTS idx_withdrawn_prefix_bits ON withdrawn(prefix_bits);
 
 -- Communities table
 CREATE TABLE IF NOT EXISTS communities (

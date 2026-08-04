@@ -56,13 +56,13 @@ not (type = KEEPALIVE)
 | Field | Matches |
 |-------|---------|
 | `type` | Message type (`OPEN`, `UPDATE`, `NOTIFICATION`, `KEEPALIVE`, `ROUTE_REFRESH`) |
-| `src_ip` / `dst_ip` | Source / destination IP (prefix match supported) |
+| `src_ip` / `dst_ip` | Source / destination IP; a CIDR matches any address inside it |
 | `router_id` | BGP Identifier from an OPEN message |
 | `src_as` | AS number advertised in an OPEN message |
 | `asn` | AS number appearing anywhere in AS_PATH |
 | `origin` | `IGP` / `EGP` / `INCOMPLETE` |
 | `next_hop` | NEXT_HOP or MP_REACH next hop |
-| `prefix` | Announced NLRI prefix |
+| `prefix` | Announced or withdrawn NLRI prefix |
 | `withdrawn` | Withdrawn prefix |
 | `community` | Standard or large community |
 | `capability` | Capability name from an OPEN message |
@@ -70,6 +70,17 @@ not (type = KEEPALIVE)
 Aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `nlri`.
 Operators: `=`, `!=`, `contains`, `not contains`, combined with `and` / `or` / `not`
 and parentheses.
+
+Address and prefix fields compare numerically, not as text, and the mask is
+honoured to the bit — `src_ip = 192.168.0.0/23` covers 192.168.0.0 through
+192.168.1.255 and nothing else. For `prefix` and `withdrawn`:
+
+- `prefix = 10.0.0.0/8` — routes **inside** 10.0.0.0/8, so 10.0.12.0/24 matches
+- `prefix = 10.0.12.7` — routes that **cover** that address
+- `prefix contains "10.0.1"` — substring search, for when you are still typing
+
+The route analysis screen answers the same way, so a prefix that shows up there
+also shows up in a filter using the same text.
 
 ## Architecture
 

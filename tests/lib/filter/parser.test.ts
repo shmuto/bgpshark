@@ -236,3 +236,136 @@ describe('SQL compilation', () => {
     }
   })
 })
+
+/**
+ * UPDATE announcing 10.0.12.0/24 and withdrawing 10.9.0.0/16, from 192.168.1.5.
+ */
+function createRoutePacket(): BgpPacket {
+  const update = {
+    type: 'UPDATE',
+    withdrawnRoutesLength: 0,
+    withdrawnRoutes: [{ prefix: '10.9.0.0', length: 16 }],
+    totalPathAttributeLength: 0,
+    pathAttributes: [],
+    nlri: [{ prefix: '10.0.12.0', length: 24 }],
+  } as unknown as BgpUpdateMessage
+
+  return {
+    frameIndex: 3,
+    timestamp: new Date(0),
+    srcIp: '192.168.1.5',
+    dstIp: '10.0.0.2',
+    srcPort: 179,
+    dstPort: 50000,
+    messages: [update],
+    rawData: new Uint8Array(),
+    parseWarnings: [],
+  }
+}
+
+describe('prefix matching', () => {
+  const packet = createRoutePacket()
+  const matches = (expr: string) => {
+    const query = parseQuery(expr)
+    expect(query.errors).toHaveLength(0)
+    return matchPacket(packet, query)
+  }
+
+  test('a CIDR selects the routes inside it', () => {
+    // 10.0.12.0/24 is inside 10.0.0.0/8, and is not a literal 10.0.0.0/8.
+    expect(matches('prefix = 10.0.0.0/8')).toBe(true)
+    expect(matches('prefix = 10.0.12.0/24')).toBe(true)
+    expect(matches('prefix = 172.16.0.0/12')).toBe(false)
+  })
+
+  test('a supernet of the query does not match', () => {
+    expect(matches('prefix = 10.0.12.0/25')).toBe(false)
+  })
+
+  test('a bare address selects the routes covering it', () => {
+    expect(matches('prefix = 10.0.12.7')).toBe(true)
+    expect(matches('prefix = 10.0.13.7')).toBe(false)
+  })
+
+  test('withdrawn is searched the same way', () => {
+    expect(matches('withdrawn = 10.9.0.0/16')).toBe(true)
+    expect(matches('withdrawn = 10.9.1.2')).toBe(true)
+    expect(matches('withdrawn = 10.0.12.0/24')).toBe(false)
+    // prefix covers announced and withdrawn together
+    expect(matches('prefix = 10.9.0.0/16')).toBe(true)
+  })
+
+  test('negation is the inverse', () => {
+    expect(matches('prefix != 10.0.0.0/8')).toBe(false)
+    expect(matches('prefix != 172.16.0.0/12')).toBe(true)
+  })
+
+  test('text that is not an address stays a substring search', () => {
+    expect(matches('prefix contains "10.0.12"')).toBe(true)
+    expect(matches('prefix contains "10.0.99"')).toBe(false)
+  })
+})
+
+describe('IP address fields honour CIDR', () => {
+  const packet = createRoutePacket() // srcIp 192.168.1.5
+  const matches = (expr: string) => {
+    const query = parseQuery(expr)
+    expect(query.errors).toHaveLength(0)
+    return matchPacket(packet, query)
+  }
+
+  test('an address inside the block matches', () => {
+    expect(matches('src_ip = 192.168.0.0/16')).toBe(true)
+    expect(matches('src_ip = 192.168.1.0/24')).toBe(true)
+    expect(matches('src_ip = 10.0.0.0/8')).toBe(false)
+  })
+
+  test('the mask is honoured to the bit, not rounded to whole octets', () => {
+    // 192.168.1.5 is inside 192.168.0.0/23 but not inside 192.168.2.0/23.
+    expect(matches('src_ip = 192.168.0.0/23')).toBe(true)
+    expect(matches('src_ip = 192.168.2.0/23')).toBe(false)
+    // /12 covers 192.160.0.0 - 192.175.255.255, /4 covers 192.0.0.0 - 207.x.
+    expect(matches('src_ip = 192.160.0.0/12')).toBe(true)
+    expect(matches('src_ip = 192.128.0.0/12')).toBe(false)
+  })
+
+  test('a plain address is still an exact match', () => {
+    expect(matches('src_ip = 192.168.1.5')).toBe(true)
+    expect(matches('src_ip = 192.168.1.6')).toBe(false)
+  })
+
+  test('negation is the inverse', () => {
+    expect(matches('src_ip != 192.168.0.0/16')).toBe(false)
+    expect(matches('src_ip != 10.0.0.0/8')).toBe(true)
+  })
+})
+
+describe('SQL and in-memory paths ask the same question', () => {
+  test('a CIDR prefix search compiles to a containment test, not string equality', () => {
+    const sql = expressionToSql(parseQuery('prefix = 10.0.0.0/8').expression)
+    // 10.0.0.0/8 -> bits 00001010
+    expect(sql).toContain("prefix_bits LIKE '4:00001010%'")
+    expect(sql).not.toContain("prefix_length = ")
+  })
+
+  test('a bare address compiles to a covering-route test', () => {
+    const sql = expressionToSql(parseQuery('prefix = 10.0.12.7').expression)
+    expect(sql).toContain("LIKE t.prefix_bits || '%'")
+  })
+
+  test('an IP field CIDR compiles to a bit-key test', () => {
+    const sql = expressionToSql(parseQuery('src_ip = 192.168.0.0/23').expression)
+    // 192.168.0.0/23 -> 11000000 10101000 0000000, exactly 23 bits
+    expect(sql).toContain("src_ip_bits LIKE '4:11000000101010000000000%'")
+  })
+
+  test('IPv6 compiles too', () => {
+    const sql = expressionToSql(parseQuery('prefix = "2001:db8::/32"').expression)
+    expect(sql).toContain("prefix_bits LIKE '6:")
+  })
+
+  test('a value that is not an address stays escaped text', () => {
+    const sql = expressionToSql(parseQuery(`prefix = "10' OR 1=1--"`).expression)
+    expect(stripSqlLiterals(sql)).not.toContain('OR 1=1')
+  })
+})

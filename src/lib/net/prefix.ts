@@ -139,3 +139,40 @@ export function contains(outer: ParsedPrefix, inner: ParsedPrefix): boolean {
 export function equals(a: ParsedPrefix, b: ParsedPrefix): boolean {
   return a.family === b.family && a.length === b.length && a.bits === b.bits
 }
+
+/**
+ * The network bits written out as text, tagged with the address family:
+ * `10.0.0.0/8` becomes `4:00001010`.
+ *
+ * This exists so containment can be asked the same way in two places. In
+ * JavaScript `contains()` is the natural test, but the same question has to be
+ * answered in SQL, and DuckDB has no address type here — an IPv6 address does
+ * not fit in a SQL integer either. On this key, "inside" is just "starts with",
+ * which both languages agree on, and which an index on the column can serve.
+ *
+ * The family tag keeps an IPv4 prefix from ever matching an IPv6 one that
+ * happens to begin with the same bits.
+ */
+export function bitKey(prefix: ParsedPrefix): string {
+  if (prefix.length === 0) return `${prefix.family}:`
+
+  const shift = BigInt(FAMILY_BITS[prefix.family] - prefix.length)
+  // toString(2) drops leading zeroes, so pad back out to the mask length.
+  const bits = (prefix.bits >> shift).toString(2).padStart(prefix.length, '0')
+  return `${prefix.family}:${bits}`
+}
+
+/** Bit key for a prefix the BGP parser produced, or null if it is not an address. */
+export function bgpPrefixBitKey(prefix: BgpPrefix): string | null {
+  const parsed = parseBgpPrefix(prefix)
+  return parsed ? bitKey(parsed) : null
+}
+
+/**
+ * Bit key for a plain address, covering every bit of it. A prefix's key is a
+ * string prefix of this exactly when the prefix covers the address.
+ */
+export function addressBitKey(text: string): string | null {
+  const parsed = parsePrefix(text)
+  return parsed ? bitKey(parsed) : null
+}
