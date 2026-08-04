@@ -35,10 +35,50 @@ Other scripts:
 
 ```bash
 bun test           # Run the parser test suite
+bun run test:e2e   # Drive the app in a browser (see below)
 bun run build      # Type-check and build to dist/
 bun run preview    # Serve the production build
 bun run lint       # ESLint
 ```
+
+## Tests
+
+`bun test` covers the parsers and the prefix arithmetic — everything under
+`tests/lib`, with no browser involved.
+
+`bun run test:e2e` drives the real app in Chromium against real DuckDB WASM.
+That is the only place some of this app's failure modes are visible: SQL that
+compiles but will not run, a route guard that redirects before the capture has
+finished loading, a layout that only breaks below a breakpoint. The dev server
+is started automatically. Specs live in `tests/e2e` and are named `*.e2e.ts`
+rather than `*.spec.ts` so that `bun test` cannot pick them up.
+
+```bash
+bunx playwright install chromium    # once
+bun run test:e2e
+bun run test:e2e --ui               # pick through them interactively
+bun run test:e2e layout             # one file
+```
+
+### On NixOS
+
+The browsers Playwright downloads are dynamically linked against libraries a Nix
+system does not put where they expect, so they fail to start. Use the build from
+nixpkgs instead, and match the npm package to the driver version it ships
+(`@playwright/test` is pinned to 1.61.1 here for that reason):
+
+```bash
+export PLAYWRIGHT_BROWSERS_PATH=$(nix-build '<nixpkgs>' -A playwright-driver.browsers --no-out-link)
+export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
+bun run test:e2e
+```
+
+(`nix-shell -p playwright-driver.browsers` is not enough on its own — it puts the
+browsers in the store without pointing `PLAYWRIGHT_BROWSERS_PATH` at them.)
+
+If the versions drift apart, Playwright will report that it cannot find a
+browser build it expects; check `nix-instantiate --eval -E '(import <nixpkgs>
+{}).playwright-driver.version'` and pin `@playwright/test` to match.
 
 ## Filter syntax
 
