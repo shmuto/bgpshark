@@ -2,8 +2,9 @@ import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useFilter } from '../hooks/useFilter'
-import { BackToList, PacketList, QueryInput, type DisplayPacket } from '../components/common'
+import { BackToList, PacketList, PaneDivider, QueryInput, type DisplayPacket } from '../components/common'
 import { useIsCompact } from '../hooks/useMediaQuery'
+import { useSplitPane } from '../hooks/useSplitPane'
 import { PacketDetail } from '../components/message/PacketDetail'
 import type {
   BgpPacket,
@@ -36,7 +37,7 @@ export function MessagesPage() {
   const [showAllPackets, setShowAllPackets] = useState(false)
   const [filterMode, setFilterMode] = useState<FilterMode>('simple')
   const [rules, setRules] = useState<FilterRule[]>([])
-  const containerRef = useRef<HTMLDivElement>(null)
+  const split = useSplitPane('messages')
 
   // Too narrow for two columns: show the list, or the detail, but not halves of
   // both.
@@ -527,10 +528,13 @@ export function MessagesPage() {
       </div>
 
       {/* Main content - split view, stacked when there is no room for two columns */}
-      <div ref={containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0">
+      <div ref={split.containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0">
         {/* Packet List */}
         {showList && (
-        <div className="w-full flex-1 lg:w-1/2 lg:flex-none lg:border-r border-hair flex flex-col min-h-0">
+        <div
+          className="w-full flex-1 lg:flex-none flex flex-col min-h-0"
+          style={isCompact ? undefined : { width: `${split.percent}%` }}
+        >
           <div className="flex-1 overflow-auto">
             <PacketList
               packets={displayPackets}
@@ -542,9 +546,19 @@ export function MessagesPage() {
         </div>
         )}
 
+        {!isCompact && (
+          <PaneDivider
+            isDragging={split.isDragging}
+            onDragStart={split.startDrag}
+            onReset={split.reset}
+            onNudge={split.nudge}
+            label="Resize the packet list"
+          />
+        )}
+
         {/* Packet Detail */}
         {showDetail && (
-        <div className="w-full flex-1 lg:w-1/2 lg:flex-none flex flex-col min-h-0 bg-surface">
+        <div className="w-full flex-1 flex flex-col min-h-0 bg-surface">
           <div className="px-4 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between gap-2 shrink-0">
             <BackToList onClick={() => selectPacket(null)} />
             <span className="text-sm font-semibold text-strong truncate">

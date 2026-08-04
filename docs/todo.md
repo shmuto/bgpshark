@@ -60,16 +60,26 @@ Messages / Neighbors / Routes の 3 画面に適用。
 
 初回に必要な JS は 561kB → 260kB（gzip 152kB → 84kB）。警告も解消。
 
+### ペインのドラッグリサイズ
+
+`useResizablePanes` は削除済みの 3 ペイン構成（旧 `MainContent`）専用の API だったので削除し、
+現在の 2 ペイン構成に合う `useSplitPane` + `PaneDivider` として実装し直した。
+
+- ドラッグで幅を変更、ダブルクリックで既定値に戻す
+- 矢印キーでも動く（`role="separator"` + `tabIndex`）
+- 幅は localStorage に画面ごとに保存（Messages と Routes は別々）
+- 1 ペインしか出ない compact 表示では非表示
+
+### 経路分析の状態を URL に載せた
+
+Neighbors の `?router=` に倣い、Routes も検索語・選択 Prefix・ソート列・
+ソート方向・Include subnets を URL に持つようにした。
+リンクを共有してもリロードしても、見ていたものがそのまま復元される。
+
 ---
 
 ## 未対応
 
-### 1. `useResizablePanes` が使われていない
+（なし）
 
-`src/hooks/useResizablePanes.ts` はどこからも呼ばれていない。
-ペインのドラッグリサイズを実装するか、フックごと削除するか。
-
-### 2. 経路分析のソート状態が URL に乗らない
-
-Neighbors は選択中のルーターを `?router=` で持つが、
-Routes のソート列・検索語・選択 Prefix は URL に出ないので共有・リロードで失われる。
+`docs/ui-design.md` との差分および Playwright で見つかった問題はすべて解消済み。

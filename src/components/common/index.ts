@@ -1,5 +1,6 @@
 export { ErrorBoundary } from './ErrorBoundary'
 export { BackToList } from './BackToList'
+export { PaneDivider } from './PaneDivider'
 export { FileDropzone } from './FileDropzone'
 export { PacketList, type DisplayPacket } from './PacketList'
 export { QueryInput } from './QueryInput'
