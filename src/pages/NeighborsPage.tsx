@@ -1,6 +1,8 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useIsCompact } from '../hooks/useMediaQuery'
+import { BackToList } from '../components/common'
 import type { BgpMessage, BgpOpenMessage, BgpUpdateMessage, BgpNotificationMessage } from '../lib/bgp/types'
 import { extractNeighbors, getLatestOpen, type OpenMessageRecord } from '../lib/bgp/neighbor'
 import { CapabilityDiff } from '../components/neighbor'
@@ -167,6 +169,12 @@ export function NeighborsPage() {
 
   // Get selected router details
   const selectedRouterInfo = selectedRouter ? routers.find(r => r.routerId === selectedRouter) : null
+
+  // Too narrow for two columns: show the list, or the detail, but not halves of
+  // both.
+  const isCompact = useIsCompact()
+  const showList = !isCompact || selectedRouter === null
+  const showDetail = !isCompact || selectedRouter !== null
 
   // Get IPs for selected router
   const selectedIps = useMemo(() => {
@@ -521,7 +529,8 @@ export function NeighborsPage() {
       {/* Main Content - stacked when there is no room for two columns */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0">
         {/* Router List */}
-        <div className="w-full basis-1/2 lg:w-1/3 lg:basis-auto border-b lg:border-b-0 lg:border-r border-hair bg-surface flex flex-col min-h-0">
+        {showList && (
+        <div className="w-full flex-1 lg:w-1/3 lg:flex-none lg:border-r border-hair bg-surface flex flex-col min-h-0">
           <div className="flex-1 overflow-auto">
             <table className="w-full text-sm">
               <thead className="bg-surface-sunken sticky top-0">
@@ -599,8 +608,16 @@ export function NeighborsPage() {
           </div>
         </div>
 
+        )}
+
         {/* Detail Panel */}
+        {showDetail && (
         <div className="flex-1 overflow-auto p-4">
+          {isCompact && selectedRouterInfo && (
+            <div className="mb-3">
+              <BackToList onClick={() => setSelectedRouter(null)} label="Back to routers" />
+            </div>
+          )}
           {selectedRouterInfo ? (
             <div className="space-y-4">
               {/* Router Detail Header */}
@@ -908,6 +925,7 @@ export function NeighborsPage() {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   )

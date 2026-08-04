@@ -2,7 +2,8 @@ import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useFilter } from '../hooks/useFilter'
-import { PacketList, QueryInput, type DisplayPacket } from '../components/common'
+import { BackToList, PacketList, QueryInput, type DisplayPacket } from '../components/common'
+import { useIsCompact } from '../hooks/useMediaQuery'
 import { PacketDetail } from '../components/message/PacketDetail'
 import type {
   BgpPacket,
@@ -36,6 +37,12 @@ export function MessagesPage() {
   const [filterMode, setFilterMode] = useState<FilterMode>('simple')
   const [rules, setRules] = useState<FilterRule[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Too narrow for two columns: show the list, or the detail, but not halves of
+  // both.
+  const isCompact = useIsCompact()
+  const showList = !isCompact || selectedPacketIndex === null
+  const showDetail = !isCompact || selectedPacketIndex !== null
 
   // Get initial filter from URL
   const initialFilter = searchParams.get('filter') || ''
@@ -522,7 +529,8 @@ export function MessagesPage() {
       {/* Main content - split view, stacked when there is no room for two columns */}
       <div ref={containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0">
         {/* Packet List */}
-        <div className="w-full basis-1/2 lg:w-1/2 lg:basis-auto border-b lg:border-b-0 lg:border-r border-hair flex flex-col min-h-0">
+        {showList && (
+        <div className="w-full flex-1 lg:w-1/2 lg:flex-none lg:border-r border-hair flex flex-col min-h-0">
           <div className="flex-1 overflow-auto">
             <PacketList
               packets={displayPackets}
@@ -532,11 +540,14 @@ export function MessagesPage() {
             />
           </div>
         </div>
+        )}
 
         {/* Packet Detail */}
-        <div className="w-full basis-1/2 lg:w-1/2 lg:basis-auto flex flex-col min-h-0 bg-surface">
-          <div className="px-4 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between shrink-0">
-            <span className="text-sm font-semibold text-strong">
+        {showDetail && (
+        <div className="w-full flex-1 lg:w-1/2 lg:flex-none flex flex-col min-h-0 bg-surface">
+          <div className="px-4 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between gap-2 shrink-0">
+            <BackToList onClick={() => selectPacket(null)} />
+            <span className="text-sm font-semibold text-strong truncate">
               {selectedPacketIndex !== null ? `Packet #${displayPackets[selectedPacketIndex]?.packet.frameIndex}` : 'Packet Detail'}
             </span>
             {selectedBgpPacket && (
@@ -562,6 +573,7 @@ export function MessagesPage() {
             )}
           </div>
         </div>
+        )}
       </div>
     </div>
   )

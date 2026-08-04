@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useIsCompact } from '../hooks/useMediaQuery'
+import { BackToList } from '../components/common'
 import type { BgpPrefix, BgpUpdateMessage } from '../lib/bgp/types'
 import {
   contains,
@@ -41,6 +43,23 @@ type Search =
   | { kind: 'asn'; asn: string }
   | { kind: 'text'; text: string }
 
+type SortColumn = 'prefix' | 'announced' | 'withdrawn' | 'lastSeen' | 'flap'
+type SortDirection = 'asc' | 'desc'
+
+/**
+ * Which way each column reads when you first click it.
+ *
+ * A prefix list wants to start alphabetically; a count column is being clicked
+ * because you want to know which is worst, so it starts at the top.
+ */
+const DEFAULT_DIRECTION: Record<SortColumn, SortDirection> = {
+  prefix: 'asc',
+  announced: 'desc',
+  withdrawn: 'desc',
+  lastSeen: 'desc',
+  flap: 'desc',
+}
+
 export function RoutesPage() {
   const { packets } = useApp()
   const navigate = useNavigate()
@@ -50,6 +69,14 @@ export function RoutesPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [includeSubnets, setIncludeSubnets] = useState(true)
   const [selectedPrefix, setSelectedPrefix] = useState<string | null>(null)
+  const [sortColumn, setSortColumn] = useState<SortColumn>('flap')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+
+  // Too narrow for two columns: show the list, or the detail, but not halves of
+  // both.
+  const isCompact = useIsCompact()
+  const showList = !isCompact || selectedPrefix === null
+  const showDetail = !isCompact || selectedPrefix !== null
 
   // Extract all prefix events from packets
   const prefixStats = useMemo(() => {
@@ -156,7 +183,7 @@ export function RoutesPage() {
       stat.history.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
     }
 
-    return Array.from(stats.values()).sort((a, b) => b.flap - a.flap)
+    return Array.from(stats.values())
   }, [packets])
 
   /** Decide what kind of search the text is before matching anything against it. */
@@ -199,10 +226,67 @@ export function RoutesPage() {
     }
   }, [prefixStats, search, includeSubnets])
 
+  const sortedPrefixes = useMemo(() => {
+    const factor = sortDirection === 'asc' ? 1 : -1
+    return [...filteredPrefixes].sort((a, b) => {
+      switch (sortColumn) {
+        case 'prefix':
+          // Numeric order, so 10.0.9.0/24 comes before 10.0.12.0/24 rather than
+          // after it the way a string comparison would have it. Prefixes with no
+          // parsed form keep a stable place at the end.
+          if (!a.parsed || !b.parsed) return a.key.localeCompare(b.key) * factor
+          if (a.parsed.family !== b.parsed.family) return (a.parsed.family - b.parsed.family) * factor
+          if (a.parsed.bits !== b.parsed.bits) return (a.parsed.bits < b.parsed.bits ? -1 : 1) * factor
+          return (a.parsed.length - b.parsed.length) * factor
+        case 'lastSeen':
+          return (a.lastSeen.getTime() - b.lastSeen.getTime()) * factor
+        default:
+          return (a[sortColumn] - b[sortColumn]) * factor
+      }
+    })
+  }, [filteredPrefixes, sortColumn, sortDirection])
+
+  const toggleSort = (column: SortColumn) => {
+    if (column === sortColumn) {
+      setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortColumn(column)
+      setSortDirection(DEFAULT_DIRECTION[column])
+    }
+  }
+
   // Get selected prefix stats
   const selectedPrefixStats = selectedPrefix
     ? prefixStats.find(s => s.key === selectedPrefix)
     : null
+
+  /**
+   * The distinct AS_PATHs this prefix was announced with, most seen first.
+   *
+   * A prefix arriving over more than one path is the interesting case — it is
+   * either multihoming or a route leak, and which one you are looking at is a
+   * judgement the numbers here support rather than make.
+   */
+  const asPathVariants = useMemo(() => {
+    if (!selectedPrefixStats) return []
+
+    const counts = new Map<string, { path: string[]; count: number; lastSeen: Date }>()
+    for (const event of selectedPrefixStats.history) {
+      if (event.action !== 'announce') continue
+      const asPath = event.asPath?.trim()
+      if (!asPath) continue
+
+      const existing = counts.get(asPath)
+      if (existing) {
+        existing.count++
+        if (event.timestamp > existing.lastSeen) existing.lastSeen = event.timestamp
+      } else {
+        counts.set(asPath, { path: asPath.split(/\s+/), count: 1, lastSeen: event.timestamp })
+      }
+    }
+
+    return Array.from(counts.values()).sort((a, b) => b.count - a.count)
+  }, [selectedPrefixStats])
 
   const handleHistoryClick = (event: PrefixEvent) => {
     navigate(`/messages?selected=${event.packetIndex}`)
@@ -263,7 +347,8 @@ export function RoutesPage() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 p-4 gap-4">
         {/* Prefix Statistics */}
-        <div className="w-full basis-1/2 lg:w-1/2 lg:basis-auto bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
+        {showList && (
+        <div className="w-full flex-1 lg:w-1/2 lg:flex-none bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <span>📊</span>
             <h2 className="font-semibold text-strong">Prefix Statistics</h2>
@@ -273,14 +358,25 @@ export function RoutesPage() {
             <table className="w-full text-sm">
               <thead className="bg-surface-sunken sticky top-0">
                 <tr className="text-left text-muted">
-                  <th className="px-4 py-2 font-medium">Prefix</th>
-                  <th className="px-4 py-2 font-medium text-right">Announced</th>
-                  <th className="px-4 py-2 font-medium text-right">Withdrawn</th>
-                  <th className="px-4 py-2 font-medium text-right">Flap</th>
+                  <SortableHeader column="prefix" {...{ sortColumn, sortDirection, toggleSort }}>
+                    Prefix
+                  </SortableHeader>
+                  <SortableHeader column="announced" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
+                    Announced
+                  </SortableHeader>
+                  <SortableHeader column="withdrawn" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
+                    Withdrawn
+                  </SortableHeader>
+                  <SortableHeader column="lastSeen" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
+                    Last Seen
+                  </SortableHeader>
+                  <SortableHeader column="flap" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
+                    Flap
+                  </SortableHeader>
                 </tr>
               </thead>
               <tbody className="divide-y divide-hair">
-                {filteredPrefixes.map((stat) => (
+                {sortedPrefixes.map((stat) => (
                   <tr
                     key={stat.key}
                     onClick={() => setSelectedPrefix(stat.key)}
@@ -291,6 +387,9 @@ export function RoutesPage() {
                     <td className="px-4 py-2 font-mono text-strong">{stat.key}</td>
                     <td className="px-4 py-2 text-right text-ok">{stat.announced}</td>
                     <td className="px-4 py-2 text-right text-critical">{stat.withdrawn}</td>
+                    <td className="px-4 py-2 text-right font-mono text-muted">
+                      {formatTime(stat.lastSeen)}
+                    </td>
                     <td className="px-4 py-2 text-right">
                       <span className={stat.flap > 10 ? 'text-warning font-medium' : 'text-muted'}>
                         {stat.flap}
@@ -301,19 +400,23 @@ export function RoutesPage() {
                 ))}
               </tbody>
             </table>
-            {filteredPrefixes.length === 0 && (
+            {sortedPrefixes.length === 0 && (
               <div className="text-center text-dim py-8">
                 No prefixes found
               </div>
             )}
           </div>
         </div>
+        )}
 
-        {/* Route History */}
-        <div className="w-full basis-1/2 lg:w-1/2 lg:basis-auto bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
+        {/* Route History and the paths it arrived over */}
+        {showDetail && (
+        <div className="w-full flex-1 lg:w-1/2 lg:flex-none flex flex-col min-h-0 gap-4">
+        <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 flex-1">
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
+            <BackToList onClick={() => setSelectedPrefix(null)} />
             <span>📜</span>
-            <h2 className="font-semibold text-strong">
+            <h2 className="font-semibold text-strong truncate">
               Route History{selectedPrefix ? `: ${selectedPrefix}` : ''}
             </h2>
           </div>
@@ -362,8 +465,89 @@ export function RoutesPage() {
             )}
           </div>
         </div>
+
+        {asPathVariants.length > 0 && (
+          <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 shrink-0 max-h-64">
+            <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
+              <span>🔗</span>
+              <h2 className="font-semibold text-strong">AS_PATH Analysis</h2>
+              <span className="text-xs text-muted ml-auto">
+                {asPathVariants.length === 1
+                  ? 'single path'
+                  : `${asPathVariants.length} distinct paths`}
+              </span>
+            </div>
+            <div className="flex-1 overflow-auto p-3 space-y-2">
+              {asPathVariants.map((variant, idx) => (
+                <div
+                  key={variant.path.join(' ')}
+                  className="flex items-center gap-2 flex-wrap text-sm"
+                >
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {variant.path.map((asn, hop) => (
+                      <span key={hop} className="flex items-center gap-1">
+                        {hop > 0 && <span className="text-dim">▶</span>}
+                        <span className="font-mono rounded bg-surface-sunken px-1.5 py-0.5 text-body">
+                          AS{asn}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                  <span className="ml-auto text-xs text-muted whitespace-nowrap">
+                    {/* The most seen path first; the others are what makes this
+                        panel worth looking at. */}
+                    {idx === 0 ? '' : 'alternate, '}
+                    seen {variant.count} time{variant.count > 1 ? 's' : ''}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        </div>
+        )}
       </div>
     </div>
+  )
+}
+
+interface SortableHeaderProps {
+  column: SortColumn
+  sortColumn: SortColumn
+  sortDirection: SortDirection
+  toggleSort: (column: SortColumn) => void
+  align?: 'left' | 'right'
+  children: React.ReactNode
+}
+
+function SortableHeader({
+  column,
+  sortColumn,
+  sortDirection,
+  toggleSort,
+  align = 'left',
+  children,
+}: SortableHeaderProps) {
+  const active = column === sortColumn
+
+  return (
+    <th className={`px-4 py-2 font-medium ${align === 'right' ? 'text-right' : ''}`}>
+      <button
+        type="button"
+        onClick={() => toggleSort(column)}
+        aria-sort={active ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+        className={`inline-flex items-center gap-1 transition-colors hover:text-strong ${
+          active ? 'text-strong' : ''
+        }`}
+      >
+        {children}
+        {/* The inactive arrow stays in the layout so the header does not shift
+            when a column is picked. */}
+        <span className={active ? '' : 'opacity-0'} aria-hidden="true">
+          {sortDirection === 'asc' ? '▲' : '▼'}
+        </span>
+      </button>
+    </th>
   )
 }
 
