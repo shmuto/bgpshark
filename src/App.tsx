@@ -1,17 +1,34 @@
-import type { ReactNode } from 'react'
+import { lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AppProvider, useApp } from './context/AppContext'
 import { AppHeader } from './components/layout/AppHeader'
 import { ErrorBoundary, WarningBanner } from './components/common'
 import { useFileDropzone } from './hooks/useFileDropzone'
-import {
-  FileUploadPage,
-  DashboardPage,
-  NeighborsPage,
-  MessagesPage,
-  RoutesPage,
-  SqlConsolePage,
-} from './pages'
+import { FileUploadPage } from './pages'
+
+/**
+ * Every screen but the first is loaded on demand.
+ *
+ * The upload page is all anyone sees until a capture is parsed, and by then the
+ * analysis screens have long since arrived in the background. They are the bulk
+ * of the app's own code, so keeping them out of the first download is most of
+ * what makes it small.
+ */
+const DashboardPage = lazy(() =>
+  import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage }))
+)
+const NeighborsPage = lazy(() =>
+  import('./pages/NeighborsPage').then((m) => ({ default: m.NeighborsPage }))
+)
+const MessagesPage = lazy(() =>
+  import('./pages/MessagesPage').then((m) => ({ default: m.MessagesPage }))
+)
+const RoutesPage = lazy(() =>
+  import('./pages/RoutesPage').then((m) => ({ default: m.RoutesPage }))
+)
+const SqlConsolePage = lazy(() =>
+  import('./pages/SqlConsolePage').then((m) => ({ default: m.SqlConsolePage }))
+)
 
 /**
  * Gate for the screens that need a capture.
@@ -28,7 +45,7 @@ function RequireCapture({ children }: { children: ReactNode }) {
   const location = useLocation()
 
   if (status === 'initializing' || status === 'loading') {
-    return <RestoringCapture />
+    return <ScreenSpinner label="Restoring capture…" />
   }
 
   if (status !== 'ready') {
@@ -40,11 +57,11 @@ function RequireCapture({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
-function RestoringCapture() {
+function ScreenSpinner({ label }: { label?: string }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-canvas">
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-hair-strong border-t-accent" />
-      <p className="text-sm text-muted">Restoring capture…</p>
+      {label && <p className="text-sm text-muted">{label}</p>}
     </div>
   )
 }
@@ -72,6 +89,7 @@ function AppContent() {
       <WarningBanner warnings={warnings} />
 
       <ErrorBoundary>
+        <Suspense fallback={<ScreenSpinner />}>
         <Routes>
           {/* File Upload - always accessible */}
           <Route path="/" element={<FileUploadPage />} />
@@ -104,6 +122,7 @@ function AppContent() {
             element={<Navigate to={isReady ? '/messages' : '/'} replace />}
           />
         </Routes>
+        </Suspense>
       </ErrorBoundary>
 
       {/* Global drop overlay */}

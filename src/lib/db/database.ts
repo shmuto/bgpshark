@@ -1,7 +1,7 @@
 /**
  * DuckDB WASM Database Management
  */
-import * as duckdb from '@duckdb/duckdb-wasm'
+import type * as duckdb from '@duckdb/duckdb-wasm'
 import mvpWasm from '@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url'
 import mvpWorker from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url'
 import ehWasm from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url'
@@ -33,15 +33,20 @@ export async function initDatabase(): Promise<void> {
   }
 
   initPromise = (async () => {
+    // Imported here rather than at the top of the file so the ~250kB of DuckDB
+    // glue is fetched alongside the database it drives, instead of sitting in
+    // the bundle the upload screen has to download before it can paint.
+    const duckdbModule = await import('@duckdb/duckdb-wasm')
+
     // Select bundle based on browser capabilities
-    const bundle = await duckdb.selectBundle(BUNDLES)
+    const bundle = await duckdbModule.selectBundle(BUNDLES)
 
     // Create worker directly from the same-origin URL (no blob wrapper needed)
     const worker = new Worker(bundle.mainWorker!)
-    const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING)
+    const logger = new duckdbModule.ConsoleLogger(duckdbModule.LogLevel.WARNING)
 
     // Instantiate database
-    db = new duckdb.AsyncDuckDB(logger, worker)
+    db = new duckdbModule.AsyncDuckDB(logger, worker)
     await db.instantiate(bundle.mainModule, bundle.pthreadWorker)
 
     // Create connection
