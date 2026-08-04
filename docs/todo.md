@@ -95,6 +95,132 @@ Neighbors の `?router=` に倣い、Routes も検索語・選択 Prefix・ソ�
 
 ## 未対応
 
-（なし）
+### 2026-08-04 BGP エンジニア観点の実機レビュー
 
-`docs/ui-design.md` との差分および Playwright で見つかった問題はすべて解消済み。
+BGP セッション障害の切り分けを実際に行う想定で、Playwright + Chromium 141 上で
+サンプルキャプチャ・自作キャプチャ（IPv6 トランスポート / 非標準ポート / SYN-RST のみ /
+破損 pcapng / 60,000 パケット）を読み込ませて操作した。番号は概ね深刻度順。
+
+#### 1. DuckDB へのデータロード失敗時、全フィルタと SQL が「0 件」になる（重大）
+
+この環境では `loadPackets()` が DuckDB WASM の `memory access out of bounds` で失敗した。
+その場合の挙動:
+
+- `useBgpAnalyzer.ts:75-82` — 失敗を catch して「Continue without DuckDB」とするが、
+  `dbReady` は `isInitialized()`（= true のまま）で設定される
+- `useFilter.ts:57` — `isInitialized()` が true なので非同期パスが走り、
+  **空のテーブル**への問い合わせが「成功」して 0 件を返す
+- `useFilter.ts:96` — その 0 件が正しいインメモリ結果（`syncFilteredPackets`）を上書きする
+
+結果、`type = UPDATE` も `src_ip = 1.1.1.1` も **一瞬正しく表示された後 200ms で 0 件になる**。
+SQL コンソールも同様にエラーなしで「Query returned no results」。ユーザーには「この
+キャプチャに該当パケットがない」ようにしか見えず、誤診に直結する。README の
+「DuckDB が使えなければインメモリで動く」は初期化失敗時にしか成立していない。
+
+対策案: ロード失敗時にモジュールレベルのフラグを立てて `isInitialized()`（または新設の
+`isLoaded()`）を false に落とし、インメモリ評価へフォールバックした上で
+WarningBanner に「SQL コンソールは利用できません」と出す。
+
+#### 2. DuckDB WASM の取得が失敗/ハングすると、アップロード画面ごと永久に無効化（重大)
+
+`.wasm` の fetch を遮断して検証: `database.ts:50` の `db.instantiate()` は worker 内の
+fetch 失敗で **reject されずハング**し、`initDatabase()` が永遠に解決しないため
+アプリが `initializing` から抜けず、「Try with sample.pcapng」ボタンとドロップゾーンが
+無効のまま になる。プロキシや CSP で wasm がブロックされる環境では、パーサ自体は
+無関係なのにアプリ全体が使えない。`initDatabase()` にタイムアウトを設け、超過時は
+DuckDB なしで `idle` に進むべき。
+
+#### 3. IPv6 トランスポートの BGP セッションを解析できない
+
+`pcap/parser.ts:309`（pcapng 側も同様）が EtherType 0x0800 以外を捨てるため、
+IPv6 TCP 上の BGP セッション（v6 ピアリングでは普通）のキャプチャは
+**「No IP packets found in the pcap file.」** になる。IPv6 パケットは IP パケットなので
+エラー文自体が誤り。MP_REACH の IPv6 NLRI を解析できるだけに、v6 トランスポート
+非対応は実運用で最初に踏む壁になる。最低限、v6 パケットを検出して
+「IPv6 トランスポートは未対応」と明示するべき（本対応が理想）。
+
+#### 4. 「セッションが張れない」キャプチャで『healthy』と表示される
+
+SYN → RST の応酬だけのキャプチャ（MD5 不一致・フィルタ・TCP レベル障害の典型）を
+読み込むと、Messages は既定の BGP Only で「Showing 0 of 0 packets」の空画面、
+Dashboard は **「No issues detected — every session looks healthy.」**。
+トラブルシュートツールとして最悪の誤誘導になる。
+
+- BGP メッセージが 0 件のときに healthy 表示を出さない
+- 「All Packets には port 179 宛の TCP が N 件ある（SYN が RST で拒否されている）」の
+  ような誘導を出す — データは既に `allPackets`（TCP フラグ付き）にある
+
+#### 5. 非標準ポートの BGP を読む手段がない
+
+`BGP_PORT = 179` 固定（`pcap/parser.ts:15`）。検証用に 1790 番で張ったセッションは
+「Showing 0 of 0 packets」で終わり、説明もない。Wireshark の "Decode As" に相当する
+「このポートも BGP として解釈」の指定（またはポート無視で BGP マーカー検出）が欲しい。
+
+#### 6. タイムスタンプの表示が画面ごとにばらばらで、秒未満が読めない画面がある
+
+| 画面 | 表示 |
+|---|---|
+| パケット一覧 | 相対秒 `14.726` のみ（絶対時刻なし） |
+| パケット詳細 | ISO UTC `2025-12-27T10:36:42.019Z` |
+| Dashboard アラート / Neighbor 詳細 | `10:36:42`（秒単位・TZ 表記なし） |
+| Routes | `10:36:52.50`（10ms 単位） |
+
+サンプルの障害イベント 21 件はすべて同一秒内に収まっており、アラート一覧と
+Neighbor の Session Messages では **前後関係が判別できない**。コリジョン解析のように
+ミリ秒が本質的な場面で致命的。ミリ秒＋TZ を含む統一フォーマットと、一覧の
+相対/絶対切り替えが必要。あわせてアラート・Session Messages にフレーム番号を
+表示してクリックでジャンプできると裏取りが速い。
+
+#### 7. Routes の「Flap」はフラップ数ではなくイベント総数
+
+`RoutesPage.tsx` の `record()` が announce でも withdraw でも `stat.flap++` する。
+セッションリセット後の再広告や複数ピアからの並行広告だけでも数字が積み上がり、
+既定ソートが Flap 降順なので「一度も withdraw されていない経路」が上位に並ぶ。
+実際、サンプルでは withdraw 0 回の `2.2.2.2/32` が Flap=6。運用者の期待する
+「withdraw→announce の往復回数」（または RFC 2439 的なペナルティ）に改めるべき。
+
+#### 8. 破損キャプチャで残り 98% が静かに捨てられる
+
+EPB の captured length を壊した pcapng では「1 warning during parsing」バナーと
+ともに **50 パケット中 1 パケットだけ**表示された（パーサは最初の不整合で break）。
+バナーだけでは「ファイルの大半が読めていない」ことが伝わらない。壊れたブロックを
+スキップして継続する（Wireshark と同じ挙動）か、少なくとも
+「N パケット中 M パケットで解析を中断」と明示すべき。
+
+#### 9. 60k パケットで Routes ページが 35 秒フリーズ
+
+6.7MB / 60,000 UPDATE のキャプチャで、読み込み（2.8s）と一覧・詳細操作は快適
+だが、Routes ページ遷移で **35 秒 UI ブロック**（スピナーなし)、Dashboard も 4.9 秒。
+プレフィックス集計を Worker 化するか集計を DuckDB に寄せ、進行表示を出したい。
+一覧テーブル自体も 60,000 行を仮想化なしで描画している。
+
+#### 10. End-of-RIB が無表示
+
+announce 0 / withdraw 0 の UPDATE（EoR）が「UPDATE (4/4) Announced - 0 / Withdrawn - 0」
+とだけ表示される。グレースフルリスタート解析の目印なので「End-of-RIB」と
+ラベル付けすべき（`grep End-of-RIB src/` は 0 件）。
+
+#### 11. 細かい点
+
+- **Neighbor 詳細の Message Summary が一覧の Msgs と食い違う**: 一覧はそのルータの
+  送信メッセージ数（35）、詳細はセッション両方向の合計（68）。どちらの数字かの
+  ラベルがなく混乱する。`ROUTEREFRESH` の表記も `ROUTE_REFRESH` に。
+- **フィルタのフィールドにポート・時刻・フレーム番号がない**: 同一 IP ペア間の
+  コリジョン解析（このサンプルがまさにそれ）で 2 本の TCP セッションを
+  分離できない。`src_port` / `dst_port` / フレーム範囲が欲しい。
+- **エクスポートがない**: SQL 結果の CSV、フィルタ結果の pcap 切り出しがあると
+  エスカレーションに使える。
+- **10MB 上限**: ルータでの数分のフルルート受信で容易に超える。パースは 60k
+  パケット 2.8s と速いので、上限引き上げ（または警告つき受け入れ）の余地がある。
+- **一覧が仮想描画のため Ctrl+F で探せない**: これ自体は仕様だが、UPDATE 27 件が
+  すべて画面外にある初期表示では「UPDATE が存在しない」ように見える。タイプ別
+  件数バッジ（クリックでフィルタ）が一覧上部にあると迷わない。
+
+#### 良かった点（維持したい挙動）
+
+- TCP セグメントをまたぐ再組み立てと 1 パケット複数メッセージの展開が正確
+- NOTIFICATION のエラーコード解説とヒント、Cease/Hard Reset (RFC 8538) まで対応
+- Route History → `?selected=` でパケットへ直接ジャンプでき、リロードでも復元される
+- フィルタ式のオートコンプリートとエラーの遅延表示（入力中に赤くならない）
+- 60k パケットでも読み込み 2.8 秒、一覧操作は軽快（仮想化が効いている）
+- All Packets 表示の TCP フラグ表記（[S]/[AR]）は TCP レベルの切り分けに十分
