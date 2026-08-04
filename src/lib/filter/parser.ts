@@ -1,6 +1,7 @@
 import type {
   BgpPacket,
   BgpOpenMessage,
+  BgpPrefix,
   BgpUpdateMessage,
   AsPathAttribute,
   CommunitiesAttribute,
@@ -10,6 +11,7 @@ import type {
   MpReachNlriAttribute,
   MpUnreachNlriAttribute,
 } from '../bgp/types'
+import { contains, formatPrefix, parseBgpPrefix, parsePrefix } from '../net/prefix'
 
 // =============================================================================
 // Token Types
@@ -567,10 +569,10 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
       return packet.messages.some((msg) => matchString(msg.type, operator, value))
 
     case 'src_ip':
-      return matchString(packet.srcIp, operator, value)
+      return matchIpAddress(packet.srcIp, operator, value)
 
     case 'dst_ip':
-      return matchString(packet.dstIp, operator, value)
+      return matchIpAddress(packet.dstIp, operator, value)
 
     case 'router_id':
       for (const msg of packet.messages) {
@@ -638,7 +640,7 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
         const nlriPrefixes = getNlriPrefixes(update)
         const withdrawnPrefixes = getWithdrawnPrefixes(update)
         const allPrefixes = [...nlriPrefixes, ...withdrawnPrefixes]
-        if (matchStringArray(allPrefixes, operator, value)) return true
+        if (matchPrefixes(allPrefixes, operator, value)) return true
       }
       return false
 
@@ -646,7 +648,7 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
       for (const msg of packet.messages) {
         if (msg.type !== 'UPDATE') continue
         const withdrawnPrefixes = getWithdrawnPrefixes(msg as BgpUpdateMessage)
-        if (matchStringArray(withdrawnPrefixes, operator, value)) return true
+        if (matchPrefixes(withdrawnPrefixes, operator, value)) return true
       }
       return false
 
@@ -701,34 +703,22 @@ function getLargeCommunities(msg: BgpUpdateMessage): string[] {
   )
 }
 
-function getNlriPrefixes(msg: BgpUpdateMessage): string[] {
-  const prefixes: string[] = []
-  // IPv4 NLRI
-  for (const p of msg.nlri) {
-    prefixes.push(`${p.prefix}/${p.length}`)
-  }
+function getNlriPrefixes(msg: BgpUpdateMessage): BgpPrefix[] {
+  const prefixes: BgpPrefix[] = [...msg.nlri]
   // MP_REACH_NLRI for IPv6
   const mpAttr = msg.pathAttributes.find((a) => a.parsed?.type === 'MP_REACH_NLRI')
   if (mpAttr?.parsed && mpAttr.parsed.type === 'MP_REACH_NLRI') {
-    for (const p of (mpAttr.parsed as MpReachNlriAttribute).nlri) {
-      prefixes.push(`${p.prefix}/${p.length}`)
-    }
+    prefixes.push(...(mpAttr.parsed as MpReachNlriAttribute).nlri)
   }
   return prefixes
 }
 
-function getWithdrawnPrefixes(msg: BgpUpdateMessage): string[] {
-  const prefixes: string[] = []
-  // IPv4 Withdrawn
-  for (const p of msg.withdrawnRoutes) {
-    prefixes.push(`${p.prefix}/${p.length}`)
-  }
+function getWithdrawnPrefixes(msg: BgpUpdateMessage): BgpPrefix[] {
+  const prefixes: BgpPrefix[] = [...msg.withdrawnRoutes]
   // MP_UNREACH_NLRI for IPv6
   const mpAttr = msg.pathAttributes.find((a) => a.parsed?.type === 'MP_UNREACH_NLRI')
   if (mpAttr?.parsed && mpAttr.parsed.type === 'MP_UNREACH_NLRI') {
-    for (const p of (mpAttr.parsed as MpUnreachNlriAttribute).withdrawnRoutes) {
-      prefixes.push(`${p.prefix}/${p.length}`)
-    }
+    prefixes.push(...(mpAttr.parsed as MpUnreachNlriAttribute).withdrawnRoutes)
   }
   return prefixes
 }
@@ -736,6 +726,43 @@ function getWithdrawnPrefixes(msg: BgpUpdateMessage): string[] {
 // =============================================================================
 // Matching functions
 // =============================================================================
+
+/**
+ * Matches an IP address field, honouring CIDR on the right-hand side.
+ *
+ * `src_ip = 10.0.0.0/8` asks whether the address falls inside that block, which
+ * is what the same expression means once it reaches DuckDB. A plain address is
+ * still a plain string comparison.
+ */
+function matchIpAddress(fieldValue: string, operator: Operator, queryValue: FilterValue): boolean {
+  const query = parsePrefix(String(queryValue))
+  if (!query?.hasMask) return matchString(fieldValue, operator, queryValue)
+
+  const address = parsePrefix(fieldValue)
+  const inside = address !== null && contains(query, address)
+  return operator === '=' || operator === 'contains' ? inside : !inside
+}
+
+/**
+ * Matches announced or withdrawn routes against a prefix search.
+ *
+ * Same question the route analysis screen asks: a query with a mask selects the
+ * routes inside it, a bare address selects the routes that cover it. Text that
+ * is not an address at all stays a substring search over `prefix/length`.
+ */
+function matchPrefixes(prefixes: BgpPrefix[], operator: Operator, queryValue: FilterValue): boolean {
+  const query = parsePrefix(String(queryValue))
+  if (!query) {
+    return matchStringArray(prefixes.map(formatPrefix), operator, queryValue)
+  }
+
+  const hit = prefixes.some((prefix) => {
+    const route = parseBgpPrefix(prefix)
+    if (!route) return false
+    return query.hasMask ? contains(query, route) : contains(route, query)
+  })
+  return operator === '=' || operator === 'contains' ? hit : !hit
+}
 
 function matchString(fieldValue: string, operator: Operator, queryValue: FilterValue): boolean {
   const queryStr = String(queryValue).toLowerCase()
@@ -1103,10 +1130,10 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
           values.community.add(c) // Merge large communities into community
         }
         for (const p of getNlriPrefixes(updateMsg)) {
-          values.prefix.add(p)
+          values.prefix.add(formatPrefix(p))
         }
         for (const p of updateMsg.withdrawnRoutes) {
-          values.withdrawn.add(`${p.prefix}/${p.length}`)
+          values.withdrawn.add(formatPrefix(p))
         }
       }
     }

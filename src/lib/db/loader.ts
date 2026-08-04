@@ -3,6 +3,7 @@
  */
 import type { AsyncDuckDBConnection } from '@duckdb/duckdb-wasm'
 import { getConnection, getDatabase, resetDatabase } from './database'
+import { addressBitKey, bgpPrefixBitKey } from '../net/prefix'
 import type {
   BgpPacket,
   BgpMessage,
@@ -73,6 +74,8 @@ async function insertPackets(
     timestamp: string
     src_ip: string
     dst_ip: string
+    src_ip_bits: string | null
+    dst_ip_bits: string | null
     src_port: number
     dst_port: number
     raw_data_base64: string
@@ -142,6 +145,7 @@ async function insertPackets(
     message_id: number
     prefix: string
     prefix_length: number
+    prefix_bits: string | null
     afi: number
     safi: number
   }> = []
@@ -151,6 +155,7 @@ async function insertPackets(
     message_id: number
     prefix: string
     prefix_length: number
+    prefix_bits: string | null
     afi: number
     safi: number
   }> = []
@@ -179,6 +184,8 @@ async function insertPackets(
       timestamp: packet.timestamp.toISOString(),
       src_ip: packet.srcIp,
       dst_ip: packet.dstIp,
+      src_ip_bits: addressBitKey(packet.srcIp),
+      dst_ip_bits: addressBitKey(packet.dstIp),
       src_port: packet.srcPort,
       dst_port: packet.dstPort,
       raw_data_base64: uint8ArrayToBase64(packet.rawData),
@@ -391,6 +398,7 @@ function extractUpdateData(
     message_id: number
     prefix: string
     prefix_length: number
+    prefix_bits: string | null
     afi: number
     safi: number
   }>,
@@ -399,6 +407,7 @@ function extractUpdateData(
     message_id: number
     prefix: string
     prefix_length: number
+    prefix_bits: string | null
     afi: number
     safi: number
   }>,
@@ -447,6 +456,7 @@ function extractUpdateData(
           message_id: messageId,
           prefix: prefix.prefix,
           prefix_length: prefix.length,
+          prefix_bits: bgpPrefixBitKey(prefix),
           afi: mp.afi,
           safi: mp.safi,
         })
@@ -462,6 +472,7 @@ function extractUpdateData(
           message_id: messageId,
           prefix: prefix.prefix,
           prefix_length: prefix.length,
+          prefix_bits: bgpPrefixBitKey(prefix),
           afi: mp.afi,
           safi: mp.safi,
         })
@@ -476,6 +487,7 @@ function extractUpdateData(
       message_id: messageId,
       prefix: prefix.prefix,
       prefix_length: prefix.length,
+      prefix_bits: bgpPrefixBitKey(prefix),
       afi: 1,
       safi: 1,
     })
@@ -488,6 +500,7 @@ function extractUpdateData(
       message_id: messageId,
       prefix: prefix.prefix,
       prefix_length: prefix.length,
+      prefix_bits: bgpPrefixBitKey(prefix),
       afi: 1,
       safi: 1,
     })
