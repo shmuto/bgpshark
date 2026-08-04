@@ -6,9 +6,9 @@ import { BackToList, PaneDivider } from '../components/common'
 import { useSplitPane } from '../hooks/useSplitPane'
 import type { BgpPrefix, BgpUpdateMessage } from '../lib/bgp/types'
 import {
-  contains,
   equals,
   formatPrefix,
+  overlaps,
   parseBgpPrefix,
   parsePrefix,
   type ParsedPrefix,
@@ -261,11 +261,13 @@ export function RoutesPage() {
         return prefixStats.filter(stat => {
           if (!stat.parsed) return false
           if (!includeSubnets) return equals(search.prefix, stat.parsed)
-          // A query carrying a mask asks for everything inside it; a bare address
-          // asks which announcements cover that address.
-          return search.prefix.hasMask
-            ? contains(search.prefix, stat.parsed)
-            : contains(stat.parsed, search.prefix)
+          // The query names a block of addresses, and every route touching that
+          // block is an answer: the more specific ones inside it and the less
+          // specific ones carrying it. Matching only downwards hid the
+          // 10.30.0.0/16 that a search for 10.30.0.0/24 is asking about, and
+          // made 10.0.13.1/32 find nothing where a bare 10.0.13.1 found its
+          // covering route.
+          return overlaps(search.prefix, stat.parsed)
         })
 
       case 'text':

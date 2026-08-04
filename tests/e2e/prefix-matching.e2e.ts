@@ -90,6 +90,13 @@ test.describe('prefix search on the route screen', () => {
     expect(await search(page, 'AS65001')).toBeGreaterThan(0)
   })
 
+  test('a block inside an announcement finds the route carrying it', async ({ page }) => {
+    // 10.0.12.0/28 is announced by nobody, but it lives inside 10.0.12.0/24,
+    // which is the answer a user searching for that block is after.
+    expect(await search(page, '10.0.12.0/28')).toBeGreaterThan(0)
+    await expect(page.getByText('10.0.12.0/24')).toBeVisible()
+  })
+
   test('Include subnets changes the answer', async ({ page }) => {
     await search(page, '10.0.0.0/8')
     // Nothing announces a literal 10.0.0.0/8, so exact match finds nothing.

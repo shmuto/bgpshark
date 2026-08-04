@@ -135,6 +135,18 @@ export function contains(outer: ParsedPrefix, inner: ParsedPrefix): boolean {
   return outer.bits >> shift === inner.bits >> shift
 }
 
+/**
+ * True when the two prefixes share address space, whichever way round they are.
+ *
+ * Containment alone is the wrong question for a search box: 10.30.0.0/24 is
+ * carried by an announced 10.30.0.0/16, so a user searching for that block
+ * expects to be told about the route covering it even though the route is not
+ * *inside* what they typed.
+ */
+export function overlaps(a: ParsedPrefix, b: ParsedPrefix): boolean {
+  return contains(a, b) || contains(b, a)
+}
+
 /** True for the same network address *and* the same mask length. */
 export function equals(a: ParsedPrefix, b: ParsedPrefix): boolean {
   return a.family === b.family && a.length === b.length && a.bits === b.bits

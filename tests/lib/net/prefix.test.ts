@@ -3,6 +3,7 @@ import {
   contains,
   equals,
   formatPrefix,
+  overlaps,
   parseBgpPrefix,
   parsePrefix,
 } from '../../../src/lib/net/prefix'
@@ -84,6 +85,26 @@ describe('contains', () => {
 
   test('does not mix address families', () => {
     expect(contains(p('::/0'), p('10.0.0.0/8'))).toBe(false)
+  })
+})
+
+describe('overlaps', () => {
+  test('holds whichever prefix is the more specific one', () => {
+    expect(overlaps(p('10.30.0.0/24'), p('10.30.0.0/16'))).toBe(true)
+    expect(overlaps(p('10.30.0.0/16'), p('10.30.0.0/24'))).toBe(true)
+  })
+
+  test('disjoint blocks of the same size never overlap', () => {
+    expect(overlaps(p('10.30.0.0/16'), p('10.31.0.0/16'))).toBe(false)
+  })
+
+  test('a bare address and its /32 ask the same question', () => {
+    expect(overlaps(p('10.0.12.7'), p('10.0.12.0/24'))).toBe(true)
+    expect(overlaps(p('10.0.12.7/32'), p('10.0.12.0/24'))).toBe(true)
+  })
+
+  test('does not mix address families', () => {
+    expect(overlaps(p('::/0'), p('10.0.0.0/8'))).toBe(false)
   })
 })
 
