@@ -11,6 +11,11 @@ playwright-report
 # TypeScript
 tsconfig.tsbuildinfo
 
+# Nix
+result
+result-*
+.direnv
+
 # Editor
 .vscode
 .idea

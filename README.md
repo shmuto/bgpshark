@@ -31,6 +31,9 @@ bun install
 bun run dev        # http://localhost:5173/bgpshark/
 ```
 
+On Nix, `nix develop` gets you Bun, Node and a working Playwright browser in one
+step — see [On Nix](#on-nix).
+
 Other scripts:
 
 ```bash
@@ -60,12 +63,38 @@ bun run test:e2e --ui               # pick through them interactively
 bun run test:e2e layout             # one file
 ```
 
-### On NixOS
+### On Nix
 
-The browsers Playwright downloads are dynamically linked against libraries a Nix
-system does not put where they expect, so they fail to start. Use the build from
-nixpkgs instead, and match the npm package to the driver version it ships
-(`@playwright/test` is pinned to 1.61.1 here for that reason):
+`flake.nix` provides a dev shell with Bun, Node and — on Linux — a Playwright
+browser set that actually runs:
+
+```bash
+nix develop           # or `direnv allow`, using the .envrc
+bun install
+bun run dev
+bun run test:e2e      # no `playwright install` step needed
+```
+
+The shell exports `PLAYWRIGHT_BROWSERS_PATH` at the nixpkgs browsers and skips
+both the browser download during `bun install` and Playwright's host-requirement
+check, which does not recognise a Nix system.
+
+That matters because the browsers Playwright downloads are dynamically linked
+against libraries a Nix system does not put where they expect, so they fail to
+start. The nixpkgs build works, but only with the driver version it was built
+for — so the nixpkgs revision in `flake.nix` and the `@playwright/test` pin in
+`package.json` (1.61.1) are two halves of one decision. **Bump them together**:
+point the flake input at a revision, check what it ships, and match the npm
+package to it.
+
+```bash
+nix eval github:NixOS/nixpkgs/<rev>#playwright-driver.version   # what a revision ships
+```
+
+If they drift, `nix develop` warns on entry and Playwright later reports that it
+cannot find a browser build it expects.
+
+Without flakes, the older route still works:
 
 ```bash
 export PLAYWRIGHT_BROWSERS_PATH=$(nix-build '<nixpkgs>' -A playwright-driver.browsers --no-out-link)
@@ -76,9 +105,14 @@ bun run test:e2e
 (`nix-shell -p playwright-driver.browsers` is not enough on its own — it puts the
 browsers in the store without pointing `PLAYWRIGHT_BROWSERS_PATH` at them.)
 
-If the versions drift apart, Playwright will report that it cannot find a
-browser build it expects; check `nix-instantiate --eval -E '(import <nixpkgs>
-{}).playwright-driver.version'` and pin `@playwright/test` to match.
+The flake stops at a dev shell: there is no package output, because nixpkgs has
+no builder for a `bun.lock` and a from-scratch offline build would mean
+maintaining a second, converted lockfile. `bun run build` inside the shell is
+the build.
+
+There is no committed `flake.lock` either — the one input is pinned to an exact
+revision, so the shell is already reproducible without it. The lock Nix writes
+on first use is yours to keep or delete.
 
 ## Filter syntax
 
