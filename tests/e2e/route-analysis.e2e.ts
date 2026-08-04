@@ -102,9 +102,9 @@ test.describe('what you are looking at is in the URL', () => {
     await expect(page).toHaveURL(/prefix=/)
   })
 
-  test('the subnets toggle is', async ({ page }) => {
-    await page.getByLabel('Include subnets').click()
-    await expect(page).toHaveURL(/subnets=off/)
+  test('the match direction is', async ({ page }) => {
+    await page.getByRole('radio', { name: 'Supernets', exact: true }).click()
+    await expect(page).toHaveURL(/match=supernets/)
   })
 
   test('a link restores all of it in a session that never set it', async ({ page, context }) => {

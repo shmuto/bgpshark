@@ -90,18 +90,37 @@ test.describe('prefix search on the route screen', () => {
     expect(await search(page, 'AS65001')).toBeGreaterThan(0)
   })
 
-  test('a block inside an announcement finds the route carrying it', async ({ page }) => {
-    // 10.0.12.0/28 is announced by nobody, but it lives inside 10.0.12.0/24,
-    // which is the answer a user searching for that block is after.
-    expect(await search(page, '10.0.12.0/28')).toBeGreaterThan(0)
+  /** Picks a match direction and waits until the list has been recomputed. */
+  const setMatch = async (page: import('@playwright/test').Page, name: string) => {
+    const radio = page.getByRole('radio', { name, exact: true })
+    await radio.click()
+    await expect(radio).toBeChecked()
+    await page.waitForTimeout(400)
+    return prefixCount(page)
+  }
+
+  test('Supernets finds the route carrying a block nobody announces', async ({ page }) => {
+    // 10.0.12.0/28 is announced by nobody, but it lives inside 10.0.12.0/24.
+    // Searching downwards can never say so, which is what the direction is for.
+    expect(await search(page, '10.0.12.0/28')).toBe(0)
+
+    expect(await setMatch(page, 'Supernets')).toBeGreaterThan(0)
     await expect(page.getByText('10.0.12.0/24')).toBeVisible()
   })
 
-  test('Include subnets changes the answer', async ({ page }) => {
+  test('Exact match is the prefix and mask length typed', async ({ page }) => {
     await search(page, '10.0.0.0/8')
     // Nothing announces a literal 10.0.0.0/8, so exact match finds nothing.
-    await page.getByLabel('Include subnets').click()
-    await expect(page.getByText('0 prefixes')).toBeVisible()
+    expect(await setMatch(page, 'Exact')).toBe(0)
+  })
+
+  test('the direction survives a reload', async ({ page }) => {
+    await search(page, '10.0.12.0/28')
+    const found = await setMatch(page, 'Supernets')
+
+    await page.reload({ waitUntil: 'networkidle' })
+    await expect(page.getByRole('radio', { name: 'Supernets', exact: true })).toBeChecked()
+    expect(await prefixCount(page)).toBe(found)
   })
 
   test('the Search button is what commits the query', async ({ page }) => {
