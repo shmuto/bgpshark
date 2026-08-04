@@ -65,8 +65,21 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      # Same browser cache and key as ci.yml. Caches reach a branch from the
+      # default branch and not the other way round, so it is this job — the one
+      # that runs on main — whose download the pull requests then restore.
+      - name: Note the Playwright version
+        id: playwright
+        run: echo "version=$(bunx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
       - name: Install Chromium
-        run: bunx playwright install --with-deps chromium
+        run: bunx playwright install --with-deps --only-shell chromium
 
       - name: Run end-to-end tests
         run: bun run test:e2e
