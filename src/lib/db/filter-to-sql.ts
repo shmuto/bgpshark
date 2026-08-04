@@ -3,6 +3,7 @@
  */
 import type { Expression, Comparison, Operator, FilterValue } from '../filter/parser'
 import { normalizeFieldName } from '../filter/parser'
+import { bitKey, parsePrefix } from '../net/prefix'
 
 /**
  * Convert a filter expression to SQL WHERE clause
@@ -155,25 +156,21 @@ function coerceNumericValue(value: FilterValue): FilterValue {
  */
 function ipFieldSql(column: string, operator: Operator, value: FilterValue): string {
   const strValue = String(value)
+  const query = parsePrefix(strValue)
 
-  // Check if it's a prefix (e.g., 10.0.0.0/8)
-  if (strValue.includes('/')) {
-    // Prefix match - use LIKE for simplicity (DuckDB has inet type but we store as VARCHAR)
-    const [network, prefixLen] = strValue.split('/')
-    const octets = network.split('.')
-    const maskBits = parseInt(prefixLen, 10)
-
-    // Calculate how many full octets to match
-    const fullOctets = Math.floor(maskBits / 8)
-    const matchPrefix = escapeString(octets.slice(0, fullOctets).join('.'))
-
+  // A CIDR asks whether the address falls inside it. This used to be a LIKE on
+  // whole octets, which rounded the mask down to a byte boundary — /12 matched
+  // all of /8 — and could not express IPv6 at all. The precomputed bit key
+  // answers both exactly.
+  if (query?.hasMask) {
+    const key = bitKey(query)
     switch (operator) {
       case '=':
       case 'contains':
-        return `p.${column} LIKE '${matchPrefix}%'`
+        return `p.${column}_bits LIKE '${key}%'`
       case '!=':
       case 'not contains':
-        return `p.${column} NOT LIKE '${matchPrefix}%'`
+        return `(p.${column}_bits IS NULL OR p.${column}_bits NOT LIKE '${key}%')`
     }
   }
 
@@ -433,66 +430,43 @@ function largeCommunitySql(operator: Operator, value: FilterValue): string {
 
 /**
  * SQL for prefix search (nlri or withdrawn)
+ *
+ * The routes an expression selects are the same ones the route analysis screen
+ * shows for the same text, because both ask `lib/net/prefix` the question:
+ * `10.0.0.0/8` selects the routes inside it, and a bare address selects the
+ * routes that cover it.
  */
 function prefixSql(table: 'nlri' | 'withdrawn', operator: Operator, value: FilterValue): string {
   const strValue = String(value)
+  const query = parsePrefix(strValue)
 
-  // Handle prefix/length format (e.g., "10.0.0.0/8")
-  if (strValue.includes('/')) {
-    const escaped = escapeString(strValue)
-    const escapedNetwork = escapeString(strValue.split('/')[0])
-    switch (operator) {
-      case '=':
-        return `EXISTS (
-          SELECT 1 FROM ${table} t
-          JOIN messages m ON t.message_id = m.id
-          WHERE m.frame_index = p.frame_index
-          AND t.prefix || '/' || t.prefix_length = '${escaped}'
-        )`
-      case '!=':
-        return `NOT EXISTS (
-          SELECT 1 FROM ${table} t
-          JOIN messages m ON t.message_id = m.id
-          WHERE m.frame_index = p.frame_index
-          AND t.prefix || '/' || t.prefix_length = '${escaped}'
-        )`
-      case 'contains':
-        // Match if query is contained in or contains the prefix
-        return `EXISTS (
-          SELECT 1 FROM ${table} t
-          JOIN messages m ON t.message_id = m.id
-          WHERE m.frame_index = p.frame_index
-          AND (t.prefix || '/' || t.prefix_length LIKE '%${escaped}%'
-               OR t.prefix LIKE '${escapedNetwork}%')
-        )`
-      case 'not contains':
-        return `NOT EXISTS (
-          SELECT 1 FROM ${table} t
-          JOIN messages m ON t.message_id = m.id
-          WHERE m.frame_index = p.frame_index
-          AND (t.prefix || '/' || t.prefix_length LIKE '%${escaped}%'
-               OR t.prefix LIKE '${escapedNetwork}%')
-        )`
-    }
+  let condition: string
+  if (query?.hasMask) {
+    // A mask asks for everything inside it.
+    condition = `t.prefix_bits LIKE '${bitKey(query)}%'`
+  } else if (query) {
+    // A bare address asks which announcements cover it, so the comparison runs
+    // the other way: the route's bits have to be a prefix of the address's.
+    condition = `'${bitKey(query)}' LIKE t.prefix_bits || '%'`
+  } else {
+    // Not an address — a half-typed one, say. Fall back to searching the text.
+    condition = `t.prefix || '/' || t.prefix_length LIKE '%${escapeString(strValue)}%'`
   }
 
-  // Just IP address without length
-  const escaped = escapeString(strValue)
+  const exists = `EXISTS (
+    SELECT 1 FROM ${table} t
+    JOIN messages m ON t.message_id = m.id
+    WHERE m.frame_index = p.frame_index
+    AND ${condition}
+  )`
+
   switch (operator) {
     case '=':
     case 'contains':
-      return `EXISTS (
-        SELECT 1 FROM ${table} t
-        JOIN messages m ON t.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND t.prefix LIKE '${escaped}%'
-      )`
+      return exists
     case '!=':
     case 'not contains':
-      return `NOT EXISTS (
-        SELECT 1 FROM ${table} t
-        JOIN messages m ON t.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND t.prefix LIKE '${escaped}%'
-      )`
+      return `NOT ${exists}`
   }
 }
 
