@@ -7,6 +7,7 @@ import { useSplitPane } from '../hooks/useSplitPane'
 import type { BgpMessage, BgpOpenMessage, BgpUpdateMessage, BgpNotificationMessage } from '../lib/bgp/types'
 import { extractNeighbors, getLatestOpen, type OpenMessageRecord } from '../lib/bgp/neighbor'
 import { CapabilityDiff } from '../components/neighbor'
+import { formatTimeOfDayUtc } from '../lib/format-time'
 
 // Display names for the messageSummary keys; a bare uppercase() turns
 // routeRefresh into ROUTEREFRESH.
@@ -766,7 +767,7 @@ export function NeighborsPage() {
                             {msg.srcIp} → {msg.dstIp}
                           </span>
                           <span className="text-xs text-dim">
-                            {formatTime(msg.timestamp)}
+                            {formatTimeOfDayUtc(msg.timestamp)}
                           </span>
                         </div>
                         <div className="text-xs text-muted mt-1 ml-14">
@@ -847,7 +848,7 @@ export function NeighborsPage() {
                               }`}
                             >
                               <td className="px-4 py-1.5 font-mono text-muted">
-                                {formatTime(msg.timestamp)}
+                                {formatTimeOfDayUtc(msg.timestamp)}
                               </td>
                               <td className="px-4 py-1.5 font-mono text-xs text-muted">
                                 {msg.srcIp} → {msg.dstIp}
@@ -980,11 +981,3 @@ function getMessageSummary(msg: BgpMessage): string {
   }
 }
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
-}
