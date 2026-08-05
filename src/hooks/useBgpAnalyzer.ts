@@ -9,6 +9,8 @@ interface AnalyzerState {
   fileName: string | null
   packets: BgpPacket[]
   allPackets: GenericPacket[]
+  /** The source capture's link type, needed to write a slice of it back out. */
+  linkType: number | null
   selectedPacketIndex: number | null
   warnings: string[]
   error: string | null
@@ -28,6 +30,7 @@ const initialState: AnalyzerState = {
   fileName: null,
   packets: [],
   allPackets: [],
+  linkType: null,
   selectedPacketIndex: null,
   warnings: [],
   error: null,
@@ -106,6 +109,7 @@ export function useBgpAnalyzer() {
           fileName,
           packets: bgpResult.packets,
           allPackets: pcapResult.allPackets,
+          linkType: pcapResult.globalHeader.linkType,
           selectedPacketIndex: null,
           warnings: [...pcapResult.warnings, ...bgpResult.warnings, ...dbWarnings],
           error: null,

@@ -96,6 +96,12 @@ export interface GenericPacket {
   timestamp: Date
   capturedLength: number
   originalLength: number
+  /**
+   * The frame exactly as it was captured, so a filtered set of packets can be
+   * written back out as a pcap. This is a view into the source file rather
+   * than a copy, so holding it costs nothing beyond the view itself.
+   */
+  frameBytes: Uint8Array
   srcIp: string
   dstIp: string
   protocol: 'TCP' | 'UDP' | 'ICMP' | 'OTHER'

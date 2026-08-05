@@ -17,7 +17,7 @@ import type {
   CommunitiesAttribute,
   LargeCommunitiesAttribute,
 } from '../lib/bgp/types'
-import type { GenericPacket } from '../lib/pcap'
+import { writePcap, sliceFileName, type GenericPacket } from '../lib/pcap'
 import { FILTER_FIELDS, type FilterFieldName } from '../lib/filter/parser'
 
 const MESSAGE_TYPE_BADGE_COLORS: Record<string, string> = {
@@ -39,7 +39,7 @@ interface FilterRule {
 }
 
 export function MessagesPage() {
-  const { packets, allPackets, selectedPacketIndex, selectPacket } = useApp()
+  const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   const [showAllPackets, setShowAllPackets] = useState(false)
@@ -165,6 +165,30 @@ export function MessagesPage() {
       }))
     }
   }, [filteredPackets, allPackets, showAllPackets])
+
+  /**
+   * Save whatever the list currently shows as a pcap.
+   *
+   * Frames are pulled from `allPackets` rather than from the displayed rows so
+   * they come out in capture order with their original bytes, whichever view
+   * built the list. What leaves here is a real capture: the same frames, under
+   * the same link type, readable by Wireshark and tcpdump.
+   */
+  const exportPcap = useCallback(() => {
+    if (linkType === null) return
+
+    const wanted = new Set(displayPackets.map((dp) => dp.packet.frameIndex))
+    const frames = allPackets.filter((p) => wanted.has(p.frameIndex))
+    if (frames.length === 0) return
+
+    const bytes = writePcap(frames, linkType)
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.tcpdump.pcap' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = sliceFileName(fileName)
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [displayPackets, allPackets, linkType, fileName])
 
   const selectedDisplayPacket = selectedPacketIndex !== null ? displayPackets[selectedPacketIndex] : null
   const selectedBgpPacket = selectedDisplayPacket?.kind === 'bgp' ? selectedDisplayPacket.packet : null
@@ -597,6 +621,15 @@ export function MessagesPage() {
             <span className="text-critical" title={parseErrors.map(e => e.message).join('; ')}>
               {parseErrors[0]?.message}
             </span>
+          )}
+          {displayPackets.length > 0 && linkType !== null && (
+            <button
+              onClick={exportPcap}
+              title="Save the packets listed here as a pcap file"
+              className="ml-auto text-accent hover:text-accent-hover hover:underline"
+            >
+              ⬇ Export {displayPackets.length} packets as pcap
+            </button>
           )}
         </div>
       </div>

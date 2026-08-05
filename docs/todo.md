@@ -115,11 +115,27 @@ Neighbors の `?router=` に倣い、Routes も検索語・選択 Prefix・ソ�
 タイプ別件数バッジ(クリックでフィルタ)を実装。SQL 結果の CSV エクスポートは既存実装が
 あった(レビュー時の見落とし)。テーマ切替も適切な `aria-label` 付きボタンで修正不要だった。
 
+### フィルタ結果の pcap 切り出し(#23 の残り)
+
+Messages 画面のステータスバーから、いま一覧に出ているパケットをそのまま pcap に
+書き出せるようにした。BGP Only / All Packets のどちらでも、フィルタ結果でも動く。
+
+- `lib/pcap/writer.ts` — 純粋関数の pcap ライタ。出力は常にクラシック pcap
+  (リトルエンディアン)。元が pcapng でも、どのツールでも読める形式に寄せる
+- リンクタイプは元キャプチャから引き継ぐ(Ethernet/SLL を取り違えるとデコードが壊れる)
+- フレーム実バイトは `GenericPacket.frameBytes` として保持。`BinaryReader.readBytes()` が
+  コピーではなくビューを返すので、保持コストはビューオブジェクトだけ
+- タイムスタンプはミリ秒精度。パース時点で `Date` に落ちているため、
+  ナノ秒 pcapng のサブミリ秒は失われる(順序と間隔は保たれる)
+- テストは書き出し → `parsePcap` で読み戻すラウンドトリップで検証
+
+実機確認: サンプルを `type = NOTIFICATION` で 9 件に絞ってエクスポート → 生成された
+`sample-filtered.pcap` を再読込して同じ 9 件が復元。`file(1)` も
+`pcap capture file, microsecond ts (little-endian) - version 2.4 (Ethernet, ...)` と認識。
+
 ## 未対応
 
-- フィルタ結果を pcap として切り出すエクスポート(#23 の残り)。エスカレーション時に
-  ベンダへ渡す用途。フレームの元バイト列は `rawData` として保持しているので、
-  pcap ヘッダを付けて Blob ダウンロードするだけで実装できるはず。
+（なし）
 
 ### 2026-08-04 BGP エンジニア観点の実機レビュー(原文)
 

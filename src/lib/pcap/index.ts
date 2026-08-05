@@ -1,4 +1,5 @@
 export { BinaryReader } from './reader'
 export { parsePcap } from './parser'
 export { isPcapng, parsePcapng } from './pcapng-parser'
+export { writePcap, sliceFileName, type ExportableFrame } from './writer'
 export * from './types'
