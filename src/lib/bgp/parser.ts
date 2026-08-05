@@ -4,12 +4,14 @@ import {
   type BgpPacket,
   type BgpMessage,
   type BgpMessageHeader,
+  type BgpOpenMessage,
   type BgpParseResult,
   BgpMessageType,
 } from './types'
 import { parseOpenMessage } from './open'
 import { parseNotificationMessage } from './notification'
 import { parseUpdateMessage } from './update'
+import { BgpSessionTracker, endpointKey, type UpdateDecoding } from './session'
 import { getAfiName, getSafiName } from './constants'
 const updateParseWarnings: string[] = []
 
@@ -74,6 +76,10 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
   const packets: BgpPacket[] = []
   const warnings: string[] = []
   const flowBuffers = new Map<string, Uint8Array>()
+  // What each session negotiated in its OPENs. Packets are walked in capture
+  // order, so by the time UPDATEs arrive the OPENs that govern how to read
+  // them have already been seen.
+  const sessions = new BgpSessionTracker()
 
   for (let i = 0; i < rawPackets.length; i++) {
     const raw = rawPackets[i]
@@ -85,7 +91,12 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
       const payload =
         leftover && leftover.length > 0 ? concatBytes(leftover, raw.tcpPayload) : raw.tcpPayload
 
-      const { messages, remainder } = parseBgpMessages(payload, packetWarnings, i + 1)
+      const from = endpointKey(raw.srcIp, raw.srcPort)
+      const to = endpointKey(raw.dstIp, raw.dstPort)
+      const { messages, remainder } = parseBgpMessages(payload, packetWarnings, i + 1, {
+        decoding: () => sessions.decodingFor(from, to),
+        observeOpen: (open) => sessions.observeOpen(from, open),
+      })
 
       if (remainder.length > BGP_MAX_MESSAGE_LENGTH) {
         packetWarnings.push(
@@ -149,10 +160,21 @@ interface BgpMessagesResult {
 /**
  * Parse multiple BGP messages from a TCP payload
  */
+/**
+ * How a payload's messages connect back to the session they belong to: the
+ * decoding rules in force for this direction, and somewhere to report an OPEN
+ * so that later messages are read the way the session agreed.
+ */
+interface SessionContext {
+  decoding: () => UpdateDecoding
+  observeOpen: (open: BgpOpenMessage) => void
+}
+
 function parseBgpMessages(
   payload: Uint8Array,
   warnings: string[],
-  packetIndex: number
+  packetIndex: number,
+  session: SessionContext
 ): BgpMessagesResult {
   const messages: BgpMessage[] = []
   const reader = new BinaryReader(payload, false) // BGP uses network byte order (big-endian)
@@ -198,8 +220,11 @@ function parseBgpMessages(
     const messageReader = reader.subReader(messageBodyLength)
 
     try {
-      const message = parseBgpMessageBody(header.type, messageReader)
+      const message = parseBgpMessageBody(header.type, messageReader, session.decoding())
       if (message) {
+        // Registered as it is read, so an OPEN and an UPDATE arriving in the
+        // same segment are still read in the right order.
+        if (message.type === 'OPEN') session.observeOpen(message)
         messages.push(message)
       }
     } catch (e) {
@@ -249,7 +274,11 @@ function parseBgpHeader(reader: BinaryReader): BgpMessageHeader {
 /**
  * Parse BGP message body based on type
  */
-function parseBgpMessageBody(type: number, reader: BinaryReader): BgpMessage | null {
+function parseBgpMessageBody(
+  type: number,
+  reader: BinaryReader,
+  decoding: UpdateDecoding
+): BgpMessage | null {
   switch (type) {
     case BgpMessageType.OPEN:
       return parseOpenMessage(reader)
@@ -258,7 +287,7 @@ function parseBgpMessageBody(type: number, reader: BinaryReader): BgpMessage | n
       // parseUpdateMessage expects raw bytes, not a BinaryReader
       const updateData = reader.readBytes(reader.remaining())
       updateParseWarnings.length = 0 // Clear previous warnings
-      return parseUpdateMessage(updateData, updateParseWarnings)
+      return parseUpdateMessage(updateData, updateParseWarnings, decoding)
     }
 
     case BgpMessageType.NOTIFICATION:
