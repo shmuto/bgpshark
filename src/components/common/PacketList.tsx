@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { BgpMessage, BgpPacket, BgpUpdateMessage } from '../../lib/bgp/types'
+import { endOfRibMarker, countUpdatePrefixes } from '../../lib/bgp/update'
 import type { GenericPacket } from '../../lib/pcap'
 
 /**
@@ -266,8 +267,15 @@ function getMessageSummary(message: BgpMessage): string {
       const as = message.fourByteAs ?? message.myAs
       return `AS${as} Hold=${message.holdTime}`
     }
-    case 'UPDATE':
-      return `WR=${message.withdrawnRoutesLength} PA=${message.totalPathAttrLength}`
+    case 'UPDATE': {
+      const eor = endOfRibMarker(message)
+      if (eor) return `End-of-RIB (${eor})`
+      const { announced, withdrawn } = countUpdatePrefixes(message)
+      const parts = []
+      if (announced > 0) parts.push(`${announced} announced`)
+      if (withdrawn > 0) parts.push(`${withdrawn} withdrawn`)
+      return parts.join(', ') || 'empty'
+    }
     case 'NOTIFICATION':
       return `${message.errorCodeName}/${message.errorSubcodeName}`
     case 'KEEPALIVE':

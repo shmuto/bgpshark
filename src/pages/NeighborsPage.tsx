@@ -8,6 +8,16 @@ import type { BgpMessage, BgpOpenMessage, BgpUpdateMessage, BgpNotificationMessa
 import { extractNeighbors, getLatestOpen, type OpenMessageRecord } from '../lib/bgp/neighbor'
 import { CapabilityDiff } from '../components/neighbor'
 
+// Display names for the messageSummary keys; a bare uppercase() turns
+// routeRefresh into ROUTEREFRESH.
+const MESSAGE_TYPE_LABELS: Record<string, string> = {
+  open: 'OPEN',
+  update: 'UPDATE',
+  notification: 'NOTIFICATION',
+  keepalive: 'KEEPALIVE',
+  routeRefresh: 'ROUTE_REFRESH',
+}
+
 // Group by Router ID
 interface RouterGroup {
   routerId: string // Router ID or "unknown-{ip}" if no OPEN received
@@ -542,7 +552,7 @@ export function NeighborsPage() {
                 <tr className="text-left text-muted">
                   <th className="px-4 py-2 font-medium">Router ID / IP</th>
                   <th className="px-4 py-2 font-medium">AS</th>
-                  <th className="px-4 py-2 font-medium text-right">Msgs</th>
+                  <th className="px-4 py-2 font-medium text-right" title="Messages sent by this router">Msgs</th>
                   <th className="px-4 py-2 font-medium">Message Types</th>
                 </tr>
               </thead>
@@ -666,8 +676,12 @@ export function NeighborsPage() {
               <div className="grid grid-cols-2 gap-4">
                 {/* Message Summary */}
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
-                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-baseline justify-between gap-2">
                     <span className="text-sm font-medium text-strong">📊 Message Summary</span>
+                    {/* The overview table's "Msgs" counts what this router sent;
+                        this panel counts both directions of its sessions. Same
+                        router, different questions — say which one this is. */}
+                    <span className="text-xs text-muted">sent + received</span>
                   </div>
                   <div className="p-4">
                     {messageSummary && (
@@ -675,7 +689,7 @@ export function NeighborsPage() {
                         <tbody>
                           {Object.entries(messageSummary).map(([type, count]) => (
                             <tr key={type} className="border-b border-hair last:border-0">
-                              <td className="py-1 text-muted uppercase">{type}</td>
+                              <td className="py-1 text-muted">{MESSAGE_TYPE_LABELS[type] ?? type.toUpperCase()}</td>
                               <td className="py-1 text-right font-mono">{count}</td>
                             </tr>
                           ))}

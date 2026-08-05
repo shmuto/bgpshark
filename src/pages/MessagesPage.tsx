@@ -512,6 +512,24 @@ export function MessagesPage() {
           </div>
         )}
 
+        {/* A capture with traffic but no BGP would otherwise present as an
+            empty list, which reads as "nothing captured". Point at the view
+            that actually has the evidence. */}
+        {!showAllPackets && packets.length === 0 && allPackets.length > 0 && (
+          <div className="text-xs text-warning flex items-center gap-2">
+            <span>
+              ⚠️ No BGP messages in this capture, but it contains {allPackets.length} other packets
+              (TCP handshakes, resets, …).
+            </span>
+            <button
+              onClick={() => setShowAllPackets(true)}
+              className="text-accent hover:text-accent-hover underline"
+            >
+              Show all packets
+            </button>
+          </div>
+        )}
+
         {/* Status bar */}
         <div className="flex items-center justify-between text-xs text-muted">
           <span>
