@@ -3,6 +3,7 @@
  * for timeline visualization
  */
 import type { BgpPacket, BgpOpenMessage, BgpNotificationMessage } from './types'
+import { minMax } from '../range'
 
 export type SessionState = 'Idle' | 'Connect' | 'OpenSent' | 'OpenConfirm' | 'Established' | 'Down'
 
@@ -209,9 +210,11 @@ export function groupEventsBySession(events: SessionEvent[]): Map<string, Sessio
 export function getTimeRange(events: SessionEvent[]): { start: Date; end: Date } | null {
   if (events.length === 0) return null
 
-  const timestamps = events.map(e => e.timestamp.getTime())
+  const range = minMax(events.map(e => e.timestamp.getTime()))
+  if (!range) return null
+
   return {
-    start: new Date(Math.min(...timestamps)),
-    end: new Date(Math.max(...timestamps)),
+    start: new Date(range.min),
+    end: new Date(range.max),
   }
 }

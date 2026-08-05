@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext'
 import { extractNeighbors, getLatestOpen } from '../lib/bgp/neighbor'
 import type { BgpPacket, BgpNotificationMessage, BgpUpdateMessage, MpUnreachNlriAttribute } from '../lib/bgp/types'
 import type { GenericPacket } from '../lib/pcap'
+import { minMax } from '../lib/range'
 import {
   SummaryCards,
   AlertList,
@@ -264,8 +265,8 @@ function computeTimeline(packets: BgpPacket[]): TimelineData {
   }
 
   const timestamps = packets.map((p) => p.timestamp.getTime())
-  const startMs = Math.min(...timestamps)
-  const endMs = Math.max(...timestamps)
+  // packets is non-empty here, so minMax cannot return null.
+  const { min: startMs, max: endMs } = minMax(timestamps) ?? { min: 0, max: 0 }
   const span = Math.max(endMs - startMs, 1) // avoid divide-by-zero for single-packet or instant captures
 
   const buckets = Array.from({ length: TIMELINE_BUCKET_COUNT }, (_, i) => ({

@@ -13,6 +13,8 @@
  * nanosecond pcapng does not.
  */
 
+import { minMax } from '../range'
+
 const PCAP_MAGIC = 0xa1b2c3d4
 const GLOBAL_HEADER_LENGTH = 24
 const PACKET_HEADER_LENGTH = 16
@@ -45,10 +47,8 @@ export function writePcap(frames: ExportableFrame[], linkType: number): Uint8Arr
   const view = new DataView(out.buffer)
   let offset = 0
 
-  const snapLen = Math.max(
-    DEFAULT_SNAPLEN,
-    ...frames.map((frame) => frame.frameBytes.length)
-  )
+  const largestFrame = minMax(frames.map((frame) => frame.frameBytes.length))?.max ?? 0
+  const snapLen = Math.max(DEFAULT_SNAPLEN, largestFrame)
 
   // Global header
   view.setUint32(offset, PCAP_MAGIC, true)

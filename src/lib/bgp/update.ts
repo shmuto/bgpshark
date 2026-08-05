@@ -1,5 +1,6 @@
 import { BinaryReader } from '../pcap/reader'
 import { getAfiName, getSafiName } from './constants'
+import { DEFAULT_DECODING, afiSafiKey, type UpdateDecoding } from './session'
 import type {
   BgpUpdateMessage,
   BgpPrefix,
@@ -7,6 +8,9 @@ import type {
   ParsedPathAttribute,
   AsPathSegment,
 } from './types'
+
+const AS_PATH_TYPE_CODE = 2
+const AS4_PATH_TYPE_CODE = 17
 
 // Path Attribute Type Codes
 const PATH_ATTR_TYPES: Record<number, string> = {
@@ -28,14 +32,22 @@ const PATH_ATTR_TYPES: Record<number, string> = {
   32: 'LARGE_COMMUNITIES',
 }
 
-export function parseUpdateMessage(data: Uint8Array, warnings: string[]): BgpUpdateMessage {
+export function parseUpdateMessage(
+  data: Uint8Array,
+  warnings: string[],
+  decoding: UpdateDecoding = DEFAULT_DECODING
+): BgpUpdateMessage {
   const reader = new BinaryReader(data, false) // BGP uses network byte order (big-endian)
+
+  // The classic fields carry IPv4 unicast only; anything else travels in
+  // MP_REACH/MP_UNREACH, which name their own address family.
+  const ipv4Unicast = { afi: 1, addPath: decoding.addPath.has(afiSafiKey(1, 1)) }
 
   // Withdrawn Routes Length (2 bytes)
   const withdrawnRoutesLength = reader.readUint16()
 
   // Parse withdrawn routes
-  const withdrawnRoutes = parsePrefixes(reader, withdrawnRoutesLength, warnings)
+  const withdrawnRoutes = parsePrefixes(reader, withdrawnRoutesLength, warnings, ipv4Unicast)
 
   // Total Path Attribute Length (2 bytes)
   const totalPathAttrLength = reader.readUint16()
@@ -46,7 +58,7 @@ export function parseUpdateMessage(data: Uint8Array, warnings: string[]): BgpUpd
 
   while (reader.getPosition() < pathAttrEnd) {
     try {
-      const attr = parsePathAttribute(reader, warnings)
+      const attr = parsePathAttribute(reader, warnings, decoding)
       pathAttributes.push(attr)
     } catch (e) {
       warnings.push(`Failed to parse path attribute: ${e instanceof Error ? e.message : 'Unknown error'}`)
@@ -56,28 +68,84 @@ export function parseUpdateMessage(data: Uint8Array, warnings: string[]): BgpUpd
 
   // Parse NLRI (remaining bytes)
   const nlriLength = data.length - reader.getPosition()
-  const nlri = parsePrefixes(reader, nlriLength, warnings)
+  const nlri = parsePrefixes(reader, nlriLength, warnings, ipv4Unicast)
 
   return {
     type: 'UPDATE',
     withdrawnRoutesLength,
     withdrawnRoutes,
     totalPathAttrLength,
-    pathAttributes,
+    pathAttributes: reconcileAs4Path(pathAttributes),
     nlri,
   }
 }
 
-function parsePrefixes(reader: BinaryReader, length: number, _warnings: string[]): BgpPrefix[] {
+/** Longest prefix each family can have; anything above it is corruption. */
+const MAX_PREFIX_LENGTH: Record<number, number> = { 1: 32, 2: 128 }
+
+function maxPrefixLength(afi: number): number {
+  return MAX_PREFIX_LENGTH[afi] ?? 128
+}
+
+/**
+ * Read a run of NLRI entries.
+ *
+ * `addPath` says each entry is preceded by a 4-byte Path Identifier
+ * (RFC 7911), which is negotiated in the OPEN and invisible in the UPDATE —
+ * read the wrong way, a Path Identifier's leading bytes look like prefix
+ * lengths and the run decodes into routes nobody announced.
+ *
+ * Both the prefix length and the run's own bounds are checked, because a run
+ * that has gone wrong should say so rather than keep manufacturing prefixes:
+ * without the length check, a mis-decoded run happily yields 0.0.0.0/0.
+ */
+function parsePrefixes(
+  reader: BinaryReader,
+  length: number,
+  warnings: string[],
+  options: { afi?: number; addPath?: boolean } = {}
+): BgpPrefix[] {
+  const { afi = 1, addPath = false } = options
   const prefixes: BgpPrefix[] = []
   const endPos = reader.getPosition() + length
+  const limit = maxPrefixLength(afi)
 
   while (reader.getPosition() < endPos) {
+    if (addPath) {
+      if (endPos - reader.getPosition() < 4) {
+        warnings.push(
+          `NLRI ends mid Path Identifier (${endPos - reader.getPosition()} byte(s) left); ` +
+            `${prefixes.length} prefix(es) read before this`
+        )
+        reader.seek(endPos)
+        break
+      }
+      reader.skip(4)
+    }
+
     const prefixLength = reader.readUint8()
+    if (prefixLength > limit) {
+      warnings.push(
+        `NLRI prefix length ${prefixLength} exceeds the maximum ${limit} for this address family` +
+          (addPath ? '' : ' (a session using ADD-PATH would decode this way if its OPEN was not captured)') +
+          `; skipping the rest of this NLRI block`
+      )
+      reader.seek(endPos)
+      break
+    }
+
     const prefixBytes = Math.ceil(prefixLength / 8)
+    if (reader.getPosition() + prefixBytes > endPos) {
+      warnings.push(
+        `NLRI prefix of length ${prefixLength} runs past the end of its block; ` +
+          `skipping the rest of this NLRI block`
+      )
+      reader.seek(endPos)
+      break
+    }
 
     const octets = reader.readBytes(prefixBytes)
-    const prefix = formatIpv4Prefix(octets, prefixLength)
+    const prefix = afi === 2 ? formatIpv6Prefix(octets, prefixLength) : formatIpv4Prefix(octets, prefixLength)
 
     prefixes.push({ prefix, length: prefixLength })
   }
@@ -91,7 +159,11 @@ function formatIpv4Prefix(octets: Uint8Array, _prefixLength: number): string {
   return `${fullOctets[0]}.${fullOctets[1]}.${fullOctets[2]}.${fullOctets[3]}`
 }
 
-function parsePathAttribute(reader: BinaryReader, warnings: string[]): BgpPathAttribute {
+function parsePathAttribute(
+  reader: BinaryReader,
+  warnings: string[],
+  decoding: UpdateDecoding
+): BgpPathAttribute {
   const flagsByte = reader.readUint8()
   const flags = {
     optional: (flagsByte & 0x80) !== 0,
@@ -111,7 +183,7 @@ function parsePathAttribute(reader: BinaryReader, warnings: string[]): BgpPathAt
   let parsed: ParsedPathAttribute | undefined
 
   try {
-    parsed = parsePathAttributeValue(typeCode, rawValue, warnings)
+    parsed = parsePathAttributeValue(typeCode, rawValue, warnings, decoding)
   } catch (e) {
     warnings.push(`Failed to parse ${typeName}: ${e instanceof Error ? e.message : 'Unknown error'}`)
   }
@@ -129,7 +201,8 @@ function parsePathAttribute(reader: BinaryReader, warnings: string[]): BgpPathAt
 function parsePathAttributeValue(
   typeCode: number,
   data: Uint8Array,
-  warnings: string[]
+  warnings: string[],
+  decoding: UpdateDecoding
 ): ParsedPathAttribute | undefined {
   const reader = new BinaryReader(data, false) // BGP uses network byte order (big-endian)
 
@@ -144,8 +217,22 @@ function parsePathAttributeValue(
     }
 
     case 2: // AS_PATH
-    case 17: // AS4_PATH
-      return parseAsPath(reader, typeCode === 17)
+    case 17: { // AS4_PATH
+      // AS4_PATH is 4-byte by definition. AS_PATH follows what the session
+      // negotiated; without an observed OPEN it is read off the structure.
+      if (typeCode === AS4_PATH_TYPE_CODE) return parseAsPath(reader, true)
+
+      if (decoding.fourByteAs !== null) return parseAsPath(reader, decoding.fourByteAs)
+
+      const { asSize, ambiguous } = detectAsSize(data)
+      if (ambiguous) {
+        warnings.push(
+          'AS_PATH fits both 2-byte and 4-byte AS numbers and no OPEN was captured for this ' +
+            'session, so the AS numbers shown are the 4-byte reading and may be wrong'
+        )
+      }
+      return parseAsPath(reader, asSize === 4)
+    }
 
     case 3: // NEXT_HOP
       return {
@@ -182,10 +269,10 @@ function parsePathAttributeValue(
       return parseCommunities(reader, data.length)
 
     case 14: // MP_REACH_NLRI
-      return parseMpReachNlri(reader, data.length, warnings)
+      return parseMpReachNlri(reader, data.length, warnings, decoding)
 
     case 15: // MP_UNREACH_NLRI
-      return parseMpUnreachNlri(reader, data.length, warnings)
+      return parseMpUnreachNlri(reader, data.length, warnings, decoding)
 
     case 32: // LARGE_COMMUNITIES
       return parseLargeCommunities(reader, data.length)
@@ -195,31 +282,51 @@ function parsePathAttributeValue(
   }
 }
 
+/**
+ * Does this attribute body decode cleanly as AS_PATH with `asSize`-byte AS
+ * numbers — every segment well-formed, consuming the body exactly?
+ *
+ * This replaces guessing the AS size from how the byte count divides. That
+ * guess is wrong in both directions once an AS_PATH has more than one segment
+ * (an aggregated path carrying an AS_SET, say): a two-byte path can land
+ * exactly on the four-byte arithmetic and decode into AS numbers that were
+ * never on the wire, silently. Walking the segments answers the question the
+ * arithmetic was standing in for.
+ */
+function asPathFits(body: Uint8Array, asSize: 2 | 4): boolean {
+  let offset = 0
+  while (offset < body.length) {
+    if (offset + 2 > body.length) return false
+    const segType = body[offset]
+    const segLength = body[offset + 1]
+    if (segType < 1 || segType > 4 || segLength === 0) return false
+    offset += 2 + segLength * asSize
+  }
+  return offset === body.length
+}
+
+/**
+ * Decide the AS size for an AS_PATH whose session was never observed.
+ *
+ * A single-segment path can only fit one way, so the common case is decided.
+ * A multi-segment path — an aggregated route carrying an AS_SET, typically —
+ * can fit both ways, and then there is nothing in the attribute to separate
+ * them: the same bytes are two AS numbers or one, depending on an agreement
+ * made in an OPEN this capture does not contain. Four bytes is the better
+ * guess (every current session negotiates RFC 6793) but it stays a guess, and
+ * the caller says so rather than presenting either reading as fact.
+ */
+function detectAsSize(body: Uint8Array): { asSize: 2 | 4; ambiguous: boolean } {
+  const fitsFour = asPathFits(body, 4)
+  const fitsTwo = asPathFits(body, 2)
+
+  if (fitsFour && fitsTwo) return { asSize: 4, ambiguous: true }
+  if (fitsTwo) return { asSize: 2, ambiguous: false }
+  return { asSize: 4, ambiguous: false }
+}
+
 function parseAsPath(reader: BinaryReader, is4byte: boolean): ParsedPathAttribute {
   const segments: AsPathSegment[] = []
-
-  // Auto-detect AS size if not explicitly 4-byte (AS4_PATH)
-  // Look at first segment to determine if 2-byte or 4-byte AS
-  if (!is4byte && reader.hasMore()) {
-    const savedPos = reader.getPosition()
-    const segType = reader.readUint8()
-    const segLength = reader.readUint8()
-
-    if (segType >= 1 && segType <= 4 && segLength > 0) {
-      const remainingBytes = reader.remaining()
-      // Check if data fits 4-byte ASes better than 2-byte ASes
-      if (remainingBytes === segLength * 4) {
-        is4byte = true
-      } else if (remainingBytes === segLength * 2) {
-        is4byte = false
-      } else if (remainingBytes > segLength * 2) {
-        // Multiple segments - try to detect based on total structure
-        // Modern BGP typically uses 4-byte AS
-        is4byte = remainingBytes % 4 === 0 && remainingBytes >= segLength * 4
-      }
-    }
-    reader.seek(savedPos)
-  }
 
   const typeNames: Record<number, AsPathSegment['type']> = {
     1: 'AS_SET',
@@ -287,7 +394,12 @@ function parseLargeCommunities(reader: BinaryReader, length: number): ParsedPath
   return { type: 'LARGE_COMMUNITIES', communities }
 }
 
-function parseMpReachNlri(reader: BinaryReader, _length: number, warnings: string[]): ParsedPathAttribute {
+function parseMpReachNlri(
+  reader: BinaryReader,
+  _length: number,
+  warnings: string[],
+  decoding: UpdateDecoding
+): ParsedPathAttribute {
   const afi = reader.readUint16()
   const safi = reader.readUint8()
   const nextHopLength = reader.readUint8()
@@ -314,15 +426,15 @@ function parseMpReachNlri(reader: BinaryReader, _length: number, warnings: strin
 
   // Parse NLRI
   const nlri: BgpPrefix[] = []
-  while (reader.hasMore()) {
-    try {
-      const prefix = parsePrefix(reader, afi)
-      nlri.push(prefix)
-    } catch (e) {
-      warnings.push(`Failed to parse MP_REACH NLRI: ${e instanceof Error ? e.message : 'Unknown error'}`)
-      break
-    }
-  }
+  // The rest of the attribute is one NLRI block, so it can go through the same
+  // validated reader as the classic fields — including Path Identifiers, which
+  // ADD-PATH negotiates per address family.
+  nlri.push(
+    ...parsePrefixes(reader, reader.remaining(), warnings, {
+      afi,
+      addPath: decoding.addPath.has(afiSafiKey(afi, safi)),
+    })
+  )
 
   return {
     type: 'MP_REACH_NLRI',
@@ -335,20 +447,19 @@ function parseMpReachNlri(reader: BinaryReader, _length: number, warnings: strin
   }
 }
 
-function parseMpUnreachNlri(reader: BinaryReader, _length: number, warnings: string[]): ParsedPathAttribute {
+function parseMpUnreachNlri(
+  reader: BinaryReader,
+  _length: number,
+  warnings: string[],
+  decoding: UpdateDecoding
+): ParsedPathAttribute {
   const afi = reader.readUint16()
   const safi = reader.readUint8()
 
-  const withdrawnRoutes: BgpPrefix[] = []
-  while (reader.hasMore()) {
-    try {
-      const prefix = parsePrefix(reader, afi)
-      withdrawnRoutes.push(prefix)
-    } catch (e) {
-      warnings.push(`Failed to parse MP_UNREACH NLRI: ${e instanceof Error ? e.message : 'Unknown error'}`)
-      break
-    }
-  }
+  const withdrawnRoutes = parsePrefixes(reader, reader.remaining(), warnings, {
+    afi,
+    addPath: decoding.addPath.has(afiSafiKey(afi, safi)),
+  })
 
   return {
     type: 'MP_UNREACH_NLRI',
@@ -360,31 +471,6 @@ function parseMpUnreachNlri(reader: BinaryReader, _length: number, warnings: str
   }
 }
 
-function parsePrefix(reader: BinaryReader, afi: number): BgpPrefix {
-  const prefixLength = reader.readUint8()
-
-  if (afi === 1) {
-    // IPv4
-    const prefixBytes = Math.ceil(prefixLength / 8)
-    const octets = reader.readBytes(prefixBytes)
-    return {
-      prefix: formatIpv4Prefix(octets, prefixLength),
-      length: prefixLength,
-    }
-  } else if (afi === 2) {
-    // IPv6
-    const prefixBytes = Math.ceil(prefixLength / 8)
-    const octets = reader.readBytes(prefixBytes)
-    return {
-      prefix: formatIpv6Prefix(octets, prefixLength),
-      length: prefixLength,
-    }
-  } else {
-    const prefixBytes = Math.ceil(prefixLength / 8)
-    reader.skip(prefixBytes)
-    return { prefix: `(AFI ${afi})`, length: prefixLength }
-  }
-}
 
 function formatIpv6Prefix(octets: Uint8Array, _prefixLength: number): string {
   const fullOctets = new Uint8Array(16)
@@ -445,4 +531,74 @@ export function countUpdatePrefixes(update: BgpUpdateMessage): {
     if (attr.parsed?.type === 'MP_UNREACH_NLRI') withdrawn += attr.parsed.withdrawnRoutes.length
   }
   return { announced, withdrawn }
+}
+
+/**
+ * Rebuild AS_PATH from AS4_PATH where the two disagree (RFC 6793 §4.2.3).
+ *
+ * A 4-byte AS number crossing a speaker that only understands 2-byte ones is
+ * replaced in AS_PATH by AS_TRANS (23456), with the real numbers carried
+ * alongside in AS4_PATH. Reading AS_PATH alone therefore reports 23456 as the
+ * neighbour — everywhere: the route history, the AS path column, an `asn =`
+ * filter. The reconstruction takes the tail of AS_PATH from AS4_PATH, keeping
+ * the leading hops that only AS_PATH knows about.
+ *
+ * Both attributes are left in place; the detail view showing what actually
+ * arrived is worth more than a tidy list.
+ */
+function reconcileAs4Path(attributes: BgpPathAttribute[]): BgpPathAttribute[] {
+  const asPathIndex = attributes.findIndex((a) => a.typeCode === AS_PATH_TYPE_CODE)
+  const as4Path = attributes.find((a) => a.typeCode === AS4_PATH_TYPE_CODE)
+  if (asPathIndex < 0 || !as4Path) return attributes
+
+  const asPath = attributes[asPathIndex].parsed
+  if (asPath?.type !== 'AS_PATH' || as4Path.parsed?.type !== 'AS_PATH') return attributes
+
+  const merged = mergeAsPathSegments(asPath.segments, as4Path.parsed.segments)
+  if (!merged) return attributes
+
+  const rebuilt = [...attributes]
+  rebuilt[asPathIndex] = {
+    ...attributes[asPathIndex],
+    parsed: { type: 'AS_PATH', segments: merged },
+  }
+  return rebuilt
+}
+
+/** Count of AS numbers in a path, with an AS_SET counting as one hop (RFC 4271). */
+function asPathHopCount(segments: AsPathSegment[]): number {
+  return segments.reduce(
+    (total, segment) =>
+      total + (segment.type === 'AS_SET' || segment.type === 'AS_CONFED_SET' ? 1 : segment.asNumbers.length),
+    0
+  )
+}
+
+/**
+ * Replace the last `AS4_PATH`-worth of hops in `asPath` with `as4Path`.
+ * Returns null when AS4_PATH is the longer of the two, which RFC 6793 says to
+ * treat as AS_PATH being authoritative.
+ */
+function mergeAsPathSegments(
+  asPath: AsPathSegment[],
+  as4Path: AsPathSegment[]
+): AsPathSegment[] | null {
+  const keep = asPathHopCount(asPath) - asPathHopCount(as4Path)
+  if (keep < 0) return null
+
+  const head: AsPathSegment[] = []
+  let remaining = keep
+  for (const segment of asPath) {
+    if (remaining <= 0) break
+    const hops = segment.type === 'AS_SET' || segment.type === 'AS_CONFED_SET' ? 1 : segment.asNumbers.length
+    if (hops <= remaining) {
+      head.push(segment)
+      remaining -= hops
+    } else {
+      head.push({ ...segment, asNumbers: segment.asNumbers.slice(0, remaining) })
+      remaining = 0
+    }
+  }
+
+  return [...head, ...as4Path]
 }
