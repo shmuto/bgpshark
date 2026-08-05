@@ -1,4 +1,5 @@
 import type { EvpnRoute } from './evpn'
+import type { ExtendedCommunity } from './extended-communities'
 
 /**
  * BGP Message Types (RFC 4271)
@@ -126,6 +127,7 @@ export type ParsedPathAttribute =
   | AtomicAggregateAttribute
   | AggregatorAttribute
   | CommunitiesAttribute
+  | ExtendedCommunitiesAttribute
   | LargeCommunitiesAttribute
   | MpReachNlriAttribute
   | MpUnreachNlriAttribute
@@ -174,6 +176,11 @@ export interface AggregatorAttribute {
 export interface CommunitiesAttribute {
   type: 'COMMUNITIES'
   communities: string[]
+}
+
+export interface ExtendedCommunitiesAttribute {
+  type: 'EXTENDED_COMMUNITIES'
+  communities: ExtendedCommunity[]
 }
 
 export interface LargeCommunitiesAttribute {

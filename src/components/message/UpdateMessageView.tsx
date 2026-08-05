@@ -317,6 +317,30 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
         </div>
       )
 
+    case 'EXTENDED_COMMUNITIES':
+      return (
+        <div className="flex flex-wrap gap-1 mt-1">
+          {parsed.communities.map((comm, i) => (
+            <span
+              key={i}
+              // A Route Target is the field an EVPN import decision turns on,
+              // so it is the one worth spotting without reading the others.
+              className={`font-mono text-xs px-1.5 py-0.5 rounded ${
+                comm.kind === 'Route Target'
+                  ? 'bg-accent-subtle text-accent'
+                  : comm.unknown
+                    ? 'bg-surface-sunken text-muted'
+                    : 'bg-bgp-keepalive/15 text-bgp-keepalive'
+              }`}
+              title={comm.transitive ? undefined : 'Non-transitive: does not leave this AS'}
+            >
+              {comm.kind} {comm.value}
+              {!comm.transitive && <span className="text-dim"> (non-transitive)</span>}
+            </span>
+          ))}
+        </div>
+      )
+
     case 'LARGE_COMMUNITIES':
       return (
         <div className="flex flex-wrap gap-1 mt-1">

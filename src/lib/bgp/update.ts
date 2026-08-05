@@ -2,6 +2,7 @@ import { BinaryReader } from '../pcap/reader'
 import { getAfiName, getSafiName } from './constants'
 import { DEFAULT_DECODING, afiSafiKey, type UpdateDecoding } from './session'
 import { formatEvpnRoute, parseEvpnNlri } from './evpn'
+import { parseExtendedCommunities } from './extended-communities'
 import type {
   BgpUpdateMessage,
   BgpPrefix,
@@ -285,6 +286,9 @@ function parsePathAttributeValue(
 
     case 8: // COMMUNITIES
       return parseCommunities(reader, data.length)
+
+    case 16: // EXTENDED_COMMUNITIES
+      return { type: 'EXTENDED_COMMUNITIES', communities: parseExtendedCommunities(reader, data.length) }
 
     case 14: // MP_REACH_NLRI
       return parseMpReachNlri(reader, data.length, warnings, decoding)
