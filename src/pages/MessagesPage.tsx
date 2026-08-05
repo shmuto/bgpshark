@@ -20,6 +20,14 @@ import type {
 import type { GenericPacket } from '../lib/pcap'
 import { FILTER_FIELDS, type FilterFieldName } from '../lib/filter/parser'
 
+const MESSAGE_TYPE_BADGE_COLORS: Record<string, string> = {
+  OPEN: 'bg-bgp-open/15 text-bgp-open',
+  UPDATE: 'bg-bgp-update/15 text-bgp-update',
+  NOTIFICATION: 'bg-bgp-notification/15 text-bgp-notification',
+  KEEPALIVE: 'bg-bgp-keepalive/15 text-bgp-keepalive',
+  ROUTE_REFRESH: 'bg-bgp-route-refresh/15 text-bgp-route-refresh',
+}
+
 type FilterMode = 'simple' | 'advanced'
 type Operator = '=' | '!='
 
@@ -108,6 +116,24 @@ export function MessagesPage() {
     }
     setSearchParams(next, { replace: true })
   }, [query, searchParams, setSearchParams])
+
+  // Message counts for the type badges, over the whole capture (not the
+  // filtered view) so the badges keep saying what exists.
+  const messageTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      OPEN: 0,
+      UPDATE: 0,
+      NOTIFICATION: 0,
+      KEEPALIVE: 0,
+      ROUTE_REFRESH: 0,
+    }
+    for (const packet of packets) {
+      for (const msg of packet.messages) {
+        counts[msg.type] = (counts[msg.type] ?? 0) + 1
+      }
+    }
+    return counts
+  }, [packets])
 
   // Create display packets based on mode
   const displayPackets = useMemo((): DisplayPacket[] => {
@@ -513,6 +539,32 @@ export function MessagesPage() {
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Message counts up front, because the list is virtualized: 27 UPDATEs
+            that all sit below the fold are otherwise invisible to someone
+            scanning the Type column. Clicking a badge filters to that type
+            without knowing the filter syntax. */}
+        {!showAllPackets && packets.length > 0 && (
+          <div className="flex items-center gap-1.5 text-xs flex-wrap">
+            {(Object.entries(messageTypeCounts) as [string, number][])
+              .filter(([, count]) => count > 0)
+              .map(([type, count]) => {
+                const active = query.trim() === `type = ${type}`
+                return (
+                  <button
+                    key={type}
+                    onClick={() => setQuery(active ? '' : `type = ${type}`)}
+                    title={active ? 'Clear filter' : `Filter to ${type} messages`}
+                    className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
+                      MESSAGE_TYPE_BADGE_COLORS[type] ?? 'bg-surface-sunken text-muted'
+                    } ${active ? 'ring-1 ring-accent' : 'hover:opacity-75'}`}
+                  >
+                    {type} {count}
+                  </button>
+                )
+              })}
           </div>
         )}
 
