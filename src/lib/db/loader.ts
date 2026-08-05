@@ -2,7 +2,7 @@
  * Data Loader - Load BgpPacket[] into DuckDB
  */
 import type { AsyncDuckDBConnection } from '@duckdb/duckdb-wasm'
-import { getConnection, getDatabase, resetDatabase } from './database'
+import { getConnection, getDatabase, resetDatabase, markDataLoaded } from './database'
 import { addressBitKey, bgpPrefixBitKey } from '../net/prefix'
 import type {
   BgpPacket,
@@ -42,6 +42,11 @@ let largeCommunityIdCounter = 0
  * Load packets into DuckDB
  */
 export async function loadPackets(packets: BgpPacket[]): Promise<void> {
+  // Until the load below completes, the tables must be treated as absent —
+  // a partial or failed load left as "loaded" is exactly the state that made
+  // every filter silently return zero packets.
+  markDataLoaded(false)
+
   // Reset database and counters
   await resetDatabase()
   messageIdCounter = 0
@@ -58,6 +63,8 @@ export async function loadPackets(packets: BgpPacket[]): Promise<void> {
 
   // Register data as Arrow tables for bulk insert
   await insertPackets(conn, db, packets)
+
+  markDataLoaded(true)
 }
 
 /**

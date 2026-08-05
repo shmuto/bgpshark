@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useApp } from '../context/AppContext'
-import { executeRawSql, isInitialized } from '../lib/db'
+import { executeRawSql, isInitialized, isDataLoaded } from '../lib/db'
 
 interface QueryResult {
   columns: string[]
@@ -73,10 +73,16 @@ export function SqlConsolePage() {
   const [isExecuting, setIsExecuting] = useState(false)
   const [queryHistory, setQueryHistory] = useState<string[]>([])
 
+  // Two distinct failure states: the database never came up, or it is up but
+  // the capture's packets never made it in. Querying in the second state
+  // "works" and returns zero rows for everything, so it is blocked the same
+  // way — just with a different explanation.
   const dbReady = isInitialized()
+  const dataLoaded = isDataLoaded()
+  const sqlUsable = dbReady && dataLoaded
 
   const handleExecute = useCallback(async () => {
-    if (!query.trim() || !dbReady) return
+    if (!query.trim() || !sqlUsable) return
 
     setIsExecuting(true)
     setError(null)
@@ -111,7 +117,7 @@ export function SqlConsolePage() {
     } finally {
       setIsExecuting(false)
     }
-  }, [query, dbReady])
+  }, [query, sqlUsable])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -163,6 +169,12 @@ export function SqlConsolePage() {
             ⚠️ DuckDB not initialized. Load a pcap file first.
           </span>
         )}
+        {dbReady && !dataLoaded && (
+          <span className="text-sm text-warning">
+            ⚠️ This capture could not be loaded into DuckDB, so SQL is unavailable. Filtering on
+            the other screens still works in-memory.
+          </span>
+        )}
       </div>
 
       <div className="flex-1 flex flex-col lg:flex-row gap-4 min-h-0 overflow-auto lg:overflow-visible">
@@ -180,12 +192,12 @@ export function SqlConsolePage() {
               onKeyDown={handleKeyDown}
               placeholder="SELECT * FROM packets LIMIT 10"
               className="flex-1 p-4 font-mono text-sm resize-none focus:outline-none bg-surface-sunken text-body"
-              disabled={!dbReady}
+              disabled={!sqlUsable}
             />
             <div className="px-4 py-2 border-t border-hair bg-surface-sunken flex items-center gap-3">
               <button
                 onClick={handleExecute}
-                disabled={!dbReady || isExecuting || !query.trim()}
+                disabled={!sqlUsable || isExecuting || !query.trim()}
                 className="px-4 py-1.5 bg-accent text-accent-fg text-sm rounded hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <span>▶</span>

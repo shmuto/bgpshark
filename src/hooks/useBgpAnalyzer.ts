@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { parsePcap, isPcapng, parsePcapng, type GenericPacket } from '../lib/pcap'
 import { parseBgpFromPackets, type BgpPacket } from '../lib/bgp'
-import { initDatabase, loadPackets, isInitialized } from '../lib/db'
+import { initDatabase, loadPackets, isInitialized, isDataLoaded } from '../lib/db'
 import { savePcapFile, loadPcapFile, clearPcapFile } from '../lib/storage'
 
 interface AnalyzerState {
@@ -37,6 +37,9 @@ const initialState: AnalyzerState = {
 export function useBgpAnalyzer() {
   const [state, setState] = useState<AnalyzerState>(initialState)
   const restoredRef = useRef(false)
+  // Latest parsed packets, for the backfill below — a capture dropped while
+  // DuckDB was still initializing is parsed before the database can take it.
+  const packetsRef = useRef<BgpPacket[]>([])
 
   // Process buffer and update state (shared by loadFile and restore)
   const processBuffer = useCallback(
@@ -72,12 +75,18 @@ export function useBgpAnalyzer() {
         }
 
         // Load packets into DuckDB if available
+        const dbWarnings: string[] = []
         if (isInitialized() && bgpResult.packets.length > 0) {
           try {
             await loadPackets(bgpResult.packets)
           } catch (err) {
             console.error('Failed to load packets into DuckDB:', err)
-            // Continue without DuckDB
+            // Continue without DuckDB — but say so. Filtering falls back to
+            // the in-memory evaluator; only the SQL console is actually lost.
+            dbWarnings.push(
+              'Packets could not be loaded into DuckDB. ' +
+                'Filtering works in-memory; the SQL console is unavailable for this capture.'
+            )
           }
         }
 
@@ -91,13 +100,14 @@ export function useBgpAnalyzer() {
           }
         }
 
+        packetsRef.current = bgpResult.packets
         setState({
           status: 'ready',
           fileName,
           packets: bgpResult.packets,
           allPackets: pcapResult.allPackets,
           selectedPacketIndex: null,
-          warnings: [...pcapResult.warnings, ...bgpResult.warnings],
+          warnings: [...pcapResult.warnings, ...bgpResult.warnings, ...dbWarnings],
           error: null,
           dbReady: isInitialized(),
         })
@@ -124,6 +134,15 @@ export function useBgpAnalyzer() {
         try {
           await initDatabase()
           setState((prev) => ({ ...prev, dbReady: true }))
+          // A capture uploaded while the database was still coming up was
+          // parsed straight past the load step. Load it now.
+          if (packetsRef.current.length > 0 && !isDataLoaded()) {
+            try {
+              await loadPackets(packetsRef.current)
+            } catch (err) {
+              console.error('Failed to load packets into DuckDB:', err)
+            }
+          }
         } catch (err) {
           console.error('Failed to initialize DuckDB:', err)
           setState((prev) => ({ ...prev, dbReady: false }))
@@ -182,6 +201,8 @@ export function useBgpAnalyzer() {
   }, [])
 
   const reset = useCallback(() => {
+    packetsRef.current = []
+
     // Clear stored data
     clearPcapFile().catch((err) => {
       console.error('Failed to clear stored file:', err)
