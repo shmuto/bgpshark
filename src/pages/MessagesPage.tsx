@@ -43,7 +43,12 @@ export function MessagesPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   const [showAllPackets, setShowAllPackets] = useState(false)
-  const [filterMode, setFilterMode] = useState<FilterMode>('simple')
+  // A filter arriving in the URL opens in advanced mode: a dashboard alert
+  // links an expression the rule builder has no way to represent, and the
+  // builder starting empty would mean starting by throwing that filter away.
+  const [filterMode, setFilterMode] = useState<FilterMode>(
+    () => (new URLSearchParams(window.location.search).get('filter') ? 'advanced' : 'simple')
+  )
   const [rules, setRules] = useState<FilterRule[]>([])
   const split = useSplitPane('messages')
 
@@ -99,11 +104,32 @@ export function MessagesPage() {
     }
   }, [highlightedIndex])
 
+  /**
+   * The filter this screen last wrote to the URL, so a filter arriving from
+   * somewhere else — a dashboard alert, a link someone shared — can be told
+   * apart from our own echo and adopted instead of overwritten.
+   */
+  const pushedFilterRef = useRef(initialFilter)
+
+  useEffect(() => {
+    const urlFilter = searchParams.get('filter') || ''
+    if (urlFilter === pushedFilterRef.current) return
+
+    pushedFilterRef.current = urlFilter
+    setQuery(urlFilter)
+    if (urlFilter) {
+      setFilterMode('advanced')
+      setRules([])
+    }
+  }, [searchParams, setQuery])
+
   // Update URL when filter changes (use replace to avoid duplicate history entries)
   useEffect(() => {
     const currentFilter = searchParams.get('filter') || ''
     // Only update if the query actually changed from what's in the URL
     if (query === currentFilter) return
+
+    pushedFilterRef.current = query
 
     // Edit the existing parameters rather than replacing them wholesale: writing
     // a bare object used to drop `?selected=` off links arriving from the
@@ -314,24 +340,32 @@ export function MessagesPage() {
       .join(' and ')
   }, [])
 
-  // Update query when rules change (in simple mode)
-  useEffect(() => {
-    if (filterMode === 'simple') {
-      setQuery(rulesToQuery(rules))
-    }
-  }, [rules, filterMode, rulesToQuery, setQuery])
+  /**
+   * Rules and the query they compile to move together.
+   *
+   * This used to be an effect watching `rules`, which also ran on mount with
+   * no rules yet — compiling them to an empty query and wiping whatever the
+   * URL had just supplied. Every filter link into this screen died that way.
+   */
+  const applyRules = useCallback(
+    (next: FilterRule[]) => {
+      setRules(next)
+      setQuery(rulesToQuery(next))
+    },
+    [rulesToQuery, setQuery]
+  )
 
   // Rule management functions
   const addRule = () => {
-    setRules([...rules, { id: crypto.randomUUID(), field: '', operator: '=', value: '' }])
+    applyRules([...rules, { id: crypto.randomUUID(), field: '', operator: '=', value: '' }])
   }
 
   const updateRule = (id: string, updates: Partial<FilterRule>) => {
-    setRules(rules.map(r => r.id === id ? { ...r, ...updates } : r))
+    applyRules(rules.map(r => r.id === id ? { ...r, ...updates } : r))
   }
 
   const removeRule = (id: string) => {
-    setRules(rules.filter(r => r.id !== id))
+    applyRules(rules.filter(r => r.id !== id))
   }
 
   // Get values for a field

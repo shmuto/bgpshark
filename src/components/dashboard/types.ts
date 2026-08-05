@@ -14,9 +14,17 @@ export interface DashboardAlert {
   severity: AlertSeverity
   title: string
   detail: string
+  /** The occurrence this row links to. For a grouped row that is the earliest one. */
   timestamp: Date | null
   filter: string
   packetIndex?: number
+  /**
+   * Occurrences rolled into this row. Absent or 1 is a single event and is
+   * rendered exactly as an ungrouped alert — no count, no time range.
+   */
+  count?: number
+  /** First and last occurrence, set only when the row stands for more than one. */
+  timeSpan?: { start: Date; end: Date }
 }
 
 export interface NeighborRow {

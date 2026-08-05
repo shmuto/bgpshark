@@ -63,3 +63,40 @@ test.describe('the filter box', () => {
     await expect.poll(() => shownCount(page)).toBeGreaterThan(bgpOnly)
   })
 })
+
+test.describe('a filter carried in the URL', () => {
+  // Every link into this screen — a dashboard alert naming a peer, a summary
+  // card, a URL someone pasted into a ticket — arrives this way, and all of
+  // them used to land on an unfiltered list.
+  test('is applied when the screen is opened on it', async ({ page }) => {
+    await loadSample(page)
+    await page.goto('./messages?filter=' + encodeURIComponent('type = NOTIFICATION'), {
+      waitUntil: 'networkidle',
+    })
+
+    await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
+    expect(await shownCount(page)).toBe(9)
+  })
+
+  test('survives in the URL rather than being cleared on arrival', async ({ page }) => {
+    await loadSample(page)
+    await page.goto('./messages?filter=' + encodeURIComponent('type = NOTIFICATION'), {
+      waitUntil: 'networkidle',
+    })
+    await page.waitForTimeout(600)
+
+    expect(decodeURIComponent(page.url())).toContain('filter=type = NOTIFICATION')
+  })
+
+  test('a dashboard alert opens the messages screen on that peer', async ({ page }) => {
+    await loadSample(page)
+    await page.getByRole('link', { name: 'Dashboard' }).click()
+    await page.getByRole('button', { name: 'View →' }).first().click()
+    await page.waitForURL('**/messages**')
+    await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
+    await page.waitForTimeout(600)
+
+    // Narrowed to one peer pair, not the whole capture.
+    expect(await shownCount(page)).toBeLessThan(50)
+  })
+})

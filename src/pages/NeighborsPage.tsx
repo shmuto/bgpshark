@@ -6,8 +6,34 @@ import { BackToList, PaneDivider } from '../components/common'
 import { useSplitPane } from '../hooks/useSplitPane'
 import type { BgpMessage, BgpOpenMessage, BgpUpdateMessage, BgpNotificationMessage } from '../lib/bgp/types'
 import { extractNeighbors, getLatestOpen, type OpenMessageRecord } from '../lib/bgp/neighbor'
+import { extractSessionEvents, groupEventsBySession, type SessionState } from '../lib/bgp/session-events'
 import { CapabilityDiff } from '../components/neighbor'
-import { formatTimeOfDayUtc } from '../lib/format-time'
+import { countUpdatePrefixes, endOfRibMarker } from '../lib/bgp/update'
+import { formatDelta, formatTimeOfDayUtc } from '../lib/format-time'
+
+const SESSION_EVENT_TYPES = new Set(['OPEN', 'NOTIFICATION'])
+
+const SESSION_STATE_STYLE: Record<SessionState, string> = {
+  Established: 'bg-ok-subtle text-ok',
+  Down: 'bg-critical-subtle text-critical',
+  Idle: 'bg-surface-sunken text-muted',
+  Connect: 'bg-warning-subtle text-warning',
+  OpenSent: 'bg-warning-subtle text-warning',
+  OpenConfirm: 'bg-warning-subtle text-warning',
+}
+
+const MESSAGE_ROW_TINT: Record<string, string> = {
+  OPEN: 'bg-bgp-open/5',
+  NOTIFICATION: 'bg-bgp-notification/5',
+}
+
+const MESSAGE_BADGE: Record<string, string> = {
+  OPEN: 'bg-bgp-open/10 text-bgp-open',
+  NOTIFICATION: 'bg-bgp-notification/10 text-bgp-notification',
+  UPDATE: 'bg-bgp-update/10 text-bgp-update',
+  KEEPALIVE: 'bg-bgp-keepalive/10 text-bgp-keepalive',
+  ROUTE_REFRESH: 'bg-bgp-route-refresh/10 text-bgp-route-refresh',
+}
 
 // Display names for the messageSummary keys; a bare uppercase() turns
 // routeRefresh into ROUTEREFRESH.
@@ -86,6 +112,26 @@ export function NeighborsPage() {
   }, [setSearchParams])
 
   const [filterType, setFilterType] = useState<'all' | 'alerts' | 'open' | 'inactive'>('all')
+  /**
+   * Session Messages defaults to the events that establish or end a session.
+   * The rest is what was flowing while it was up — which is the question when
+   * a hold timer expires, because the keepalives stopping is the evidence.
+   */
+  const [messageScope, setMessageScope] = useState<'events' | 'all'>('events')
+
+  /**
+   * Where each session stood when the capture ended, keyed by the sorted IP
+   * pair. "22 messages exchanged" does not say whether the session is up now,
+   * which is the first thing asked about a peer under suspicion.
+   */
+  const sessionStates = useMemo(() => {
+    const tracks = groupEventsBySession(extractSessionEvents(packets))
+    const byPair = new Map<string, SessionState>()
+    for (const track of tracks.values()) {
+      byPair.set([track.srcIp, track.dstIp].sort().join('|'), track.currentState)
+    }
+    return byPair
+  }, [packets])
   const [searchQuery, setSearchQuery] = useState('')
 
   // Extract all routers grouped by Router ID
@@ -262,7 +308,7 @@ export function NeighborsPage() {
       srcIp: string
       dstIp: string
       peerIp: string
-      type: 'OPEN' | 'NOTIFICATION'
+      type: 'OPEN' | 'NOTIFICATION' | 'UPDATE' | 'KEEPALIVE' | 'ROUTE_REFRESH'
       detail: string
       packetIndex: number
     }> = []
@@ -287,6 +333,31 @@ export function NeighborsPage() {
             detail: `AS${asNum} Hold=${openMsg.holdTime}s`,
             packetIndex: index,
           })
+        } else if (msg.type === 'UPDATE') {
+          const { announced, withdrawn } = countUpdatePrefixes(msg as BgpUpdateMessage)
+          const eor = endOfRibMarker(msg as BgpUpdateMessage)
+          const parts = []
+          if (announced > 0) parts.push(`${announced} announced`)
+          if (withdrawn > 0) parts.push(`${withdrawn} withdrawn`)
+          result.push({
+            timestamp: packet.timestamp,
+            srcIp: packet.srcIp,
+            dstIp: packet.dstIp,
+            peerIp,
+            type: 'UPDATE',
+            detail: eor ? `End-of-RIB (${eor})` : parts.join(', ') || 'empty',
+            packetIndex: index,
+          })
+        } else if (msg.type === 'KEEPALIVE' || msg.type === 'ROUTE_REFRESH') {
+          result.push({
+            timestamp: packet.timestamp,
+            srcIp: packet.srcIp,
+            dstIp: packet.dstIp,
+            peerIp,
+            type: msg.type,
+            detail: msg.type === 'ROUTE_REFRESH' ? `${msg.afiName}/${msg.safiName}` : '',
+            packetIndex: index,
+          })
         } else if (msg.type === 'NOTIFICATION') {
           const notif = msg as BgpNotificationMessage
           result.push({
@@ -304,6 +375,14 @@ export function NeighborsPage() {
 
     return result.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
   }, [selectedIps, packets])
+
+  const visibleSessionMessages = useMemo(
+    () =>
+      messageScope === 'all'
+        ? sessionMessages
+        : sessionMessages.filter((m) => SESSION_EVENT_TYPES.has(m.type)),
+    [sessionMessages, messageScope]
+  )
 
   // Get prefixes announced by selected router
   const announcedPrefixes = useMemo(() => {
@@ -492,7 +571,10 @@ export function NeighborsPage() {
   }
 
   const handleViewRoutes = () => {
-    navigate(`/routes`)
+    // Carry the router's addresses across, so the routes screen opens on what
+    // this peer announced rather than on everything in the capture.
+    const peer = selectedIps.join(',')
+    navigate(peer ? `/routes?peer=${encodeURIComponent(peer)}` : '/routes')
   }
 
   return (
@@ -727,6 +809,18 @@ export function NeighborsPage() {
                             {localIp} ↔ {session.peerIp}
                           </span>
                           <div className="flex items-center gap-2">
+                            {(() => {
+                              const state = sessionStates.get([localIp, session.peerIp].sort().join('|'))
+                              if (!state) return null
+                              return (
+                                <span
+                                  className={`text-xs px-1.5 py-0.5 rounded ${SESSION_STATE_STYLE[state]}`}
+                                  title="State when the capture ended"
+                                >
+                                  {state}
+                                </span>
+                              )
+                            })()}
                             <span className="text-xs text-muted">{session.messageCount} msgs</span>
                             {session.hasNotification && <span className="text-critical">⚠</span>}
                           </div>
@@ -745,21 +839,38 @@ export function NeighborsPage() {
               {/* Session Messages (OPEN/NOTIFICATION) */}
               {sessionMessages.length > 0 && (
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
-                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
-                    <span className="text-sm font-medium text-strong">📋 Session Messages ({sessionMessages.length})</span>
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-strong">
+                      📋 Session Messages ({visibleSessionMessages.length})
+                    </span>
+                    <div className="flex items-center gap-1 text-xs">
+                      {(['events', 'all'] as const).map((scope) => (
+                        <button
+                          key={scope}
+                          onClick={() => setMessageScope(scope)}
+                          className={`px-2 py-0.5 rounded ${
+                            messageScope === scope
+                              ? 'bg-accent text-accent-fg'
+                              : 'text-muted hover:bg-surface-raised'
+                          }`}
+                        >
+                          {scope === 'events' ? 'OPEN / NOTIFICATION' : `All (${sessionMessages.length})`}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="divide-y divide-hair max-h-48 overflow-auto">
-                    {sessionMessages.map((msg, idx) => (
+                    {visibleSessionMessages.map((msg, idx, rows) => (
                       <div
                         key={idx}
                         onClick={() => handleViewEventAtIndex(msg.peerIp, msg.packetIndex)}
                         className={`px-4 py-2 cursor-pointer hover:bg-surface-sunken ${
-                          msg.type === 'OPEN' ? 'bg-bgp-open/5' : 'bg-bgp-notification/5'
+                          MESSAGE_ROW_TINT[msg.type] ?? ''
                         }`}
                       >
                         <div className="flex items-center gap-3">
                           <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                            msg.type === 'OPEN' ? 'bg-bgp-open/10 text-bgp-open' : 'bg-bgp-notification/10 text-bgp-notification'
+                            MESSAGE_BADGE[msg.type] ?? 'bg-surface-sunken text-muted'
                           }`}>
                             {msg.type}
                           </span>
@@ -769,6 +880,16 @@ export function NeighborsPage() {
                           <span className="text-xs text-dim">
                             {formatTimeOfDayUtc(msg.timestamp)}
                           </span>
+                          {idx > 0 && (
+                            <span
+                              className="text-xs text-dim font-mono"
+                              title="Time since the previous message shown"
+                            >
+                              {formatDelta(
+                                msg.timestamp.getTime() - rows[idx - 1].timestamp.getTime()
+                              )}
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-muted mt-1 ml-14">
                           {msg.detail}
