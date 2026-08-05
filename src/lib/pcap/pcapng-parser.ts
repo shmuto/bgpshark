@@ -1,4 +1,5 @@
 import { BinaryReader } from './reader'
+import { parseIpv6Header, type Ipv6Result } from './ipv6'
 import type {
   PcapGlobalHeader,
   RawPacket,
@@ -65,180 +66,186 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
     let packetIndex = 0
 
     while (reader.remaining() >= 8) {
+      const blockStart = reader.offset
       const blockType = reader.readUint32()
       const blockTotalLength = reader.readUint32()
 
-      if (blockTotalLength < 12 || blockTotalLength > reader.remaining() + 8) {
-        warnings.push(`Invalid block length ${blockTotalLength} at offset ${reader.offset - 8}`)
+      // Block framing is the only thing holding a pcapng together. A length
+      // that cannot be true means we no longer know where any later block
+      // starts, so this is the one condition that ends the file early.
+      if (
+        blockTotalLength < 12 ||
+        blockTotalLength % 4 !== 0 ||
+        blockStart + blockTotalLength > reader.length
+      ) {
+        warnings.push(
+          `Invalid block length ${blockTotalLength} at offset ${blockStart}: ` +
+            `parsing stopped at byte ${blockStart} of ${reader.length}, ` +
+            `${reader.length - blockStart} remaining bytes skipped`
+        )
         break
       }
 
+      const blockEnd = blockStart + blockTotalLength
       const blockDataLength = blockTotalLength - 12 // Subtract type, length, trailing length
 
-      switch (blockType) {
-        case BLOCK_TYPE.SECTION_HEADER: {
-          // Byte Order Magic
-          const magic = reader.readUint32()
-          if (magic === PCAPNG_MAGIC) {
-            isLittleEndian = true
-          } else if (magic === 0x4d3c2b1a) {
-            isLittleEndian = false
-          } else {
-            errors.push('Invalid pcapng byte order magic')
-            return createEmptyResult(errors, warnings)
-          }
-          reader.setLittleEndian(isLittleEndian)
+      try {
+        switch (blockType) {
+          case BLOCK_TYPE.SECTION_HEADER: {
+            // Byte Order Magic
+            const magic = reader.readUint32()
+            if (magic === PCAPNG_MAGIC) {
+              isLittleEndian = true
+            } else if (magic === 0x4d3c2b1a) {
+              isLittleEndian = false
+            } else {
+              errors.push('Invalid pcapng byte order magic')
+              return createEmptyResult(errors, warnings)
+            }
+            reader.setLittleEndian(isLittleEndian)
 
-          // Skip major/minor version (4 bytes) and section length (8 bytes)
-          reader.skip(12)
-          // Skip options
-          const optionsLength = blockDataLength - 16
-          if (optionsLength > 0) {
-            reader.skip(optionsLength)
+            currentSection = true
+            interfaces.length = 0 // Reset interfaces for new section
+            break
           }
 
-          currentSection = true
-          interfaces.length = 0 // Reset interfaces for new section
-          break
-        }
+          case BLOCK_TYPE.INTERFACE_DESCRIPTION: {
+            if (!currentSection) {
+              warnings.push('Interface Description Block before Section Header')
+            }
+            const linkType = reader.readUint16()
+            reader.skip(2) // Reserved
+            const snapLen = reader.readUint32()
 
-        case BLOCK_TYPE.INTERFACE_DESCRIPTION: {
-          if (!currentSection) {
-            warnings.push('Interface Description Block before Section Header')
-          }
-          const linkType = reader.readUint16()
-          reader.skip(2) // Reserved
-          const snapLen = reader.readUint32()
-
-          // Parse options for timestamp resolution
-          let tsResol = 6 // Default: microseconds (10^-6)
-          const optionsLength = blockDataLength - 8
-          if (optionsLength > 0) {
-            const optionsEnd = reader.offset + optionsLength
-            while (reader.offset < optionsEnd && reader.remaining() >= 4) {
-              const optCode = reader.readUint16()
-              const optLen = reader.readUint16()
-              if (optCode === 0) break // end_of_opt
-              if (optCode === 9 && optLen >= 1) {
-                // if_tsresol
-                tsResol = reader.readUint8()
-                reader.skip(optLen - 1 + ((4 - (optLen % 4)) % 4))
-              } else {
-                const padLen = (4 - (optLen % 4)) % 4
-                reader.skip(optLen + padLen)
+            // Parse options for timestamp resolution
+            let tsResol = 6 // Default: microseconds (10^-6)
+            const optionsLength = blockDataLength - 8
+            if (optionsLength > 0) {
+              const optionsEnd = reader.offset + optionsLength
+              while (reader.offset < optionsEnd && reader.remaining() >= 4) {
+                const optCode = reader.readUint16()
+                const optLen = reader.readUint16()
+                if (optCode === 0) break // end_of_opt
+                if (optCode === 9 && optLen >= 1) {
+                  // if_tsresol
+                  tsResol = reader.readUint8()
+                  reader.skip(optLen - 1 + ((4 - (optLen % 4)) % 4))
+                } else {
+                  const padLen = (4 - (optLen % 4)) % 4
+                  reader.skip(optLen + padLen)
+                }
               }
             }
-            // Skip any remaining options
-            if (reader.offset < optionsEnd) {
-              reader.skip(optionsEnd - reader.offset)
+
+            interfaces.push({ linkType, snapLen, tsResol })
+            break
+          }
+
+          case BLOCK_TYPE.ENHANCED_PACKET: {
+            const interfaceId = reader.readUint32()
+            const timestampHigh = reader.readUint32()
+            const timestampLow = reader.readUint32()
+            const capturedLength = reader.readUint32()
+            const originalLength = reader.readUint32()
+
+            // A packet block that has to be dropped still spends its frame
+            // number, so the frames that survive keep the numbering the capture
+            // had and a warning can name the frame that went missing.
+            packetIndex++
+
+            if (interfaceId >= interfaces.length) {
+              warnings.push(`Unknown interface ID ${interfaceId} at offset ${blockStart}; block skipped`)
+              break
             }
-          }
 
-          interfaces.push({ linkType, snapLen, tsResol })
-          break
-        }
+            const iface = interfaces[interfaceId]
 
-        case BLOCK_TYPE.ENHANCED_PACKET: {
-          const interfaceId = reader.readUint32()
-          const timestampHigh = reader.readUint32()
-          const timestampLow = reader.readUint32()
-          const capturedLength = reader.readUint32()
-          const originalLength = reader.readUint32()
+            // The block states its own total length, so the packet data is bounded
+            // by the block rather than by the file. A captured length that does not
+            // fit is corruption confined to this block: drop it and carry on at the
+            // next block boundary instead of abandoning everything after it.
+            const availableLength = blockDataLength - 20
+            if (capturedLength > availableLength) {
+              warnings.push(
+                `Packet ${packetIndex}: captured length ${capturedLength} exceeds the ` +
+                  `${availableLength} bytes its block holds at offset ${blockStart}; block skipped`
+              )
+              break
+            }
 
-          if (interfaceId >= interfaces.length) {
-            warnings.push(`Unknown interface ID ${interfaceId}`)
-            reader.skip(blockDataLength - 20)
+            const packetData = reader.readBytes(capturedLength)
+
+            // Calculate timestamp
+            const timestamp = calculateTimestamp(timestampHigh, timestampLow, iface.tsResol)
+
+            // Parse packet
+            const result = parsePacketData(
+              packetData,
+              iface.linkType,
+              timestamp,
+              capturedLength,
+              originalLength,
+              packetIndex,
+              warnings
+            )
+
+            if (result.bgpPacket) {
+              packets.push(result.bgpPacket)
+            }
+            if (result.genericPacket) {
+              allPackets.push(result.genericPacket)
+            }
             break
           }
 
-          const iface = interfaces[interfaceId]
-          const actualCapturedLength = Math.min(capturedLength, iface.snapLen)
+          case BLOCK_TYPE.SIMPLE_PACKET: {
+            // Simple Packet Block (no timestamp, uses interface 0)
+            const originalLength = reader.readUint32()
+            const iface = interfaces[0]
+            if (!iface) {
+              warnings.push(`Simple Packet Block without interface at offset ${blockStart}; block skipped`)
+              break
+            }
 
-          if (reader.remaining() < actualCapturedLength) {
-            warnings.push('Truncated packet data')
+            // A Simple Packet Block has no captured length of its own; what was
+            // stored is whatever fits in the block.
+            const packetLength = Math.min(originalLength, blockDataLength - 4)
+            const packetData = reader.readBytes(packetLength)
+
+            packetIndex++
+
+            const result = parsePacketData(
+              packetData,
+              iface.linkType,
+              new Date(0), // No timestamp in Simple Packet Block
+              packetLength,
+              originalLength,
+              packetIndex,
+              warnings
+            )
+
+            if (result.bgpPacket) {
+              packets.push(result.bgpPacket)
+            }
+            if (result.genericPacket) {
+              allPackets.push(result.genericPacket)
+            }
             break
           }
 
-          const packetData = reader.readBytes(actualCapturedLength)
-
-          // Skip padding and options
-          const paddedLength = (actualCapturedLength + 3) & ~3
-          const skipBytes = paddedLength - actualCapturedLength + (blockDataLength - 20 - paddedLength)
-          if (skipBytes > 0) {
-            reader.skip(skipBytes)
-          }
-
-          // Calculate timestamp
-          const timestamp = calculateTimestamp(timestampHigh, timestampLow, iface.tsResol)
-
-          packetIndex++
-
-          // Parse packet
-          const result = parsePacketData(
-            packetData,
-            iface.linkType,
-            timestamp,
-            capturedLength,
-            originalLength,
-            packetIndex,
-            warnings
-          )
-
-          if (result.bgpPacket) {
-            packets.push(result.bgpPacket)
-          }
-          if (result.genericPacket) {
-            allPackets.push(result.genericPacket)
-          }
-          break
+          default:
+            break // Unknown block types are simply stepped over
         }
-
-        case BLOCK_TYPE.SIMPLE_PACKET: {
-          // Simple Packet Block (no timestamp, uses interface 0)
-          const originalLength = reader.readUint32()
-          const iface = interfaces[0]
-          if (!iface) {
-            warnings.push('Simple Packet Block without interface')
-            reader.skip(blockDataLength - 4)
-            break
-          }
-
-          const packetLength = Math.min(originalLength, iface.snapLen)
-          const packetData = reader.readBytes(packetLength)
-
-          // Skip padding
-          const paddedLength = (packetLength + 3) & ~3
-          reader.skip(paddedLength - packetLength)
-
-          packetIndex++
-
-          const result = parsePacketData(
-            packetData,
-            iface.linkType,
-            new Date(0), // No timestamp in Simple Packet Block
-            packetLength,
-            originalLength,
-            packetIndex,
-            warnings
-          )
-
-          if (result.bgpPacket) {
-            packets.push(result.bgpPacket)
-          }
-          if (result.genericPacket) {
-            allPackets.push(result.genericPacket)
-          }
-          break
-        }
-
-        default:
-          // Skip unknown blocks
-          reader.skip(blockDataLength)
-          break
+      } catch (e) {
+        warnings.push(
+          `Block at offset ${blockStart}: ${e instanceof Error ? e.message : String(e)}; block skipped`
+        )
       }
 
-      // Skip trailing block length
-      reader.skip(4)
+      // Every handler reads inside the block it was given, so resynchronising is
+      // just jumping to where the block said it ends. A block that was skipped or
+      // threw costs its own contents and nothing beyond them.
+      reader.seek(blockEnd)
     }
 
     if (interfaces.length === 0) {
@@ -313,6 +320,29 @@ function calculateTimestamp(high: number, low: number, tsResol: number): Date {
   return new Date(milliseconds)
 }
 
+/** Same fields as {@link parseIpv6Header}, so callers need not know the family. */
+function parseIpv4Header(reader: BinaryReader): Ipv6Result | null {
+  if (reader.remaining() < 20) return null
+  reader.setLittleEndian(false)
+
+  const versionIhl = reader.readUint8()
+  const ihl = (versionIhl & 0x0f) * 4
+  if (ihl < 20) return null
+
+  reader.skip(1) // DSCP
+  const totalLength = reader.readUint16()
+  reader.skip(4) // ID, Flags, Fragment
+  reader.skip(1) // TTL
+  const protocol = reader.readUint8()
+  reader.skip(2) // Checksum
+  const srcIp = reader.readIpv4Address()
+  const dstIp = reader.readIpv4Address()
+
+  if (ihl > 20) reader.skip(ihl - 20)
+
+  return { srcIp, dstIp, protocol, payloadLength: totalLength - ihl }
+}
+
 function parsePacketData(
   data: Uint8Array,
   linkType: number,
@@ -320,7 +350,7 @@ function parsePacketData(
   capturedLength: number,
   originalLength: number,
   frameIndex: number,
-  _warnings: string[]
+  warnings: string[]
 ): ParsedPacketResult {
   const result: ParsedPacketResult = { bgpPacket: null, genericPacket: null }
   const reader = new BinaryReader(data, false)
@@ -349,28 +379,16 @@ function parsePacketData(
     return result
   }
 
-  if (etherType !== EtherType.IPV4) return result
+  if (etherType !== EtherType.IPV4 && etherType !== EtherType.IPV6) return result
 
-  // Parse IPv4
-  if (reader.remaining() < 20) return result
-  reader.setLittleEndian(false)
+  // Both families yield the same fields, so everything below is family-agnostic.
+  const ip =
+    etherType === EtherType.IPV6
+      ? parseIpv6Header(reader, warnings, frameIndex)
+      : parseIpv4Header(reader)
+  if (!ip) return result
 
-  const versionIhl = reader.readUint8()
-  const ihl = (versionIhl & 0x0f) * 4
-  if (ihl < 20) return result
-
-  reader.skip(1) // DSCP
-  const totalLength = reader.readUint16()
-  reader.skip(4) // ID, Flags, Fragment
-  reader.skip(1) // TTL
-  const protocol = reader.readUint8()
-  reader.skip(2) // Checksum
-  const srcIp = reader.readIpv4Address()
-  const dstIp = reader.readIpv4Address()
-
-  if (ihl > 20) reader.skip(ihl - 20)
-
-  const ipPayloadLength = totalLength - ihl
+  const { srcIp, dstIp, protocol, payloadLength: ipPayloadLength } = ip
 
   if (protocol === IpProtocol.TCP) {
     // Parse TCP
@@ -402,7 +420,7 @@ function parsePacketData(
       }
     }
 
-    const payloadLength = totalLength - ihl - dataOffset
+    const payloadLength = ipPayloadLength - dataOffset
     const actualPayload = Math.max(0, Math.min(payloadLength, reader.remaining()))
 
     // Add to generic packets

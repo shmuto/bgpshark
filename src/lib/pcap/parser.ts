@@ -1,4 +1,5 @@
 import { BinaryReader } from './reader'
+import { parseIpv6Header } from './ipv6'
 import {
   type PcapGlobalHeader,
   type PcapPacketHeader,
@@ -71,8 +72,14 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
       try {
         const packetHeader = parsePacketHeader(reader, globalHeader.isNanosecond)
 
+        // Plain pcap records carry no length of their own beyond this field, so
+        // a record that runs past the end of the file is the end of the file:
+        // there is no next record boundary left to resynchronise on.
         if (reader.remaining() < packetHeader.capturedLength) {
-          warnings.push(`Packet ${packetIndex}: truncated (missing ${packetHeader.capturedLength - reader.remaining()} bytes)`)
+          warnings.push(
+            `Packet ${packetIndex}: file appears truncated - record claims ${packetHeader.capturedLength} captured bytes but only ${reader.remaining()} are present; ` +
+              `parsing stopped at byte ${reader.offset} of ${reader.length}`
+          )
           break
         }
 
@@ -89,10 +96,14 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
           continue // Skip non-IP packets
         }
 
-        // Parse IP header
-        const ipResult = parseIpv4Header(packetReader, warnings, packetIndex)
+        // Parse IP header. Both families produce the same fields, so everything
+        // below this point is family-agnostic.
+        const ipResult =
+          linkResult.etherType === EtherType.IPV6
+            ? parseIpv6Header(packetReader, warnings, packetIndex)
+            : parseIpv4Header(packetReader, warnings, packetIndex)
         if (!ipResult) {
-          continue // Skip non-IPv4 or malformed
+          continue // Skip malformed headers and fragments we cannot interpret
         }
 
         const timestamp = new Date(
@@ -305,8 +316,7 @@ function parseEthernetFrame(
     etherType = reader.readUint16()
   }
 
-  // Only handle IPv4
-  if (etherType !== EtherType.IPV4) {
+  if (etherType !== EtherType.IPV4 && etherType !== EtherType.IPV6) {
     return null
   }
 
@@ -335,8 +345,7 @@ function parseSllFrame(
   reader.setLittleEndian(false)
   const etherType = reader.readUint16()
 
-  // Only handle IPv4
-  if (etherType !== EtherType.IPV4) {
+  if (etherType !== EtherType.IPV4 && etherType !== EtherType.IPV6) {
     return null
   }
 
