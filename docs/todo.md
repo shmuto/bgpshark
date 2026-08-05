@@ -133,6 +133,51 @@ Messages 画面のステータスバーから、いま一覧に出ているパ�
 `sample-filtered.pcap` を再読込して同じ 9 件が復元。`file(1)` も
 `pcap capture file, microsecond ts (little-endian) - version 2.4 (Ethernet, ...)` と認識。
 
+## pcap ビルダー (2026-08-05)
+
+キャプチャを「読む」だけだったアプリに、「書く」側を追加した。BGP セッションを
+記述すると、その通りの pcap が出てくる。Build 画面はキャプチャ未ロードでも開ける
+（ファイルを探しに来た人がいる状態がまさにそれなので）。
+
+### 構成
+
+| ファイル | 役割 |
+|---|---|
+| `lib/build/bytes.ts` | ビッグエンディアン専用のバイトライタ、アドレス/プレフィックス符号化、インターネットチェックサム |
+| `lib/build/bgp-encode.ts` | OPEN / UPDATE / NOTIFICATION / KEEPALIVE / ROUTE_REFRESH のエンコーダ。`lib/bgp/*` の鏡 |
+| `lib/build/frame.ts` | TCP / IPv4 / IPv6 / Ethernet / Linux SLL の組み立て。VLAN・QinQ 対応 |
+| `lib/build/scenario.ts` | 記述されたセッション → フレーム列。TCP の seq/ack を一貫して進める |
+| `lib/build/presets.ts` | 実運用で当たる 8 シナリオ |
+| `pages/BuilderPage.tsx` | 画面。プレビューは組み立てたファイルを実パーサで読み戻したもの |
+
+### シナリオから導出するもの（入力させないもの）
+
+どちらも「選択」ではなく「帰結」なので、フォームに出さず計算している。
+
+- **UPDATE の符号化方式** — AS 番号幅（RFC 6793）と ADD-PATH の Path Identifier
+  （RFC 7911）は OPEN で交換される。両ピアの capability から `BgpSessionTracker`
+  と同じ規則で導出する。OPEN と UPDATE が食い違うキャプチャは、どのセッションにも
+  作れない
+- **TCP セグメント境界** — 1 ステップで送るメッセージはバイト列に詰めて MSS で切る。
+  MTU を下げることが「メッセージがセグメントをまたぐキャプチャ」の作り方になる
+
+### 検証
+
+- **往復テスト** (`tests/lib/build/round-trip.test.ts`, 30 件) — 組み立てた pcap を
+  `parsePcap` + `parseBgpFromPackets` で読み戻し、記述した通りのセッションに
+  なっているかを見る。バイト列を手書きの期待値と比べるとエンコーダを二度書くだけに
+  なるので、そうはしていない。エンコーダとデコーダが静かに乖離することも防げる
+- **チェックサム検証** (`tests/lib/build/checksums.test.ts`, 27 件) — 1 の補数和は
+  「チェックサムを含めて足すと 0」になる性質があるので、受信側スタックがやる検算を
+  そのまま回す。このアプリのパーサは IP/TCP チェックサムを見ないため、ここを
+  省くと「BGPShark でだけ読めるファイル」になっていても気づけない
+- **e2e** (`tests/e2e/builder.e2e.ts`, 8 件) — キャプチャ未ロードでルートが
+  ガードに飲まれないこと、組み立てたファイルが analyzer にロードできること
+
+実機確認: 生成した 8 プリセットを `file(1)` が
+`pcap capture file, microsecond ts (little-endian) - version 2.4 (Ethernet, ...)`
+と認識。flap プリセットを Open in analyzer → Routes で `10.9.9.0/24` が出る。
+
 ## 未対応
 
 （なし）

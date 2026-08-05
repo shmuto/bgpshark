@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { FileDropzone } from '../components'
 
@@ -43,6 +43,16 @@ export function FileUploadPage() {
             onFileLoad={loadFile}
             isLoading={status === 'loading' || status === 'initializing'}
           />
+
+          {/* Not everyone arrives with a capture. Reproducing a session failure
+              normally means a lab; the builder writes the file instead. */}
+          <p className="mt-6 text-sm text-muted">
+            No capture to hand?{' '}
+            <Link to="/builder" className="text-accent underline-offset-2 hover:underline">
+              Build one
+            </Link>{' '}
+            from a described BGP session.
+          </p>
 
           {/* Features section */}
           <div className="mt-12 max-w-2xl w-full">
