@@ -1,3 +1,5 @@
+import type { EvpnRoute } from './evpn'
+
 /**
  * BGP Message Types (RFC 4271)
  */
@@ -86,6 +88,13 @@ export interface BgpUpdateMessage {
 export interface BgpPrefix {
   prefix: string
   length: number
+  /**
+   * EVPN routes are not prefixes — they are a tagged union keyed by route
+   * type. The structured route lives here; `prefix` carries a readable
+   * one-liner so screens that list routes as text still have something to
+   * show, and `length` stays 0 because there is no mask to speak of.
+   */
+  evpn?: EvpnRoute
 }
 
 /**

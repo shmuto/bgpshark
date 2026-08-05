@@ -6,9 +6,10 @@
  * can honestly show, and at what magnitude a gap between packets stops being
  * readable as a decimal number of seconds.
  */
-import type { BgpMessage, BgpUpdateMessage } from './bgp/types'
+import type { BgpMessage, BgpPrefix, BgpUpdateMessage } from './bgp/types'
 import { countUpdatePrefixes, endOfRibMarker } from './bgp/update'
 import { formatPrefix } from './net/prefix'
+import { formatEvpnShort } from './bgp/evpn'
 
 /**
  * Prefixes shown per direction before the rest become a `+N` tail.
@@ -58,10 +59,12 @@ export function summarizePacketPrefixes(
   let endOfRib = false
   let sawUpdate = false
 
-  const take = (into: string[], prefixes: { prefix: string; length: number }[]) => {
+  const take = (into: string[], prefixes: BgpPrefix[]) => {
     for (const prefix of prefixes) {
       if (into.length >= limit) return
-      into.push(formatPrefix(prefix))
+      // An EVPN route's full description carries its RD and VNI as well, which
+      // is more than a column can hold; the detail view has room for those.
+      into.push(prefix.evpn ? formatEvpnShort(prefix.evpn) : formatPrefix(prefix))
     }
   }
 

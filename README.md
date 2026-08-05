@@ -14,6 +14,8 @@ uploaded to a server.
 - **Full BGP decode** — OPEN capabilities, UPDATE path attributes (AS_PATH,
   communities, large communities, MP_REACH/MP_UNREACH including IPv6 NLRI, …),
   NOTIFICATION error codes with troubleshooting hints
+- **EVPN** — MAC/IP Advertisement and Inclusive Multicast routes decoded to
+  their RD, MAC, VNI and ESI; the other route types identified
 - **Dashboard** — message counts, severity-sorted alerts, neighbor table and a
   message timeline
 - **Message Explorer** — packet list, hierarchical detail view, hex dump
