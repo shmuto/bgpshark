@@ -4,39 +4,9 @@ import { useApp } from '../context/AppContext'
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { BackToList, PaneDivider } from '../components/common'
 import { useSplitPane } from '../hooks/useSplitPane'
-import type { BgpPrefix, BgpUpdateMessage } from '../lib/bgp/types'
-import {
-  contains,
-  equals,
-  formatPrefix,
-  parseBgpPrefix,
-  parsePrefix,
-  type ParsedPrefix,
-} from '../lib/net/prefix'
-
-interface PrefixStats {
-  /**
-   * `prefix/length`. The address alone is not an identity: 10.0.12.0/24 and
-   * 10.0.12.0/23 are different routes and must not share a row.
-   */
-  key: string
-  parsed: ParsedPrefix | null
-  /** Every AS seen in an AS_PATH announcing this prefix, for AS number searches. */
-  asns: Set<string>
-  announced: number
-  withdrawn: number
-  lastSeen: Date
-  flap: number
-  history: PrefixEvent[]
-}
-
-interface PrefixEvent {
-  timestamp: Date
-  action: 'announce' | 'withdraw'
-  asPath?: string
-  nextHop?: string
-  packetIndex: number
-}
+import { useVirtualRows } from '../hooks/useVirtualRows'
+import { aggregatePrefixStats, type PrefixEvent, type PrefixStats } from '../lib/bgp/prefix-stats'
+import { contains, equals, parsePrefix, type ParsedPrefix } from '../lib/net/prefix'
 
 /** What the text in the search box turned out to be. */
 type Search =
@@ -148,113 +118,9 @@ export function RoutesPage() {
   const showList = !isCompact || selectedPrefix === null
   const showDetail = !isCompact || selectedPrefix !== null
 
-  // Extract all prefix events from packets
-  const prefixStats = useMemo(() => {
-    const stats = new Map<string, PrefixStats>()
-
-    /**
-     * Records one announce or withdraw against `prefix/length`. Every caller
-     * goes through here so the four NLRI sources cannot drift apart on how a
-     * route is keyed.
-     */
-    const record = (
-      prefix: BgpPrefix,
-      action: 'announce' | 'withdraw',
-      timestamp: Date,
-      packetIndex: number,
-      detail: { asPath?: string; nextHop?: string; asns?: string[] } = {}
-    ) => {
-      const key = formatPrefix(prefix)
-      let stat = stats.get(key)
-      if (!stat) {
-        stat = {
-          key,
-          parsed: parseBgpPrefix(prefix),
-          asns: new Set(),
-          announced: 0,
-          withdrawn: 0,
-          lastSeen: timestamp,
-          flap: 0,
-          history: [],
-        }
-        stats.set(key, stat)
-      }
-
-      if (action === 'announce') {
-        stat.announced++
-      } else {
-        stat.withdrawn++
-      }
-      stat.flap++
-      stat.lastSeen = timestamp
-      for (const asn of detail.asns ?? []) {
-        stat.asns.add(asn)
-      }
-      stat.history.push({
-        timestamp,
-        action,
-        asPath: detail.asPath,
-        nextHop: detail.nextHop,
-        packetIndex,
-      })
-    }
-
-    packets.forEach((packet, packetIndex) => {
-      for (const msg of packet.messages) {
-        if (msg.type !== 'UPDATE') continue
-        const update = msg as BgpUpdateMessage
-
-        // Get AS_PATH and NEXT_HOP from path attributes
-        let asNumbers: string[] = []
-        let asPath = ''
-        let nextHop = ''
-        for (const attr of update.pathAttributes || []) {
-          if (attr.parsed?.type === 'AS_PATH') {
-            asNumbers = attr.parsed.segments.flatMap(s => s.asNumbers).map(String)
-            asPath = asNumbers.join(' ')
-          }
-          if (attr.parsed?.type === 'NEXT_HOP') {
-            nextHop = attr.parsed.address
-          }
-        }
-
-        // Process NLRI (announced prefixes)
-        for (const nlri of update.nlri || []) {
-          record(nlri, 'announce', packet.timestamp, packetIndex, { asPath, nextHop, asns: asNumbers })
-        }
-
-        // Process withdrawn routes
-        for (const wr of update.withdrawnRoutes || []) {
-          record(wr, 'withdraw', packet.timestamp, packetIndex)
-        }
-
-        // Process MP_REACH_NLRI / MP_UNREACH_NLRI (IPv6 and other families)
-        for (const attr of update.pathAttributes || []) {
-          if (attr.parsed?.type === 'MP_REACH_NLRI') {
-            for (const nlri of attr.parsed.nlri || []) {
-              record(nlri, 'announce', packet.timestamp, packetIndex, {
-                asPath,
-                nextHop: attr.parsed.nextHop,
-                asns: asNumbers,
-              })
-            }
-          }
-          if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
-            for (const nlri of attr.parsed.withdrawnRoutes || []) {
-              record(nlri, 'withdraw', packet.timestamp, packetIndex)
-            }
-          }
-        }
-      }
-    })
-
-    // Sort history by timestamp
-    for (const stat of stats.values()) {
-      stat.history.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
-    }
-
-    return Array.from(stats.values())
-  }, [packets])
+  // The one pass over the capture. Searching and sorting work on the result, so
+  // typing in the box or clicking a header never walks the packets again.
+  const prefixStats = useMemo(() => aggregatePrefixStats(packets), [packets])
 
   /** Decide what kind of search the text is before matching anything against it. */
   const search = useMemo((): Search | null => {
@@ -302,6 +168,19 @@ export function RoutesPage() {
 
   const sortedPrefixes = useMemo(() => {
     const factor = sortDirection === 'asc' ? 1 : -1
+
+    /**
+     * What separates two routes the chosen column cannot tell apart.
+     *
+     * Flap is now a count of transitions, so a capture where nothing flapped
+     * leaves every row at zero. Falling back to how much was said about each
+     * route puts the ones worth looking at first instead of leaving the order
+     * to chance, and it stays a busiest-first tiebreak whichever way the column
+     * itself is pointing.
+     */
+    const tiebreak = (a: PrefixStats, b: PrefixStats) =>
+      b.eventCount - a.eventCount || a.key.localeCompare(b.key)
+
     return [...filteredPrefixes].sort((a, b) => {
       switch (sortColumn) {
         case 'prefix':
@@ -311,14 +190,19 @@ export function RoutesPage() {
           if (!a.parsed || !b.parsed) return a.key.localeCompare(b.key) * factor
           if (a.parsed.family !== b.parsed.family) return (a.parsed.family - b.parsed.family) * factor
           if (a.parsed.bits !== b.parsed.bits) return (a.parsed.bits < b.parsed.bits ? -1 : 1) * factor
-          return (a.parsed.length - b.parsed.length) * factor
+          return (a.parsed.length - b.parsed.length) * factor || tiebreak(a, b)
         case 'lastSeen':
-          return (a.lastSeen.getTime() - b.lastSeen.getTime()) * factor
+          return (a.lastSeenMs - b.lastSeenMs) * factor || tiebreak(a, b)
         default:
-          return (a[sortColumn] - b[sortColumn]) * factor
+          return (a[sortColumn] - b[sortColumn]) * factor || tiebreak(a, b)
       }
     })
   }, [filteredPrefixes, sortColumn, sortDirection])
+
+  // Only the rows near the viewport are mounted: a busy capture holds tens of
+  // thousands of routes, and asking the browser to lay all of them out is what
+  // made arriving on this screen hang.
+  const rows = useVirtualRows(sortedPrefixes.length)
 
   const toggleSort = (column: SortColumn) => {
     if (column === sortColumn) {
@@ -328,10 +212,13 @@ export function RoutesPage() {
     }
   }
 
-  // Get selected prefix stats
-  const selectedPrefixStats = selectedPrefix
-    ? prefixStats.find(s => s.key === selectedPrefix)
-    : null
+  // Get selected prefix stats. Looked up rather than scanned for, so a capture
+  // with tens of thousands of routes does not walk the list on every render.
+  const statsByPrefix = useMemo(
+    () => new Map(prefixStats.map(stat => [stat.key, stat])),
+    [prefixStats]
+  )
+  const selectedPrefixStats = selectedPrefix ? statsByPrefix.get(selectedPrefix) ?? null : null
 
   /**
    * The distinct AS_PATHs this prefix was announced with, most seen first.
@@ -455,9 +342,9 @@ export function RoutesPage() {
             <h2 className="font-semibold text-strong">Prefix Statistics</h2>
             <span className="text-xs text-muted ml-auto">{filteredPrefixes.length} prefixes</span>
           </div>
-          <div className="flex-1 overflow-auto">
+          <div ref={rows.containerRef} onScroll={rows.onScroll} className="flex-1 overflow-auto">
             <table className="w-full text-sm">
-              <thead className="bg-surface-sunken sticky top-0">
+              <thead ref={rows.measureHeaderRef} className="bg-surface-sunken sticky top-0">
                 <tr className="text-left text-muted">
                   <SortableHeader column="prefix" {...{ sortColumn, sortDirection, toggleSort }}>
                     Prefix
@@ -477,9 +364,19 @@ export function RoutesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-hair">
-                {sortedPrefixes.map((stat) => (
+                {/* Spacers stand in for the rows that are not mounted, so the
+                    scrollbar still measures the whole list. They carry no rule
+                    of their own, or the divider between real rows would double
+                    up at the edges of the window. */}
+                {rows.topSpacerHeight > 0 && (
+                  <tr aria-hidden="true" style={{ height: rows.topSpacerHeight, borderTopWidth: 0 }}>
+                    <td colSpan={5} style={{ padding: 0, border: 0 }} />
+                  </tr>
+                )}
+                {sortedPrefixes.slice(rows.startIndex, rows.endIndex).map((stat, i) => (
                   <tr
                     key={stat.key}
+                    ref={i === 0 ? rows.measureRowRef : undefined}
                     onClick={() => setSelectedPrefix(stat.key)}
                     className={`cursor-pointer hover:bg-surface-sunken ${
                       selectedPrefix === stat.key ? 'bg-accent-subtle' : ''
@@ -499,6 +396,11 @@ export function RoutesPage() {
                     </td>
                   </tr>
                 ))}
+                {rows.bottomSpacerHeight > 0 && (
+                  <tr aria-hidden="true" style={{ height: rows.bottomSpacerHeight, borderTopWidth: 0 }}>
+                    <td colSpan={5} style={{ padding: 0, border: 0 }} />
+                  </tr>
+                )}
               </tbody>
             </table>
             {sortedPrefixes.length === 0 && (
