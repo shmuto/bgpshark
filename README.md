@@ -200,6 +200,8 @@ The **Build** screen goes the other way: you describe a session and it writes th
 pcap. It needs no capture loaded, which is the state you are in when you come
 looking for one.
 
+![The capture builder: a session described on the left, the built pcap read back on the right](docs/images/builder.png)
+
 A scenario is two peers and a sequence of things that happen between them — the
 TCP handshake, the OPEN exchange, some UPDATEs, a NOTIFICATION, a reset. Pick one
 of the presets for the shape of the problem, then change the addresses, AS
@@ -216,6 +218,8 @@ consequences of it:
 - **Where TCP segment boundaries fall.** Messages sent in one step are packed
   into a byte stream and cut at the MSS. Lowering the MTU is therefore how you
   build a capture whose BGP messages span segments.
+
+![Editing a step: the messages inside one write, and the frames they produce](docs/images/builder-sequence.png)
 
 The same thing is available as a library, which is the better route for
 generating fixtures in bulk:
