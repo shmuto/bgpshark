@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import type { BgpPacket } from '../lib/bgp/types'
 import { parseQuery, matchPacket } from '../lib/filter'
-import { isInitialized, getMatchingFrameIndexes } from '../lib/db'
+import { isDataLoaded, getMatchingFrameIndexes } from '../lib/db'
 
 interface UseFilterOptions {
   useDuckDB?: boolean
@@ -54,7 +54,10 @@ export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) 
     // fall back to the synchronous pass until the new SQL query resolves.
     setAsyncFilteredPackets(null)
 
-    if (!useDuckDB || !isInitialized()) return
+    // Gated on the data being loaded, not on the database existing: querying a
+    // healthy connection whose load failed returns zero rows for everything,
+    // and that empty answer would replace the correct in-memory result below.
+    if (!useDuckDB || !isDataLoaded()) return
     if (!query.trim()) return
     // Don't execute if there are parse errors
     if (parsedQuery.errors.length > 0) return

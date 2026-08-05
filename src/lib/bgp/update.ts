@@ -399,3 +399,50 @@ function formatIpv6Prefix(octets: Uint8Array, _prefixLength: number): string {
   // Simple IPv6 formatting (no zero compression)
   return groups.join(':')
 }
+
+/**
+ * Detect an End-of-RIB marker (RFC 4724 §2).
+ *
+ * For IPv4 unicast the marker is the smallest possible UPDATE: no withdrawn
+ * routes and no path attributes at all. For any other AFI/SAFI it is an UPDATE
+ * whose only path attribute is an MP_UNREACH_NLRI that withdraws nothing.
+ * Returns a display label ("IPv4 Unicast", "IPv6 Unicast", …) or null.
+ *
+ * This is worth surfacing because EoR is the landmark of a converged initial
+ * advertisement — the thing to look for after a session (re-)establishes,
+ * especially around graceful restart.
+ */
+export function endOfRibMarker(update: BgpUpdateMessage): string | null {
+  if (update.withdrawnRoutes.length > 0 || update.nlri.length > 0) return null
+
+  if (update.pathAttributes.length === 0) {
+    return 'IPv4 Unicast'
+  }
+
+  if (update.pathAttributes.length === 1) {
+    const parsed = update.pathAttributes[0].parsed
+    if (parsed?.type === 'MP_UNREACH_NLRI' && parsed.withdrawnRoutes.length === 0) {
+      return `${parsed.afiName} ${parsed.safiName}`
+    }
+  }
+
+  return null
+}
+
+/**
+ * Announced / withdrawn prefix totals across both the classic IPv4 fields and
+ * the MP_REACH/MP_UNREACH attributes, so summaries agree with what the route
+ * analysis screen counts.
+ */
+export function countUpdatePrefixes(update: BgpUpdateMessage): {
+  announced: number
+  withdrawn: number
+} {
+  let announced = update.nlri.length
+  let withdrawn = update.withdrawnRoutes.length
+  for (const attr of update.pathAttributes) {
+    if (attr.parsed?.type === 'MP_REACH_NLRI') announced += attr.parsed.nlri.length
+    if (attr.parsed?.type === 'MP_UNREACH_NLRI') withdrawn += attr.parsed.withdrawnRoutes.length
+  }
+  return { announced, withdrawn }
+}

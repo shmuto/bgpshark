@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { extractNeighbors, getLatestOpen } from '../lib/bgp/neighbor'
 import type { BgpPacket, BgpNotificationMessage, BgpUpdateMessage, MpUnreachNlriAttribute } from '../lib/bgp/types'
+import type { GenericPacket } from '../lib/pcap'
 import {
   SummaryCards,
   AlertList,
@@ -143,6 +144,78 @@ function computeAlerts(packets: BgpPacket[]): DashboardAlert[] {
   })
 }
 
+/**
+ * When a capture holds no BGP at all, the interesting question is *why* — and
+ * the answer is usually visible at the TCP layer. A capture of SYNs answered
+ * by RSTs is a session failing to establish (filter, MD5/TCP-AO mismatch,
+ * BGP not running), and presenting that as "no issues detected" sends the
+ * engineer away from the evidence.
+ */
+function computeTransportAlerts(allPackets: GenericPacket[]): DashboardAlert[] {
+  const port179 = allPackets.filter(
+    (p) => p.protocol === 'TCP' && (p.srcPort === 179 || p.dstPort === 179)
+  )
+
+  if (port179.length === 0) {
+    const tcpCount = allPackets.filter((p) => p.protocol === 'TCP').length
+    return [
+      {
+        id: 'transport-no-179',
+        severity: 'warning',
+        title: 'No BGP messages and no TCP port 179 traffic',
+        detail:
+          tcpCount > 0
+            ? `${tcpCount} TCP packets on other ports — non-standard-port sessions are decoded only when BGP message markers are visible in the flow`
+            : 'The capture contains no TCP traffic',
+        timestamp: allPackets[0]?.timestamp ?? null,
+        filter: '',
+      },
+    ]
+  }
+
+  const syns = port179.filter((p) => p.dstPort === 179 && p.tcpFlags?.syn && !p.tcpFlags?.ack)
+  const synAcks = port179.filter((p) => p.srcPort === 179 && p.tcpFlags?.syn && p.tcpFlags?.ack)
+  const rsts = port179.filter((p) => p.srcPort === 179 && p.tcpFlags?.rst)
+  const withPayload = port179.filter((p) => p.payloadLength > 0)
+
+  if (withPayload.length === 0 && syns.length > 0 && rsts.length > 0) {
+    return [
+      {
+        id: 'transport-refused',
+        severity: 'critical',
+        title: 'TCP connections to port 179 are being refused',
+        detail: `${syns.length} SYNs answered by RST — the session never reaches BGP. Check ACLs/filters, MD5 (TCP-AO) configuration, or whether BGP is running on the peer`,
+        timestamp: syns[0].timestamp,
+        filter: '',
+      },
+    ]
+  }
+
+  if (withPayload.length === 0 && syns.length > 0 && synAcks.length === 0) {
+    return [
+      {
+        id: 'transport-unanswered',
+        severity: 'critical',
+        title: 'TCP SYNs to port 179 go unanswered',
+        detail: `${syns.length} SYNs with no SYN-ACK — traffic filtered in transit or the peer is unreachable`,
+        timestamp: syns[0].timestamp,
+        filter: '',
+      },
+    ]
+  }
+
+  return [
+    {
+      id: 'transport-no-bgp-payload',
+      severity: 'warning',
+      title: 'TCP port 179 traffic carries no decodable BGP',
+      detail: `${port179.length} packets on port 179 but no BGP messages could be decoded`,
+      timestamp: port179[0].timestamp,
+      filter: '',
+    },
+  ]
+}
+
 function computeNeighborRows(packets: BgpPacket[]): NeighborRow[] {
   const neighborsByIp = extractNeighbors(packets)
 
@@ -221,11 +294,15 @@ function computeTimeline(packets: BgpPacket[]): TimelineData {
 }
 
 export function DashboardPage() {
-  const { packets, fileName } = useApp()
+  const { packets, allPackets, fileName } = useApp()
   const navigate = useNavigate()
 
   const summary = useMemo(() => computeSummary(packets), [packets])
-  const alerts = useMemo(() => computeAlerts(packets), [packets])
+  const alerts = useMemo(
+    () =>
+      packets.length > 0 ? computeAlerts(packets) : computeTransportAlerts(allPackets),
+    [packets, allPackets]
+  )
   const neighborRows = useMemo(() => computeNeighborRows(packets), [packets])
   const timeline = useMemo(() => computeTimeline(packets), [packets])
 

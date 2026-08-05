@@ -1,4 +1,6 @@
 import { BinaryReader } from './reader'
+import { BgpFlowDetector } from './bgp-detect'
+import { parseIpv6Header } from './ipv6'
 import {
   type PcapGlobalHeader,
   type PcapPacketHeader,
@@ -12,7 +14,6 @@ import {
   IpProtocol,
 } from './types'
 
-const BGP_PORT = 179
 
 const ICMP_PROTOCOL = 1
 
@@ -37,6 +38,7 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
   const errors: string[] = []
   const packets: RawPacket[] = []
   const allPackets: GenericPacket[] = []
+  const bgpDetector = new BgpFlowDetector()
 
   try {
     const reader = new BinaryReader(buffer, true)
@@ -71,8 +73,14 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
       try {
         const packetHeader = parsePacketHeader(reader, globalHeader.isNanosecond)
 
+        // Plain pcap records carry no length of their own beyond this field, so
+        // a record that runs past the end of the file is the end of the file:
+        // there is no next record boundary left to resynchronise on.
         if (reader.remaining() < packetHeader.capturedLength) {
-          warnings.push(`Packet ${packetIndex}: truncated (missing ${packetHeader.capturedLength - reader.remaining()} bytes)`)
+          warnings.push(
+            `Packet ${packetIndex}: file appears truncated - record claims ${packetHeader.capturedLength} captured bytes but only ${reader.remaining()} are present; ` +
+              `parsing stopped at byte ${reader.offset} of ${reader.length}`
+          )
           break
         }
 
@@ -89,10 +97,14 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
           continue // Skip non-IP packets
         }
 
-        // Parse IP header
-        const ipResult = parseIpv4Header(packetReader, warnings, packetIndex)
+        // Parse IP header. Both families produce the same fields, so everything
+        // below this point is family-agnostic.
+        const ipResult =
+          linkResult.etherType === EtherType.IPV6
+            ? parseIpv6Header(packetReader, warnings, packetIndex)
+            : parseIpv4Header(packetReader, warnings, packetIndex)
         if (!ipResult) {
-          continue // Skip non-IPv4 or malformed
+          continue // Skip malformed headers and fragments we cannot interpret
         }
 
         const timestamp = new Date(
@@ -113,6 +125,7 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
             timestamp,
             capturedLength: packetHeader.capturedLength,
             originalLength: packetHeader.originalLength,
+            frameBytes: packetData,
             srcIp: ipResult.srcIp,
             dstIp: ipResult.dstIp,
             protocol: 'TCP',
@@ -123,10 +136,18 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
             payloadLength: tcpResult.payload.length,
           })
 
-          // Only add to BGP packets if port 179 and has payload
+          // BGP on port 179, or a flow the detector recognized by its
+          // message marker (non-standard ports; see bgp-detect.ts).
           if (
-            (tcpResult.srcPort === BGP_PORT || tcpResult.dstPort === BGP_PORT) &&
-            tcpResult.payload.length > 0
+            tcpResult.payload.length > 0 &&
+            bgpDetector.isBgp(
+              ipResult.srcIp,
+              tcpResult.srcPort,
+              ipResult.dstIp,
+              tcpResult.dstPort,
+              tcpResult.payload,
+              warnings
+            )
           ) {
             packets.push({
               frameIndex: packetIndex,
@@ -150,6 +171,7 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
               timestamp,
               capturedLength: packetHeader.capturedLength,
               originalLength: packetHeader.originalLength,
+              frameBytes: packetData,
               srcIp: ipResult.srcIp,
               dstIp: ipResult.dstIp,
               protocol: 'UDP',
@@ -166,6 +188,7 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
             timestamp,
             capturedLength: packetHeader.capturedLength,
             originalLength: packetHeader.originalLength,
+            frameBytes: packetData,
             srcIp: ipResult.srcIp,
             dstIp: ipResult.dstIp,
             protocol: getProtocolName(ipResult.protocol),
@@ -305,8 +328,7 @@ function parseEthernetFrame(
     etherType = reader.readUint16()
   }
 
-  // Only handle IPv4
-  if (etherType !== EtherType.IPV4) {
+  if (etherType !== EtherType.IPV4 && etherType !== EtherType.IPV6) {
     return null
   }
 
@@ -335,8 +357,7 @@ function parseSllFrame(
   reader.setLittleEndian(false)
   const etherType = reader.readUint16()
 
-  // Only handle IPv4
-  if (etherType !== EtherType.IPV4) {
+  if (etherType !== EtherType.IPV4 && etherType !== EtherType.IPV6) {
     return null
   }
 

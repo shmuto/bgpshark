@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import type { DashboardAlert } from './types'
+import { formatTimeOfDayUtc } from '../../lib/format-time'
 
 interface AlertListProps {
   alerts: DashboardAlert[]
@@ -39,7 +40,7 @@ export function AlertList({ alerts }: AlertListProps) {
                 </div>
                 <div className="text-xs text-muted mt-0.5 flex items-center gap-2 flex-wrap">
                   <span className="font-mono">{alert.detail}</span>
-                  {alert.timestamp && <span>{formatTime(alert.timestamp)}</span>}
+                  {alert.timestamp && <span>{formatTimeOfDayUtc(alert.timestamp)} UTC</span>}
                 </div>
               </div>
               <button
@@ -54,13 +55,4 @@ export function AlertList({ alerts }: AlertListProps) {
       )}
     </div>
   )
-}
-
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
 }

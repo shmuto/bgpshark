@@ -8,6 +8,7 @@ interface AppContextType {
   status: 'idle' | 'initializing' | 'loading' | 'ready' | 'error'
   packets: BgpPacket[]
   allPackets: GenericPacket[]
+  linkType: number | null
   fileName: string | null
   warnings: string[]
   error: string | null
@@ -28,6 +29,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     status: analyzer.state.status,
     packets: analyzer.state.packets,
     allPackets: analyzer.state.allPackets,
+    linkType: analyzer.state.linkType,
     fileName: analyzer.state.fileName,
     warnings: analyzer.state.warnings,
     error: analyzer.state.error,

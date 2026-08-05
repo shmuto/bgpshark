@@ -127,10 +127,15 @@ test.describe('what you are looking at is in the URL', () => {
   })
 
   test('and it survives a reload', async ({ page }) => {
-    await page.locator('tbody tr').first().click()
+    // Which prefix sorts first follows the flap counts, so the assertion names
+    // the row that was actually clicked rather than a prefix this test would
+    // have to keep in step with the sort.
+    const firstRow = page.locator('tbody tr').first()
+    const prefix = (await firstRow.locator('td').first().innerText()).trim()
+    await firstRow.click()
     await expect(page).toHaveURL(/prefix=/)
 
     await page.reload({ waitUntil: 'networkidle' })
-    await expect(page.getByRole('heading', { name: /Route History: 10\./ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: `Route History: ${prefix}` })).toBeVisible()
   })
 })

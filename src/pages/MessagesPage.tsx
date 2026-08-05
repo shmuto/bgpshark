@@ -17,8 +17,16 @@ import type {
   CommunitiesAttribute,
   LargeCommunitiesAttribute,
 } from '../lib/bgp/types'
-import type { GenericPacket } from '../lib/pcap'
+import { writePcap, sliceFileName, type GenericPacket } from '../lib/pcap'
 import { FILTER_FIELDS, type FilterFieldName } from '../lib/filter/parser'
+
+const MESSAGE_TYPE_BADGE_COLORS: Record<string, string> = {
+  OPEN: 'bg-bgp-open/15 text-bgp-open',
+  UPDATE: 'bg-bgp-update/15 text-bgp-update',
+  NOTIFICATION: 'bg-bgp-notification/15 text-bgp-notification',
+  KEEPALIVE: 'bg-bgp-keepalive/15 text-bgp-keepalive',
+  ROUTE_REFRESH: 'bg-bgp-route-refresh/15 text-bgp-route-refresh',
+}
 
 type FilterMode = 'simple' | 'advanced'
 type Operator = '=' | '!='
@@ -31,7 +39,7 @@ interface FilterRule {
 }
 
 export function MessagesPage() {
-  const { packets, allPackets, selectedPacketIndex, selectPacket } = useApp()
+  const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   const [showAllPackets, setShowAllPackets] = useState(false)
@@ -109,6 +117,24 @@ export function MessagesPage() {
     setSearchParams(next, { replace: true })
   }, [query, searchParams, setSearchParams])
 
+  // Message counts for the type badges, over the whole capture (not the
+  // filtered view) so the badges keep saying what exists.
+  const messageTypeCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      OPEN: 0,
+      UPDATE: 0,
+      NOTIFICATION: 0,
+      KEEPALIVE: 0,
+      ROUTE_REFRESH: 0,
+    }
+    for (const packet of packets) {
+      for (const msg of packet.messages) {
+        counts[msg.type] = (counts[msg.type] ?? 0) + 1
+      }
+    }
+    return counts
+  }, [packets])
+
   // Create display packets based on mode
   const displayPackets = useMemo((): DisplayPacket[] => {
     if (showAllPackets) {
@@ -139,6 +165,30 @@ export function MessagesPage() {
       }))
     }
   }, [filteredPackets, allPackets, showAllPackets])
+
+  /**
+   * Save whatever the list currently shows as a pcap.
+   *
+   * Frames are pulled from `allPackets` rather than from the displayed rows so
+   * they come out in capture order with their original bytes, whichever view
+   * built the list. What leaves here is a real capture: the same frames, under
+   * the same link type, readable by Wireshark and tcpdump.
+   */
+  const exportPcap = useCallback(() => {
+    if (linkType === null) return
+
+    const wanted = new Set(displayPackets.map((dp) => dp.packet.frameIndex))
+    const frames = allPackets.filter((p) => wanted.has(p.frameIndex))
+    if (frames.length === 0) return
+
+    const bytes = writePcap(frames, linkType)
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.tcpdump.pcap' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = sliceFileName(fileName)
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [displayPackets, allPackets, linkType, fileName])
 
   const selectedDisplayPacket = selectedPacketIndex !== null ? displayPackets[selectedPacketIndex] : null
   const selectedBgpPacket = selectedDisplayPacket?.kind === 'bgp' ? selectedDisplayPacket.packet : null
@@ -473,12 +523,16 @@ export function MessagesPage() {
                           </select>
                         )
                       }
+                      // Ports and frame numbers have no value list to offer, so
+                      // they land here as free text — typed as a number.
+                      const isNumeric = rule.field !== '' && FILTER_FIELDS[rule.field].valueType === 'number'
                       return (
                         <input
                           type="text"
+                          inputMode={isNumeric ? 'numeric' : undefined}
                           value={rule.value}
                           onChange={(e) => updateRule(rule.id, { value: e.target.value })}
-                          placeholder="Enter value..."
+                          placeholder={isNumeric ? 'Enter number...' : 'Enter value...'}
                           className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body min-w-[120px] placeholder:text-dim"
                         />
                       )
@@ -512,6 +566,50 @@ export function MessagesPage() {
           </div>
         )}
 
+        {/* Message counts up front, because the list is virtualized: 27 UPDATEs
+            that all sit below the fold are otherwise invisible to someone
+            scanning the Type column. Clicking a badge filters to that type
+            without knowing the filter syntax. */}
+        {!showAllPackets && packets.length > 0 && (
+          <div className="flex items-center gap-1.5 text-xs flex-wrap">
+            {(Object.entries(messageTypeCounts) as [string, number][])
+              .filter(([, count]) => count > 0)
+              .map(([type, count]) => {
+                const active = query.trim() === `type = ${type}`
+                return (
+                  <button
+                    key={type}
+                    onClick={() => setQuery(active ? '' : `type = ${type}`)}
+                    title={active ? 'Clear filter' : `Filter to ${type} messages`}
+                    className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
+                      MESSAGE_TYPE_BADGE_COLORS[type] ?? 'bg-surface-sunken text-muted'
+                    } ${active ? 'ring-1 ring-accent' : 'hover:opacity-75'}`}
+                  >
+                    {type} {count}
+                  </button>
+                )
+              })}
+          </div>
+        )}
+
+        {/* A capture with traffic but no BGP would otherwise present as an
+            empty list, which reads as "nothing captured". Point at the view
+            that actually has the evidence. */}
+        {!showAllPackets && packets.length === 0 && allPackets.length > 0 && (
+          <div className="text-xs text-warning flex items-center gap-2">
+            <span>
+              ⚠️ No BGP messages in this capture, but it contains {allPackets.length} other packets
+              (TCP handshakes, resets, …).
+            </span>
+            <button
+              onClick={() => setShowAllPackets(true)}
+              className="text-accent hover:text-accent-hover underline"
+            >
+              Show all packets
+            </button>
+          </div>
+        )}
+
         {/* Status bar */}
         <div className="flex items-center justify-between text-xs text-muted">
           <span>
@@ -523,6 +621,15 @@ export function MessagesPage() {
             <span className="text-critical" title={parseErrors.map(e => e.message).join('; ')}>
               {parseErrors[0]?.message}
             </span>
+          )}
+          {displayPackets.length > 0 && linkType !== null && (
+            <button
+              onClick={exportPcap}
+              title="Save the packets listed here as a pcap file"
+              className="ml-auto text-accent hover:text-accent-hover hover:underline"
+            >
+              ⬇ Export {displayPackets.length} packets as pcap
+            </button>
           )}
         </div>
       </div>

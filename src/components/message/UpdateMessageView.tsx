@@ -7,6 +7,7 @@ import type {
   MpReachNlriAttribute,
   MpUnreachNlriAttribute,
 } from '../../lib/bgp/types'
+import { endOfRibMarker } from '../../lib/bgp/update'
 
 interface UpdateMessageViewProps {
   message: BgpUpdateMessage
@@ -14,6 +15,8 @@ interface UpdateMessageViewProps {
 
 export function UpdateMessageView({ message }: UpdateMessageViewProps) {
   const [isExpanded, setIsExpanded] = useState(false)
+
+  const endOfRib = endOfRibMarker(message)
 
   // Collect all NLRI (IPv4 + MP_REACH_NLRI)
   const allNlri: BgpPrefix[] = [...message.nlri]
@@ -44,6 +47,20 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
         className="bg-surface-sunken rounded-lg border border-hair cursor-pointer hover:bg-surface-raised transition-colors"
         onClick={() => setIsExpanded(!isExpanded)}
       >
+        {/* An UPDATE that announces and withdraws nothing is the End-of-RIB
+            marker (RFC 4724) — the landmark of a finished initial
+            advertisement. Without the label it reads as a puzzling no-op. */}
+        {endOfRib && (
+          <div className="px-3 py-2 border-b border-hair flex items-center gap-2">
+            <span className="text-xs font-medium bg-accent-subtle text-accent px-1.5 py-0.5 rounded">
+              End-of-RIB
+            </span>
+            <span className="text-xs text-muted">
+              {endOfRib} — initial routing table advertisement is complete (RFC 4724)
+            </span>
+          </div>
+        )}
+
         {/* Summary Table */}
         <table className="w-full text-sm">
           <tbody>

@@ -114,8 +114,8 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
     const beforeCursor = value.slice(0, cursorPos)
     const afterCursor = value.slice(cursorPos)
 
-    // Check if this is an operator suggestion (=, !=, contains)
-    const isOperator = ['=', '!=', 'contains'].includes(suggestion.text)
+    // Check if this is an operator suggestion (=, !=, <, <=, >, >=, contains)
+    const isOperator = ['=', '!=', '<', '<=', '>', '>=', 'contains'].includes(suggestion.text)
 
     let wordStart: number
     if (isOperator) {

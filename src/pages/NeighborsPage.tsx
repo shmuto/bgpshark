@@ -7,6 +7,17 @@ import { useSplitPane } from '../hooks/useSplitPane'
 import type { BgpMessage, BgpOpenMessage, BgpUpdateMessage, BgpNotificationMessage } from '../lib/bgp/types'
 import { extractNeighbors, getLatestOpen, type OpenMessageRecord } from '../lib/bgp/neighbor'
 import { CapabilityDiff } from '../components/neighbor'
+import { formatTimeOfDayUtc } from '../lib/format-time'
+
+// Display names for the messageSummary keys; a bare uppercase() turns
+// routeRefresh into ROUTEREFRESH.
+const MESSAGE_TYPE_LABELS: Record<string, string> = {
+  open: 'OPEN',
+  update: 'UPDATE',
+  notification: 'NOTIFICATION',
+  keepalive: 'KEEPALIVE',
+  routeRefresh: 'ROUTE_REFRESH',
+}
 
 // Group by Router ID
 interface RouterGroup {
@@ -542,7 +553,7 @@ export function NeighborsPage() {
                 <tr className="text-left text-muted">
                   <th className="px-4 py-2 font-medium">Router ID / IP</th>
                   <th className="px-4 py-2 font-medium">AS</th>
-                  <th className="px-4 py-2 font-medium text-right">Msgs</th>
+                  <th className="px-4 py-2 font-medium text-right" title="Messages sent by this router">Msgs</th>
                   <th className="px-4 py-2 font-medium">Message Types</th>
                 </tr>
               </thead>
@@ -666,8 +677,12 @@ export function NeighborsPage() {
               <div className="grid grid-cols-2 gap-4">
                 {/* Message Summary */}
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
-                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-baseline justify-between gap-2">
                     <span className="text-sm font-medium text-strong">📊 Message Summary</span>
+                    {/* The overview table's "Msgs" counts what this router sent;
+                        this panel counts both directions of its sessions. Same
+                        router, different questions — say which one this is. */}
+                    <span className="text-xs text-muted">sent + received</span>
                   </div>
                   <div className="p-4">
                     {messageSummary && (
@@ -675,7 +690,7 @@ export function NeighborsPage() {
                         <tbody>
                           {Object.entries(messageSummary).map(([type, count]) => (
                             <tr key={type} className="border-b border-hair last:border-0">
-                              <td className="py-1 text-muted uppercase">{type}</td>
+                              <td className="py-1 text-muted">{MESSAGE_TYPE_LABELS[type] ?? type.toUpperCase()}</td>
                               <td className="py-1 text-right font-mono">{count}</td>
                             </tr>
                           ))}
@@ -752,7 +767,7 @@ export function NeighborsPage() {
                             {msg.srcIp} → {msg.dstIp}
                           </span>
                           <span className="text-xs text-dim">
-                            {formatTime(msg.timestamp)}
+                            {formatTimeOfDayUtc(msg.timestamp)}
                           </span>
                         </div>
                         <div className="text-xs text-muted mt-1 ml-14">
@@ -833,7 +848,7 @@ export function NeighborsPage() {
                               }`}
                             >
                               <td className="px-4 py-1.5 font-mono text-muted">
-                                {formatTime(msg.timestamp)}
+                                {formatTimeOfDayUtc(msg.timestamp)}
                               </td>
                               <td className="px-4 py-1.5 font-mono text-xs text-muted">
                                 {msg.srcIp} → {msg.dstIp}
@@ -966,11 +981,3 @@ function getMessageSummary(msg: BgpMessage): string {
   }
 }
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
-}

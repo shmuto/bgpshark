@@ -10,18 +10,20 @@ test.describe('parser warnings', () => {
     // noticed had nowhere to go.
     await loadCapture(page, 'truncated.pcapng', corruptCapture(readFileSync(SAMPLE)))
 
-    const banner = page.getByText(/warnings? during parsing/)
+    const banner = page.getByText(/warnings? loading this capture/)
     await expect(banner).toBeVisible()
 
     // Specific enough not to also match the file name in the header chip.
+    // The corrupted blocks are now skipped individually rather than
+    // desynchronizing the whole stream, so the warning names the skip.
     await banner.click()
-    await expect(page.getByText(/Invalid block length \d+ at offset \d+/)).toBeVisible()
+    await expect(page.getByText(/block skipped/).first()).toBeVisible()
   })
 
   test('a clean capture shows no banner', async ({ page }) => {
     await loadCapture(page, 'sample.pcapng', readFileSync(SAMPLE))
     await expect(page.getByText(/Showing \d+ of/)).toBeVisible()
-    await expect(page.getByText(/warnings? during parsing/)).toBeHidden()
+    await expect(page.getByText(/warnings? loading this capture/)).toBeHidden()
   })
 })
 
