@@ -6,9 +6,15 @@
  * copy and the docs.
  */
 
-export const MAX_FILE_SIZE = 10 * 1024 * 1024
+/**
+ * A few minutes of capture on a busy session clears 10MB easily, and the
+ * parser handles ~7MB in under 3 seconds, so the ceiling is set by memory
+ * comfort (the buffer is also persisted to IndexedDB and mirrored into
+ * DuckDB), not parse time.
+ */
+export const MAX_FILE_SIZE = 50 * 1024 * 1024
 
-export const MAX_FILE_SIZE_LABEL = '10MB'
+export const MAX_FILE_SIZE_LABEL = '50MB'
 
 export const ACCEPTED_EXTENSIONS = ['pcap', 'pcapng', 'cap'] as const
 
