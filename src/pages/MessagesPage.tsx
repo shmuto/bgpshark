@@ -473,12 +473,16 @@ export function MessagesPage() {
                           </select>
                         )
                       }
+                      // Ports and frame numbers have no value list to offer, so
+                      // they land here as free text — typed as a number.
+                      const isNumeric = rule.field !== '' && FILTER_FIELDS[rule.field].valueType === 'number'
                       return (
                         <input
                           type="text"
+                          inputMode={isNumeric ? 'numeric' : undefined}
                           value={rule.value}
                           onChange={(e) => updateRule(rule.id, { value: e.target.value })}
-                          placeholder="Enter value..."
+                          placeholder={isNumeric ? 'Enter number...' : 'Enter value...'}
                           className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body min-w-[120px] placeholder:text-dim"
                         />
                       )

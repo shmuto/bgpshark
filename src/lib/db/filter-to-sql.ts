@@ -1,8 +1,14 @@
 /**
  * Convert filter expression to SQL WHERE clause
  */
-import type { Expression, Comparison, Operator, FilterValue } from '../filter/parser'
-import { normalizeFieldName } from '../filter/parser'
+import type {
+  Expression,
+  Comparison,
+  MatchOperator,
+  OrderedOperator,
+  FilterValue,
+} from '../filter/parser'
+import { isOrderedOperator, normalizeFieldName } from '../filter/parser'
 import { bitKey, parsePrefix } from '../net/prefix'
 
 /**
@@ -31,6 +37,10 @@ function comparisonToSql(expr: Comparison): string {
   // Normalize field name to handle both old and new names
   const field = normalizeFieldName(expr.field)
 
+  if (isOrderedOperator(operator)) {
+    return orderedComparisonToSql(field, operator, value)
+  }
+
   switch (field) {
     case 'type':
       return messageFieldSql('type', operator, value)
@@ -40,6 +50,15 @@ function comparisonToSql(expr: Comparison): string {
 
     case 'dst_ip':
       return ipFieldSql('dst_ip', operator, value)
+
+    case 'src_port':
+      return numericPacketFieldSql('src_port', operator, value)
+
+    case 'dst_port':
+      return numericPacketFieldSql('dst_port', operator, value)
+
+    case 'frame':
+      return numericPacketFieldSql('frame_index', operator, value)
 
     case 'router_id':
       return messageFieldSql('router_id', operator, value, "type = 'OPEN'")
@@ -75,9 +94,82 @@ function comparisonToSql(expr: Comparison): string {
 }
 
 /**
+ * SQL for `<`, `<=`, `>`, `>=`, which only apply to the integer fields.
+ *
+ * Mirrors `evaluateOrderedComparison` in the in-memory evaluator field for
+ * field; the two paths have to select the same packets.
+ */
+function orderedComparisonToSql(field: string, operator: OrderedOperator, value: FilterValue): string {
+  const numeric = coerceNumericValue(value)
+  // A non-numeric right-hand side is a parse error; match nothing either way.
+  if (typeof numeric !== 'number') return '1=0'
+
+  switch (field) {
+    case 'src_port':
+      return `p.src_port ${operator} ${numeric}`
+
+    case 'dst_port':
+      return `p.dst_port ${operator} ${numeric}`
+
+    case 'frame':
+      return `p.frame_index ${operator} ${numeric}`
+
+    case 'src_as':
+      return `EXISTS (
+        SELECT 1 FROM messages m
+        WHERE m.frame_index = p.frame_index AND type = 'OPEN' AND m.my_as ${operator} ${numeric}
+      )`
+
+    case 'asn':
+      return `EXISTS (
+        SELECT 1 FROM as_path ap
+        JOIN messages m ON ap.message_id = m.id
+        WHERE m.frame_index = p.frame_index AND ap.asn ${operator} ${numeric}
+      )`
+
+    default:
+      return '1=0' // Ordered comparison on a non-numeric field
+  }
+}
+
+/**
+ * SQL for integer columns on the packets table (ports, frame number).
+ *
+ * The loader always writes these, so the negated forms need no NULL branch to
+ * stay the exact inverse of the in-memory `matchNumber`.
+ */
+function numericPacketFieldSql(column: string, operator: MatchOperator, value: FilterValue): string {
+  const numeric = coerceNumericValue(value)
+
+  if (typeof numeric === 'number') {
+    switch (operator) {
+      case '=':
+      case 'contains':
+        return `p.${column} = ${numeric}`
+      case '!=':
+      case 'not contains':
+        return `p.${column} != ${numeric}`
+    }
+  }
+
+  // Non-numeric input: fall back to text matching on the casted column
+  const strValue = escapeString(String(value))
+  switch (operator) {
+    case '=':
+      return `CAST(p.${column} AS VARCHAR) = '${strValue}'`
+    case '!=':
+      return `CAST(p.${column} AS VARCHAR) != '${strValue}'`
+    case 'contains':
+      return `CAST(p.${column} AS VARCHAR) LIKE '%${strValue}%'`
+    case 'not contains':
+      return `CAST(p.${column} AS VARCHAR) NOT LIKE '%${strValue}%'`
+  }
+}
+
+/**
  * SQL for message-level fields
  */
-function messageFieldSql(column: string, operator: Operator, value: FilterValue, extraCondition?: string): string {
+function messageFieldSql(column: string, operator: MatchOperator, value: FilterValue, extraCondition?: string): string {
   const strValue = escapeString(String(value))
   const condition = extraCondition ? `${extraCondition} AND ` : ''
 
@@ -100,7 +192,7 @@ function messageFieldSql(column: string, operator: Operator, value: FilterValue,
  */
 function numericMessageFieldSql(
   column: string,
-  operator: Operator,
+  operator: MatchOperator,
   value: FilterValue,
   extraCondition?: string
 ): string {
@@ -154,7 +246,7 @@ function coerceNumericValue(value: FilterValue): FilterValue {
 /**
  * SQL for IP address fields (supports prefix matching)
  */
-function ipFieldSql(column: string, operator: Operator, value: FilterValue): string {
+function ipFieldSql(column: string, operator: MatchOperator, value: FilterValue): string {
   const strValue = String(value)
   const query = parsePrefix(strValue)
 
@@ -191,7 +283,7 @@ function ipFieldSql(column: string, operator: Operator, value: FilterValue): str
 /**
  * SQL for capability search
  */
-function capabilitySql(operator: Operator, value: FilterValue): string {
+function capabilitySql(operator: MatchOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
   switch (operator) {
@@ -225,7 +317,7 @@ function capabilitySql(operator: Operator, value: FilterValue): string {
 /**
  * SQL for AS_PATH search
  */
-function asPathSql(operator: Operator, value: FilterValue): string {
+function asPathSql(operator: MatchOperator, value: FilterValue): string {
   // A quoted numeric value ("65001") is equivalent to the bare number
   value = coerceNumericValue(value)
 
@@ -293,7 +385,7 @@ function asPathSql(operator: Operator, value: FilterValue): string {
 /**
  * SQL for path attribute fields
  */
-function pathAttrSql(column: string, operator: Operator, value: FilterValue): string {
+function pathAttrSql(column: string, operator: MatchOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
   switch (operator) {
@@ -327,7 +419,7 @@ function pathAttrSql(column: string, operator: Operator, value: FilterValue): st
 /**
  * SQL for next hop (both NEXT_HOP attribute and MP_REACH_NLRI)
  */
-function nextHopSql(operator: Operator, value: FilterValue): string {
+function nextHopSql(operator: MatchOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
   // Check both path_attributes.next_hop and path_attributes for MP_REACH_NLRI
@@ -363,7 +455,7 @@ function nextHopSql(operator: Operator, value: FilterValue): string {
 /**
  * SQL for community search
  */
-function communitySql(operator: Operator, value: FilterValue): string {
+function communitySql(operator: MatchOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
   switch (operator) {
@@ -397,7 +489,7 @@ function communitySql(operator: Operator, value: FilterValue): string {
 /**
  * SQL for large community search
  */
-function largeCommunitySql(operator: Operator, value: FilterValue): string {
+function largeCommunitySql(operator: MatchOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
   switch (operator) {
@@ -436,7 +528,7 @@ function largeCommunitySql(operator: Operator, value: FilterValue): string {
  * `10.0.0.0/8` selects the routes inside it, and a bare address selects the
  * routes that cover it.
  */
-function prefixSql(table: 'nlri' | 'withdrawn', operator: Operator, value: FilterValue): string {
+function prefixSql(table: 'nlri' | 'withdrawn', operator: MatchOperator, value: FilterValue): string {
   const strValue = String(value)
   const query = parsePrefix(strValue)
 

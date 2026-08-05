@@ -19,7 +19,9 @@ uploaded to a server.
 - **Route Analysis** — per-prefix announce / withdraw history and flap counts
 - **SQL Console** — query the capture directly with DuckDB WASM
 - **Filter expressions** — `type = NOTIFICATION and src_ip = 10.0.0.1`, with
-  autocomplete and a rule-builder mode
+  autocomplete and a rule-builder mode. `src_port` / `dst_port` separate two TCP
+  sessions between the same IP pair, and `frame` takes `<`, `<=`, `>`, `>=` for a
+  frame range (`frame >= 100 and frame < 200`)
 - Loaded captures persist in IndexedDB and are restored on reload
 
 ## Getting started

@@ -30,7 +30,14 @@ export type Token =
   | { type: 'comma' }
   | { type: 'eof' }
 
-export type Operator = '=' | '!=' | 'contains' | 'not contains'
+// Ordered comparisons only exist for integer fields — see NUMERIC_FIELDS.
+export type OrderedOperator = '<' | '<=' | '>' | '>='
+export type MatchOperator = '=' | '!=' | 'contains' | 'not contains'
+export type Operator = MatchOperator | OrderedOperator
+
+export function isOrderedOperator(operator: Operator): operator is OrderedOperator {
+  return operator === '<' || operator === '<=' || operator === '>' || operator === '>='
+}
 
 // =============================================================================
 // AST Types
@@ -84,6 +91,21 @@ export const FILTER_FIELDS = {
     description: 'Destination IP (packets.dst_ip)',
     values: [] as string[],
     valueType: 'string' as const,
+  },
+  src_port: {
+    description: 'TCP source port — one side of a session; both: src_port = 179 or dst_port = 179',
+    values: [] as string[],
+    valueType: 'number' as const,
+  },
+  dst_port: {
+    description: 'TCP destination port — pairs with src_port to separate colliding sessions',
+    values: [] as string[],
+    valueType: 'number' as const,
+  },
+  frame: {
+    description: 'Frame number (the # column) — ranges with < <= > >=, e.g. frame >= 100',
+    values: [] as string[],
+    valueType: 'number' as const,
   },
 
   // Message-level fields (SQL: messages table)
@@ -165,6 +187,18 @@ export function normalizeFieldName(field: string): string {
   return FIELD_ALIASES[field] || field
 }
 
+// Fields whose values are plain integers. Only these accept < <= > >=; ordering
+// text would have to invent a collation that neither evaluator could agree on.
+const NUMERIC_FIELDS = new Set(
+  Object.entries(FILTER_FIELDS)
+    .filter(([, def]) => def.valueType === 'number')
+    .map(([name]) => name)
+)
+
+export function isNumericField(field: string): boolean {
+  return NUMERIC_FIELDS.has(normalizeFieldName(field))
+}
+
 // =============================================================================
 // Tokenizer
 // =============================================================================
@@ -202,6 +236,10 @@ export class Tokenizer {
           this.tokens.push({ type: 'operator', value: '=' })
           this.pos++
         }
+      } else if (char === '<' || char === '>') {
+        const operator = (this.peek(1) === '=' ? `${char}=` : char) as Operator
+        this.tokens.push({ type: 'operator', value: operator })
+        this.pos += operator.length
       } else if (char === '"' || char === "'") {
         this.tokens.push({ type: 'string', value: this.readQuoted() })
       } else if (this.isDigit(char)) {
@@ -487,6 +525,16 @@ export class Parser {
 
     if (value === '') {
       this.addError(`Expected value after "${field} ${operator}"`)
+    } else if (isOrderedOperator(operator)) {
+      // Both evaluators can only order integers, so the combination is rejected
+      // here rather than silently matching nothing.
+      if (!isNumericField(field)) {
+        this.addError(
+          `Operator "${operator}" is only valid for numeric fields (${[...NUMERIC_FIELDS].join(', ')}), got "${field}"`
+        )
+      } else if (typeof coerceNumericValue(value) !== 'number') {
+        this.addError(`Expected a number after "${field} ${operator}"`)
+      }
     }
 
     return { type: 'comparison', field, operator, value }
@@ -563,6 +611,10 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
   // Normalize field name to handle aliases
   const field = normalizeFieldName(expr.field)
 
+  if (isOrderedOperator(operator)) {
+    return evaluateOrderedComparison(field, operator, value, packet)
+  }
+
   switch (field) {
     case 'type':
       // Match if any message matches the type
@@ -573,6 +625,15 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
 
     case 'dst_ip':
       return matchIpAddress(packet.dstIp, operator, value)
+
+    case 'src_port':
+      return matchNumber(packet.srcPort, operator, value)
+
+    case 'dst_port':
+      return matchNumber(packet.dstPort, operator, value)
+
+    case 'frame':
+      return matchNumber(packet.frameIndex, operator, value)
 
     case 'router_id':
       for (const msg of packet.messages) {
@@ -657,6 +718,68 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
   }
 }
 
+/**
+ * Evaluates `<`, `<=`, `>`, `>=`, which only apply to the integer fields.
+ *
+ * Kept apart from the equality path so the field-by-field matchers keep their
+ * four-operator shape, and so the SQL compiler has a single mirror to follow.
+ */
+function evaluateOrderedComparison(
+  field: string,
+  operator: OrderedOperator,
+  value: FilterValue,
+  packet: BgpPacket
+): boolean {
+  const query = coerceNumericValue(value)
+  if (typeof query !== 'number') return false
+
+  switch (field) {
+    case 'src_port':
+      return compareOrdered(packet.srcPort, operator, query)
+
+    case 'dst_port':
+      return compareOrdered(packet.dstPort, operator, query)
+
+    case 'frame':
+      return compareOrdered(packet.frameIndex, operator, query)
+
+    case 'src_as':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'OPEN') continue
+        const openMsg = msg as BgpOpenMessage
+        const asNum = openMsg.fourByteAs ?? openMsg.myAs
+        if (compareOrdered(asNum, operator, query)) return true
+      }
+      return false
+
+    case 'asn':
+      // Any AS in the path satisfying the comparison selects the packet, the
+      // same question the EXISTS subquery asks in SQL.
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const aspath = getAsPath(msg as BgpUpdateMessage)
+        if (aspath.some((asNum) => compareOrdered(asNum, operator, query))) return true
+      }
+      return false
+
+    default:
+      return false
+  }
+}
+
+function compareOrdered(fieldValue: number, operator: OrderedOperator, query: number): boolean {
+  switch (operator) {
+    case '<':
+      return fieldValue < query
+    case '<=':
+      return fieldValue <= query
+    case '>':
+      return fieldValue > query
+    case '>=':
+      return fieldValue >= query
+  }
+}
+
 // =============================================================================
 // Helper functions for extracting BGP attributes
 // =============================================================================
@@ -734,7 +857,7 @@ function getWithdrawnPrefixes(msg: BgpUpdateMessage): BgpPrefix[] {
  * is what the same expression means once it reaches DuckDB. A plain address is
  * still a plain string comparison.
  */
-function matchIpAddress(fieldValue: string, operator: Operator, queryValue: FilterValue): boolean {
+function matchIpAddress(fieldValue: string, operator: MatchOperator, queryValue: FilterValue): boolean {
   const query = parsePrefix(String(queryValue))
   if (!query?.hasMask) return matchString(fieldValue, operator, queryValue)
 
@@ -750,7 +873,7 @@ function matchIpAddress(fieldValue: string, operator: Operator, queryValue: Filt
  * routes inside it, a bare address selects the routes that cover it. Text that
  * is not an address at all stays a substring search over `prefix/length`.
  */
-function matchPrefixes(prefixes: BgpPrefix[], operator: Operator, queryValue: FilterValue): boolean {
+function matchPrefixes(prefixes: BgpPrefix[], operator: MatchOperator, queryValue: FilterValue): boolean {
   const query = parsePrefix(String(queryValue))
   if (!query) {
     return matchStringArray(prefixes.map(formatPrefix), operator, queryValue)
@@ -764,7 +887,7 @@ function matchPrefixes(prefixes: BgpPrefix[], operator: Operator, queryValue: Fi
   return operator === '=' || operator === 'contains' ? hit : !hit
 }
 
-function matchString(fieldValue: string, operator: Operator, queryValue: FilterValue): boolean {
+function matchString(fieldValue: string, operator: MatchOperator, queryValue: FilterValue): boolean {
   const queryStr = String(queryValue).toLowerCase()
   const fieldLower = fieldValue.toLowerCase()
 
@@ -780,7 +903,7 @@ function matchString(fieldValue: string, operator: Operator, queryValue: FilterV
   }
 }
 
-function matchNumber(fieldValue: number, operator: Operator, queryValue: FilterValue): boolean {
+function matchNumber(fieldValue: number, operator: MatchOperator, queryValue: FilterValue): boolean {
   if (typeof queryValue === 'number') {
     switch (operator) {
       case '=':
@@ -809,7 +932,7 @@ function matchNumber(fieldValue: number, operator: Operator, queryValue: FilterV
   }
 }
 
-function matchNumberArray(fieldValues: number[], operator: Operator, queryValue: FilterValue): boolean {
+function matchNumberArray(fieldValues: number[], operator: MatchOperator, queryValue: FilterValue): boolean {
   // A quoted numeric value ("65001") is equivalent to the bare number
   queryValue = coerceNumericValue(queryValue)
 
@@ -866,7 +989,7 @@ function coerceNumericValue(value: FilterValue): FilterValue {
   return value
 }
 
-function matchStringArray(fieldValues: string[], operator: Operator, queryValue: FilterValue): boolean {
+function matchStringArray(fieldValues: string[], operator: MatchOperator, queryValue: FilterValue): boolean {
   const queryStr = String(queryValue).toLowerCase()
   const fieldLower = fieldValues.map((v) => v.toLowerCase())
 
@@ -1015,11 +1138,20 @@ export function getSuggestions(query: string, cursorPosition: number, packets: B
 
   // After field - suggest operators
   if (lastToken?.type === 'field') {
-    return [
+    const suggestions: Suggestion[] = [
       { text: '=', description: 'Equals', insertText: '=' },
       { text: '!=', description: 'Not equals', insertText: '!=' },
-      { text: 'contains', description: 'Contains', insertText: 'contains ' },
     ]
+    if (isNumericField(lastToken.value)) {
+      suggestions.push(
+        { text: '<', description: 'Less than', insertText: '<' },
+        { text: '<=', description: 'Less than or equal', insertText: '<=' },
+        { text: '>', description: 'Greater than', insertText: '>' },
+        { text: '>=', description: 'Greater than or equal', insertText: '>=' }
+      )
+    }
+    suggestions.push({ text: 'contains', description: 'Contains', insertText: 'contains ' })
+    return suggestions
   }
 
   // After logical operator with space - suggest fields
