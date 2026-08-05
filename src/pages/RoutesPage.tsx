@@ -7,6 +7,7 @@ import { useSplitPane } from '../hooks/useSplitPane'
 import { useVirtualRows } from '../hooks/useVirtualRows'
 import { aggregatePrefixStats, type PrefixEvent, type PrefixStats } from '../lib/bgp/prefix-stats'
 import { contains, equals, parsePrefix, type ParsedPrefix } from '../lib/net/prefix'
+import { formatTimeOfDayUtc } from '../lib/format-time'
 
 /** What the text in the search box turned out to be. */
 type Search =
@@ -386,7 +387,7 @@ export function RoutesPage() {
                     <td className="px-4 py-2 text-right text-ok">{stat.announced}</td>
                     <td className="px-4 py-2 text-right text-critical">{stat.withdrawn}</td>
                     <td className="px-4 py-2 text-right font-mono text-muted">
-                      {formatTime(stat.lastSeen)}
+                      {formatTimeOfDayUtc(stat.lastSeen)}
                     </td>
                     <td className="px-4 py-2 text-right">
                       <span className={stat.flap > 10 ? 'text-warning font-medium' : 'text-muted'}>
@@ -452,7 +453,7 @@ export function RoutesPage() {
                       className="cursor-pointer hover:bg-surface-sunken"
                     >
                       <td className="px-4 py-2 font-mono text-muted">
-                        {formatTime(event.timestamp)}
+                        {formatTimeOfDayUtc(event.timestamp)}
                       </td>
                       <td className="px-4 py-2">
                         {event.action === 'announce' ? (
@@ -562,15 +563,4 @@ function SortableHeader({
       </button>
     </th>
   )
-}
-
-function formatTime(date: Date): string {
-  const time = date.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
-  const ms = String(date.getMilliseconds()).padStart(3, '0').slice(0, 2)
-  return `${time}.${ms}`
 }
