@@ -321,7 +321,7 @@ export function SqlConsolePage() {
               <SchemaTable name="as_path" columns={['message_id', 'segment_index', 'asn']} />
               <SchemaTable name="nlri" columns={['message_id', 'prefix']} />
               <SchemaTable name="withdrawn" columns={['message_id', 'prefix']} />
-              <SchemaTable name="communities" columns={['message_id', 'community']} />
+              <SchemaTable name="communities" columns={['message_id', 'asn', 'value', 'formatted']} />
             </div>
           </div>
         </div>

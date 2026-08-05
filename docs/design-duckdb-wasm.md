@@ -1,5 +1,22 @@
 # BGPShark DuckDB WASM 設計書
 
+> **本書の位置づけ**: DuckDB WASM を導入する際に書いた当初の提案。移行は完了しており、
+> 実装は提案どおりにはなっていない。**現在の設計は `design.md`（4.3節）が正**で、
+> スキーマの唯一の定義元は `src/lib/db/schema.ts`。
+>
+> 主な差分:
+>
+> | 項目 | 本書の提案 | 実装 |
+> |------|-----------|------|
+> | バンドル配信 | jsDelivr CDN | 自己ホスト（`?url` import で `dist/assets/` から配信。CSPのため） |
+> | クエリAPI | `getPackets` / `getNeighborSummary` / `getAsPathStats` / `getPrefixStats` | `getMatchingFrameIndexes` と `executeRawSql` の2つだけ |
+> | SQL結果の扱い | 行から `BgpPacket` を再構築 | フレーム番号だけを返し、パース済みオブジェクトに突き合わせる |
+> | 集計画面 | DuckDBで集計 | インメモリ（`useMemo`）。DuckDBが落ちても画面が動く |
+> | Reactフック | 新規 `useDuckDB` | 作らず、`useBgpAnalyzer` と `useFilter` に統合 |
+> | CIDR照合 | PostgreSQL の `inet` 演算子 | DuckDBに `inet` 型はないため、ビット列カラム＋`LIKE 'bits%'` |
+>
+> 以下は当時の提案そのまま（スキーマ節のみ実装に追従して更新済み）。
+
 ## 概要
 
 現在のIn-memory React stateベースのアーキテクチャから、DuckDB WASMを使用したSQLベースのクエリエンジンに移行する設計。
@@ -59,6 +76,9 @@
 
 ## データベーススキーマ
 
+以下は実装済みのスキーマ（`src/lib/db/schema.ts` の要約。SQLコンソールで叩けるのはこの形）。
+外部キー制約は張っていない（DuckDBはインメモリの使い捨てで、投入元が単一のローダーのため）。
+
 ### 1. packets テーブル (メインテーブル)
 
 ```sql
@@ -67,38 +87,45 @@ CREATE TABLE packets (
   timestamp       TIMESTAMP,            -- パケットタイムスタンプ
   src_ip          VARCHAR,              -- 送信元IP
   dst_ip          VARCHAR,              -- 宛先IP
+  src_ip_bits     VARCHAR,              -- アドレスのビット列 (lib/net/prefix.ts)
+  dst_ip_bits     VARCHAR,
   src_port        INTEGER,              -- 送信元ポート
   dst_port        INTEGER,              -- 宛先ポート
-  raw_data        BLOB,                 -- 生データ (HexDump用)
+  raw_data_base64 VARCHAR,              -- 生データ (base64)
   parse_warnings  VARCHAR[]             -- パース警告
 );
 ```
+
+`*_bits` は printable なアドレスと並べて持つビット列。CIDR照合を
+「クエリのビット列で始まるか」＝`LIKE 'bits%'` として書けるようにするためで、
+IPv6にも同じ形で効く。
 
 ### 2. messages テーブル (BGPメッセージ)
 
 ```sql
 CREATE TABLE messages (
-  id              INTEGER PRIMARY KEY,  -- 自動生成ID
-  frame_index     INTEGER,              -- パケットへの外部キー
-  message_index   INTEGER,              -- パケット内でのインデックス
-  type            VARCHAR,              -- OPEN, UPDATE, NOTIFICATION, KEEPALIVE, ROUTE_REFRESH
-  length          INTEGER,              -- メッセージ長
+  id                 INTEGER PRIMARY KEY,  -- 連番
+  frame_index        INTEGER NOT NULL,     -- packets.frame_index
+  message_index      INTEGER NOT NULL,     -- パケット内でのインデックス
+  type               VARCHAR NOT NULL,     -- OPEN, UPDATE, NOTIFICATION, KEEPALIVE, ROUTE_REFRESH
 
   -- OPEN message fields
-  version         INTEGER,
-  my_as           INTEGER,              -- AS番号 (4バイト対応)
-  hold_time       INTEGER,
-  router_id       VARCHAR,
+  version            INTEGER,
+  my_as              INTEGER,              -- AS番号 (4バイト対応)
+  hold_time          INTEGER,
+  router_id          VARCHAR,
 
   -- NOTIFICATION fields
-  error_code      INTEGER,
-  error_subcode   INTEGER,
+  error_code         INTEGER,
+  error_subcode      INTEGER,
+  error_code_name    VARCHAR,
+  error_subcode_name VARCHAR,
 
   -- ROUTE_REFRESH fields
-  afi             INTEGER,
-  safi            INTEGER,
-
-  FOREIGN KEY (frame_index) REFERENCES packets(frame_index)
+  afi                INTEGER,
+  safi               INTEGER,
+  afi_name           VARCHAR,
+  safi_name          VARCHAR
 );
 
 -- インデックス
@@ -113,34 +140,47 @@ CREATE INDEX idx_messages_my_as ON messages(my_as);
 ```sql
 CREATE TABLE capabilities (
   id              INTEGER PRIMARY KEY,
-  message_id      INTEGER,              -- messagesへの外部キー
+  message_id      INTEGER NOT NULL,     -- messages.id
   code            INTEGER,              -- Capability Code
   name            VARCHAR,              -- e.g., MULTIPROTOCOL, FOUR_OCTET_AS
-  value           BLOB,                 -- 生の値
 
-  FOREIGN KEY (message_id) REFERENCES messages(id)
+  -- パース済みの値
+  cap_type        VARCHAR,
+  cap_afi         INTEGER,
+  cap_afi_name    VARCHAR,
+  cap_safi        INTEGER,
+  cap_safi_name   VARCHAR,
+  cap_as_number   INTEGER
 );
 
 CREATE INDEX idx_capabilities_message ON capabilities(message_id);
 CREATE INDEX idx_capabilities_name ON capabilities(name);
 ```
 
+AFI/SAFI 1組とAS番号1個ぶんの列しかないので、ADD-PATH のファミリ別リストや
+Graceful Restart の forwarding state はここに入らない。この表からOPENを
+復元できないのは意図した制約（`design.md` 4.3節）。
+
 ### 4. path_attributes テーブル (UPDATE の Path Attributes)
 
 ```sql
 CREATE TABLE path_attributes (
-  id              INTEGER PRIMARY KEY,
-  message_id      INTEGER,              -- messagesへの外部キー
-  type_code       INTEGER,              -- Attribute Type Code
-  type_name       VARCHAR,              -- e.g., ORIGIN, AS_PATH, NEXT_HOP
-  flags           INTEGER,              -- Optional, Transitive, Partial, Extended Length
+  id               INTEGER PRIMARY KEY,
+  message_id       INTEGER NOT NULL,    -- messages.id
+  type_code        INTEGER,             -- Attribute Type Code
+  type_name        VARCHAR,             -- e.g., ORIGIN, AS_PATH, NEXT_HOP
+  flags_optional   BOOLEAN,
+  flags_transitive BOOLEAN,
+  flags_partial    BOOLEAN,
+  flags_extended   BOOLEAN,
 
-  -- 型別の値 (1つのみ使用)
-  value_string    VARCHAR,              -- ORIGIN, NEXT_HOP等
-  value_integer   INTEGER,              -- MED, LOCAL_PREF等
-  value_blob      BLOB,                 -- その他
-
-  FOREIGN KEY (message_id) REFERENCES messages(id)
+  -- パース済みの値
+  origin_value     VARCHAR,
+  next_hop         VARCHAR,
+  med_value        INTEGER,
+  local_pref       INTEGER,
+  aggregator_as    INTEGER,
+  aggregator_addr  VARCHAR
 );
 
 CREATE INDEX idx_path_attrs_message ON path_attributes(message_id);
@@ -152,13 +192,11 @@ CREATE INDEX idx_path_attrs_type ON path_attributes(type_name);
 ```sql
 CREATE TABLE as_path (
   id              INTEGER PRIMARY KEY,
-  message_id      INTEGER,
+  message_id      INTEGER NOT NULL,
   segment_type    VARCHAR,              -- AS_SEQUENCE, AS_SET
   segment_index   INTEGER,              -- セグメント順序
   as_index        INTEGER,              -- セグメント内順序
-  asn             INTEGER,              -- AS番号
-
-  FOREIGN KEY (message_id) REFERENCES messages(id)
+  asn             INTEGER               -- AS番号
 );
 
 -- AS番号検索用インデックス
@@ -171,35 +209,38 @@ CREATE INDEX idx_as_path_asn ON as_path(asn);
 ```sql
 CREATE TABLE nlri (
   id              INTEGER PRIMARY KEY,
-  message_id      INTEGER,
+  message_id      INTEGER NOT NULL,
   prefix          VARCHAR,              -- e.g., "10.0.0.0/8"
   prefix_length   INTEGER,              -- 8
-  afi             INTEGER,              -- 1=IPv4, 2=IPv6
-  safi            INTEGER,              -- 1=unicast, 2=multicast
-
-  FOREIGN KEY (message_id) REFERENCES messages(id)
+  prefix_bits     VARCHAR,              -- ネットワーク部のビット列
+  afi             INTEGER DEFAULT 1,    -- 1=IPv4, 2=IPv6
+  safi            INTEGER DEFAULT 1     -- 1=unicast, 2=multicast
 );
 
 CREATE INDEX idx_nlri_message ON nlri(message_id);
 CREATE INDEX idx_nlri_prefix ON nlri(prefix);
+CREATE INDEX idx_nlri_prefix_bits ON nlri(prefix_bits);
 ```
+
+あるPrefixが別のPrefixの内側にあるのは、ビット列が相手のビット列で始まるときだけ。
+このインデックスで包含検索が引ける。
 
 ### 7. withdrawn テーブル (Withdrawn Routes)
 
 ```sql
 CREATE TABLE withdrawn (
   id              INTEGER PRIMARY KEY,
-  message_id      INTEGER,
+  message_id      INTEGER NOT NULL,
   prefix          VARCHAR,
   prefix_length   INTEGER,
-  afi             INTEGER,
-  safi            INTEGER,
-
-  FOREIGN KEY (message_id) REFERENCES messages(id)
+  prefix_bits     VARCHAR,
+  afi             INTEGER DEFAULT 1,
+  safi            INTEGER DEFAULT 1
 );
 
 CREATE INDEX idx_withdrawn_message ON withdrawn(message_id);
 CREATE INDEX idx_withdrawn_prefix ON withdrawn(prefix);
+CREATE INDEX idx_withdrawn_prefix_bits ON withdrawn(prefix_bits);
 ```
 
 ### 8. communities テーブル (通常コミュニティ)
@@ -207,12 +248,10 @@ CREATE INDEX idx_withdrawn_prefix ON withdrawn(prefix);
 ```sql
 CREATE TABLE communities (
   id              INTEGER PRIMARY KEY,
-  message_id      INTEGER,
+  message_id      INTEGER NOT NULL,
   asn             INTEGER,              -- 上位16ビット
   value           INTEGER,              -- 下位16ビット
-  formatted       VARCHAR,              -- "65000:100"
-
-  FOREIGN KEY (message_id) REFERENCES messages(id)
+  formatted       VARCHAR               -- "65000:100"
 );
 
 CREATE INDEX idx_communities_message ON communities(message_id);
@@ -224,13 +263,11 @@ CREATE INDEX idx_communities_formatted ON communities(formatted);
 ```sql
 CREATE TABLE large_communities (
   id              INTEGER PRIMARY KEY,
-  message_id      INTEGER,
+  message_id      INTEGER NOT NULL,
   global_admin    INTEGER,              -- Global Administrator
   local_data1     INTEGER,              -- Local Data Part 1
   local_data2     INTEGER,              -- Local Data Part 2
-  formatted       VARCHAR,              -- "65000:100:200"
-
-  FOREIGN KEY (message_id) REFERENCES messages(id)
+  formatted       VARCHAR               -- "65000:100:200"
 );
 
 CREATE INDEX idx_large_communities_message ON large_communities(message_id);
@@ -259,7 +296,12 @@ src/
 └── components/                       # 最小限の変更
 ```
 
+> 実装では `src/lib/db/` はこの構成どおりだが、`useDuckDB.ts` は作らなかった。
+> 初期化とロードは `useBgpAnalyzer`、クエリは `useFilter` が直接呼ぶ。
+
 ## 主要コンポーネント設計
+
+> 以下のコード片は当時の提案。実装は `src/lib/db/` を参照。差分の要点は各節の注記に示す。
 
 ### 1. database.ts - DuckDB管理
 
@@ -311,6 +353,12 @@ export async function resetDatabase(): Promise<void> {
   }
 }
 ```
+
+> 実装との差分: バンドルは jsDelivr ではなく自己ホスト（`duckdb-mvp.wasm` /
+> `duckdb-eh.wasm` を Vite の `?url` で取り込み、同一オリジンから配信）。
+> CSP が外部オリジンを禁じているため、blob でワーカーを包む必要もない。
+> `@duckdb/duckdb-wasm` 自体も動的 import で、初回描画のバンドルから外してある。
+> `coi` バンドルは COOP/COEP を必要とし GitHub Pages では出せないので同梱しない。
 
 ### 2. loader.ts - データロード
 
@@ -479,6 +527,11 @@ function sqlOperator(op: string): string {
 }
 ```
 
+> 実装との差分: DuckDB に `inet` 型はないので、CIDR照合は `inet` 演算子ではなく
+> ビット列カラムの `LIKE 'bits%'` で表現している（`src/lib/db/filter-to-sql.ts`）。
+> 値の埋め込みもエスケープを通す。インメモリ評価側（`lib/filter/parser.ts`）と
+> 同じ `lib/net/prefix.ts` を使うので、2つのバックエンドの答えが一致する。
+
 ### 4. queries.ts - 定義済みクエリ
 
 ```typescript
@@ -576,6 +629,13 @@ export async function getPrefixStats(): Promise<PrefixStats[]> {
 }
 ```
 
+> 実装との差分: ここに並ぶ集計クエリ（`getNeighborSummary` / `getAsPathStats` /
+> `getPrefixStats`）と `getPackets` はいずれも残っていない。集計は各画面が
+> `useMemo` でインメモリに計算する（DuckDBが初期化できなくても画面が動くのはこのため）。
+> `getPackets` は行から `BgpPacket` を組み直していたが、フラット化した表では
+> Capability を復元できず、フィルタ適用時にOPEN詳細が落ちた。現在 DuckDB から
+> 出てくるのはフレーム番号だけ。
+
 ### 5. useDuckDB.ts - Reactフック
 
 ```typescript
@@ -644,6 +704,9 @@ export function useDuckDB() {
 
 ## 移行戦略
 
+> Phase 1〜3 は完了（フックは `useDuckDB` ではなく既存フックへの統合という形になった）。
+> Phase 4 は未着手で、SQLコンソールの結果CSVエクスポートだけが入っている。
+
 ### Phase 1: 基盤構築 (1週目)
 1. DuckDB WASMのセットアップ
 2. スキーマ定義
@@ -675,10 +738,14 @@ export function useDuckDB() {
 
 ## デメリット・考慮点
 
-1. **初期ロード時間**: WASMバイナリのダウンロード (約10MB)
+1. **初期ロード時間**: WASMバイナリのダウンロード。自己ホストのため `dist/` は
+   2つのバンドルぶん重くなるが、ブラウザが取得するのは選択された1つだけ。
+   読み込みも遅延させてあり、アップロード画面には乗らない（`design.md` 3.3節）
 2. **メモリ使用量**: DuckDB自体のオーバーヘッド
 3. **複雑性**: SQLとJSの型変換が必要
 4. **デバッグ**: SQL実行のトラブルシューティング
+5. **初期化失敗**: WASMが動かない環境がありうるので、フィルタはインメモリ評価へ
+   フォールバックし、SQLコンソールだけが使えなくなる作りにしてある
 
 ## 代替案
 
