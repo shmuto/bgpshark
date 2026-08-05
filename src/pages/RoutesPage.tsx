@@ -7,7 +7,8 @@ import { useSplitPane } from '../hooks/useSplitPane'
 import { useVirtualRows } from '../hooks/useVirtualRows'
 import { aggregatePrefixStats, type PrefixEvent, type PrefixStats } from '../lib/bgp/prefix-stats'
 import { contains, equals, parsePrefix, type ParsedPrefix } from '../lib/net/prefix'
-import { formatTimeOfDayUtc } from '../lib/format-time'
+import { formatDelta, formatTimeOfDayUtc } from '../lib/format-time'
+import { collapsePrepends, formatAsPath } from '../lib/bgp/as-path-display'
 
 /** What the text in the search box turned out to be. */
 type Search =
@@ -76,6 +77,15 @@ export function RoutesPage() {
   const sortDirection: SortDirection = searchParams.get('dir') === 'asc' ? 'asc' : 'desc'
   // A bare link searches downwards, which is what a link to a block is usually
   // about.
+  /**
+   * Narrow to the routes one peer announced. Arrives from the neighbours
+   * screen, where the question "what is this peer sending me" starts.
+   */
+  const peerFilter = useMemo(
+    () => (searchParams.get('peer') ?? '').split(',').filter(Boolean),
+    [searchParams]
+  )
+
   const matchMode: MatchMode = isMatchMode(searchParams.get('match'))
     ? (searchParams.get('match') as MatchMode)
     : 'subnets'
@@ -140,7 +150,14 @@ export function RoutesPage() {
   }, [searchQuery])
 
   // Filter prefixes
+  const peerFilteredPrefixes = useMemo(() => {
+    if (peerFilter.length === 0) return prefixStats
+    const peers = new Set(peerFilter)
+    return prefixStats.filter((stat) => stat.history.some((event) => peers.has(event.source)))
+  }, [prefixStats, peerFilter])
+
   const filteredPrefixes = useMemo(() => {
+    const prefixStats = peerFilteredPrefixes
     if (!search) return prefixStats
 
     switch (search.kind) {
@@ -165,7 +182,7 @@ export function RoutesPage() {
       case 'text':
         return prefixStats.filter(stat => stat.key.toLowerCase().includes(search.text))
     }
-  }, [prefixStats, search, matchMode])
+  }, [peerFilteredPrefixes, search, matchMode])
 
   const sortedPrefixes = useMemo(() => {
     const factor = sortDirection === 'asc' ? 1 : -1
@@ -341,6 +358,15 @@ export function RoutesPage() {
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <span>📊</span>
             <h2 className="font-semibold text-strong">Prefix Statistics</h2>
+            {peerFilter.length > 0 && (
+              <button
+                onClick={() => updateParams({ peer: null })}
+                title="Show routes from every peer"
+                className="text-xs bg-accent-subtle text-accent rounded px-2 py-0.5 hover:opacity-75"
+              >
+                from {peerFilter.join(', ')} ✕
+              </button>
+            )}
             <span className="text-xs text-muted ml-auto">{filteredPrefixes.length} prefixes</span>
           </div>
           <div ref={rows.containerRef} onScroll={rows.onScroll} className="flex-1 overflow-auto">
@@ -440,13 +466,17 @@ export function RoutesPage() {
                 <thead className="bg-surface-sunken sticky top-0">
                   <tr className="text-left text-muted">
                     <th className="px-4 py-2 font-medium">Time</th>
+                    <th className="px-4 py-2 font-medium" title="Time since the previous event">Δ</th>
                     <th className="px-4 py-2 font-medium">Action</th>
                     <th className="px-4 py-2 font-medium">AS_PATH</th>
+                    <th className="px-4 py-2 font-medium" title="The peer this event arrived from">From</th>
                     <th className="px-4 py-2 font-medium">Next Hop</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-hair">
-                  {selectedPrefixStats.history.slice().reverse().map((event, idx) => (
+                  {/* Newest first, so the gap shown on a row is the one back to
+                      the event before it in time — the wait that produced it. */}
+                  {selectedPrefixStats.history.slice().reverse().map((event, idx, rows) => (
                     <tr
                       key={idx}
                       onClick={() => handleHistoryClick(event)}
@@ -454,6 +484,11 @@ export function RoutesPage() {
                     >
                       <td className="px-4 py-2 font-mono text-muted">
                         {formatTimeOfDayUtc(event.timestamp)}
+                      </td>
+                      <td className="px-4 py-2 font-mono text-dim whitespace-nowrap">
+                        {idx < rows.length - 1
+                          ? formatDelta(event.timestamp.getTime() - rows[idx + 1].timestamp.getTime())
+                          : '-'}
                       </td>
                       <td className="px-4 py-2">
                         {event.action === 'announce' ? (
@@ -463,8 +498,9 @@ export function RoutesPage() {
                         )}
                       </td>
                       <td className="px-4 py-2 font-mono text-muted">
-                        {event.asPath || '-'}
+                        {event.asPath ? formatAsPath(event.asPath) : '-'}
                       </td>
+                      <td className="px-4 py-2 font-mono text-muted">{event.source}</td>
                       <td className="px-4 py-2 font-mono text-muted">
                         {event.nextHop || '-'}
                       </td>
@@ -498,11 +534,16 @@ export function RoutesPage() {
                   className="flex items-center gap-2 flex-wrap text-sm"
                 >
                   <div className="flex items-center gap-1 flex-wrap">
-                    {variant.path.map((asn, hop) => (
-                      <span key={hop} className="flex items-center gap-1">
-                        {hop > 0 && <span className="text-dim">▶</span>}
+                    {collapsePrepends(variant.path).map((hop, i) => (
+                      <span key={i} className="flex items-center gap-1">
+                        {i > 0 && <span className="text-dim">▶</span>}
                         <span className="font-mono rounded bg-surface-sunken px-1.5 py-0.5 text-body">
-                          AS{asn}
+                          AS{hop.asn}
+                          {hop.repeat > 1 && (
+                            <span className="text-muted" title={`prepended ${hop.repeat} times`}>
+                              {' '}×{hop.repeat}
+                            </span>
+                          )}
                         </span>
                       </span>
                     ))}

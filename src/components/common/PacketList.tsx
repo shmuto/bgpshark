@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { BgpMessage, BgpPacket, BgpUpdateMessage } from '../../lib/bgp/types'
 import { endOfRibMarker, countUpdatePrefixes } from '../../lib/bgp/update'
+import {
+  formatDeltaTime,
+  summarizePacketPrefixes,
+  type PrefixGroup,
+} from '../../lib/packet-columns'
 import type { GenericPacket } from '../../lib/pcap'
 
 /**
@@ -12,7 +17,7 @@ export type DisplayPacket =
   | { kind: 'generic'; packet: GenericPacket; timestamp: Date }
 
 // Column definitions
-type ColumnId = 'index' | 'time' | 'absTime' | 'src' | 'dst' | 'srcPort' | 'dstPort' | 'protocol' | 'type' | 'info' | 'asPath' | 'nlriCount' | 'withdrawnCount' | 'length'
+type ColumnId = 'index' | 'time' | 'delta' | 'absTime' | 'src' | 'dst' | 'srcPort' | 'dstPort' | 'protocol' | 'type' | 'info' | 'prefix' | 'asPath' | 'nlriCount' | 'withdrawnCount' | 'length'
 
 const STORAGE_KEY = 'bgpshark-visible-columns'
 
@@ -20,7 +25,17 @@ interface ColumnDef {
   id: ColumnId
   label: string
   width?: string
-  getValue: (dp: DisplayPacket, index: number, baseTime?: Date) => React.ReactNode
+  /**
+   * `previousTimestamp` is the packet *before this one in the list data*, not
+   * the row rendered above it: the list is windowed, so the row above may not
+   * be mounted (and at the top of the window there is no row above at all).
+   */
+  getValue: (
+    dp: DisplayPacket,
+    index: number,
+    baseTime?: Date,
+    previousTimestamp?: Date
+  ) => React.ReactNode
 }
 
 const ALL_COLUMNS: ColumnDef[] = [
@@ -40,6 +55,20 @@ const ALL_COLUMNS: ColumnDef[] = [
     getValue: (dp, _, base) => (
       <span className="font-mono text-muted">{formatRelativeTime(dp.timestamp, base)}</span>
     ),
+  },
+  {
+    id: 'delta',
+    label: 'Delta',
+    width: 'w-20',
+    getValue: (dp, _index, _base, previousTimestamp) => {
+      // The first row of the list has nothing to be a delta from.
+      if (!previousTimestamp) return <span className="font-mono text-dim">-</span>
+      return (
+        <span className="font-mono text-muted">
+          {formatDeltaTime(dp.timestamp.getTime() - previousTimestamp.getTime())}
+        </span>
+      )
+    },
   },
   {
     id: 'absTime',
@@ -166,6 +195,35 @@ const ALL_COLUMNS: ColumnDef[] = [
     },
   },
   {
+    id: 'prefix',
+    label: 'Prefix',
+    getValue: (dp) => {
+      if (dp.kind !== 'bgp') return null
+      const summary = summarizePacketPrefixes(dp.packet.messages)
+      if (!summary) return null
+
+      const { announced, withdrawn } = summary
+      if (announced.shown.length === 0 && withdrawn.shown.length === 0) {
+        // An UPDATE carrying no prefixes is either End-of-RIB or an
+        // attribute-only message; saying so beats a blank cell that looks like
+        // the column failed to find anything.
+        return summary.endOfRib ? (
+          <span className="text-xs bg-accent-subtle text-accent px-1.5 rounded">End-of-RIB</span>
+        ) : null
+      }
+
+      return (
+        <span className="flex items-center gap-1 min-w-0 overflow-hidden">
+          <PrefixGroupCell group={announced} className="bg-ok-subtle text-ok" />
+          <PrefixGroupCell
+            group={withdrawn}
+            className="bg-critical-subtle text-critical line-through"
+          />
+        </span>
+      )
+    },
+  },
+  {
     id: 'asPath',
     label: 'AS Path',
     getValue: (dp) => {
@@ -216,7 +274,33 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
 ]
 
-const DEFAULT_COLUMNS: ColumnId[] = ['index', 'time', 'src', 'dst', 'type', 'info']
+/**
+ * `prefix` is on by default because the question people open a BGP capture
+ * with — which routes moved — otherwise needs the column picker found first
+ * and then a click into every UPDATE. The rest of the defaults are the frame
+ * identity columns, and together they still leave the flexible columns room at
+ * 1440px: only `index` (w-12), `time` (w-20) and `type` (w-28) claim a fixed
+ * width, so `src`, `dst`, `info` and `prefix` share what is left.
+ */
+const DEFAULT_COLUMNS: ColumnId[] = ['index', 'time', 'src', 'dst', 'type', 'info', 'prefix']
+
+/**
+ * Withdrawn prefixes are struck through as well as tinted red: the tint alone
+ * would make the announced/withdrawn distinction a colour-only signal.
+ */
+function PrefixGroupCell({ group, className }: { group: PrefixGroup; className: string }) {
+  if (group.shown.length === 0) return null
+  return (
+    <>
+      {group.shown.map((prefix, i) => (
+        <span key={i} className={`font-mono text-xs px-1 rounded whitespace-nowrap ${className}`}>
+          {prefix}
+        </span>
+      ))}
+      {group.overflow > 0 && <span className="text-xs text-muted">+{group.overflow}</span>}
+    </>
+  )
+}
 
 interface PacketListProps {
   packets: DisplayPacket[]
@@ -287,12 +371,16 @@ function getMessageSummary(message: BgpMessage): string {
   }
 }
 
+/**
+ * A saved set is dropped only for ids that no longer exist, never for ids it
+ * is missing: adding a column to `ALL_COLUMNS` (or to `DEFAULT_COLUMNS`) must
+ * leave everyone who has already arranged their columns exactly as they were.
+ */
 function loadSavedColumns(): ColumnId[] {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
       const parsed = JSON.parse(saved) as string[]
-      // Validate that all saved columns still exist
       const validColumns = parsed.filter((id): id is ColumnId =>
         ALL_COLUMNS.some((col) => col.id === id)
       )
@@ -515,14 +603,17 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
                 {col.label}
               </th>
             ))}
-            <th role="columnheader" className="px-2 py-2 w-8">
+            {/* The gear carries a word: which columns exist is the whole
+                answer to "where are the prefixes / the AS path", and an
+                unlabelled icon at the end of a header row does not offer it. */}
+            <th role="columnheader" className="px-2 py-2 w-24">
               <button
                 onClick={() => setShowColumnPicker(!showColumnPicker)}
-                className="text-dim hover:text-muted p-0.5 rounded hover:bg-surface-sunken"
+                className="flex items-center gap-1 text-dim hover:text-muted px-1 py-0.5 rounded hover:bg-surface-sunken"
                 title="Configure columns"
                 aria-label="Configure columns"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -530,6 +621,7 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
                     d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
                   />
                 </svg>
+                <span className="text-xs font-medium">Columns</span>
               </button>
             </th>
           </tr>
@@ -564,10 +656,10 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
               >
                 {columns.map((col) => (
                   <td key={col.id} role="gridcell" className={`px-2 py-1.5 ${col.width ?? ''}`}>
-                    {col.getValue(dp, index, base)}
+                    {col.getValue(dp, index, base, packets[index - 1]?.timestamp)}
                   </td>
                 ))}
-                <td role="gridcell" className="px-2 py-1.5 w-8" />
+                <td role="gridcell" className="px-2 py-1.5 w-24" />
               </tr>
             )
           })}

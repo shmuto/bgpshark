@@ -2,6 +2,7 @@ export { SummaryCards } from './SummaryCards'
 export { AlertList } from './AlertList'
 export { NeighborSummaryTable } from './NeighborSummaryTable'
 export { MessageTimeline } from './MessageTimeline'
+export { computeAlerts, computeTransportAlerts } from './alerts'
 export type {
   SummaryData,
   DashboardAlert,

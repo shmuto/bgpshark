@@ -36,11 +36,18 @@ export function AlertList({ alerts }: AlertListProps) {
                   <span>{alert.severity === 'critical' ? '🔴' : '🟡'}</span>
                   <span className={`font-medium ${alert.severity === 'critical' ? 'text-critical' : 'text-warning'}`}>
                     {alert.title}
+                    {alert.count !== undefined && alert.count > 1 && ` ×${alert.count}`}
                   </span>
                 </div>
                 <div className="text-xs text-muted mt-0.5 flex items-center gap-2 flex-wrap">
                   <span className="font-mono">{alert.detail}</span>
-                  {alert.timestamp && <span>{formatTimeOfDayUtc(alert.timestamp)} UTC</span>}
+                  {alert.timeSpan ? (
+                    <span>
+                      {formatTimeOfDayUtc(alert.timeSpan.start)} – {formatTimeOfDayUtc(alert.timeSpan.end)} UTC
+                    </span>
+                  ) : (
+                    alert.timestamp && <span>{formatTimeOfDayUtc(alert.timestamp)} UTC</span>
+                  )}
                 </div>
               </div>
               <button

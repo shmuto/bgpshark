@@ -1,1 +1,0 @@
-export { BgpPeersSidebar } from './BgpPeersSidebar'
