@@ -1,4 +1,5 @@
 import { BinaryReader } from './reader'
+import { BgpFlowDetector } from './bgp-detect'
 import { parseIpv6Header } from './ipv6'
 import {
   type PcapGlobalHeader,
@@ -13,7 +14,6 @@ import {
   IpProtocol,
 } from './types'
 
-const BGP_PORT = 179
 
 const ICMP_PROTOCOL = 1
 
@@ -38,6 +38,7 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
   const errors: string[] = []
   const packets: RawPacket[] = []
   const allPackets: GenericPacket[] = []
+  const bgpDetector = new BgpFlowDetector()
 
   try {
     const reader = new BinaryReader(buffer, true)
@@ -134,10 +135,18 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
             payloadLength: tcpResult.payload.length,
           })
 
-          // Only add to BGP packets if port 179 and has payload
+          // BGP on port 179, or a flow the detector recognized by its
+          // message marker (non-standard ports; see bgp-detect.ts).
           if (
-            (tcpResult.srcPort === BGP_PORT || tcpResult.dstPort === BGP_PORT) &&
-            tcpResult.payload.length > 0
+            tcpResult.payload.length > 0 &&
+            bgpDetector.isBgp(
+              ipResult.srcIp,
+              tcpResult.srcPort,
+              ipResult.dstIp,
+              tcpResult.dstPort,
+              tcpResult.payload,
+              warnings
+            )
           ) {
             packets.push({
               frameIndex: packetIndex,

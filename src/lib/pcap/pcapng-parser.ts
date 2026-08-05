@@ -1,4 +1,5 @@
 import { BinaryReader } from './reader'
+import { BgpFlowDetector } from './bgp-detect'
 import { parseIpv6Header, type Ipv6Result } from './ipv6'
 import type {
   PcapGlobalHeader,
@@ -9,7 +10,6 @@ import type {
 } from './types'
 import { LinkLayerType, EtherType, IpProtocol } from './types'
 
-const BGP_PORT = 179
 const ICMP_PROTOCOL = 1
 
 interface ParsedPacketResult {
@@ -57,6 +57,7 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
   const packets: RawPacket[] = []
   const allPackets: GenericPacket[] = []
   const interfaces: InterfaceInfo[] = []
+  const bgpDetector = new BgpFlowDetector()
 
   try {
     const reader = new BinaryReader(buffer, true)
@@ -186,7 +187,8 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
               capturedLength,
               originalLength,
               packetIndex,
-              warnings
+              warnings,
+              bgpDetector
             )
 
             if (result.bgpPacket) {
@@ -221,7 +223,8 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
               packetLength,
               originalLength,
               packetIndex,
-              warnings
+              warnings,
+              bgpDetector
             )
 
             if (result.bgpPacket) {
@@ -350,7 +353,8 @@ function parsePacketData(
   capturedLength: number,
   originalLength: number,
   frameIndex: number,
-  warnings: string[]
+  warnings: string[],
+  bgpDetector: BgpFlowDetector
 ): ParsedPacketResult {
   const result: ParsedPacketResult = { bgpPacket: null, genericPacket: null }
   const reader = new BinaryReader(data, false)
@@ -439,20 +443,23 @@ function parsePacketData(
       payloadLength: actualPayload,
     }
 
-    // Add to BGP packets only if port 179 and has payload
-    if ((srcPort === BGP_PORT || dstPort === BGP_PORT) && actualPayload > 0) {
+    // BGP on port 179, or a flow the detector recognized by its message
+    // marker (non-standard ports; see bgp-detect.ts).
+    if (actualPayload > 0) {
       const tcpPayload = reader.readBytes(actualPayload)
-      result.bgpPacket = {
-        frameIndex,
-        timestamp,
-        capturedLength,
-        originalLength,
-        srcIp,
-        dstIp,
-        srcPort,
-        dstPort,
-        tcpPayload,
-        tcpFlags: flags,
+      if (bgpDetector.isBgp(srcIp, srcPort, dstIp, dstPort, tcpPayload, warnings)) {
+        result.bgpPacket = {
+          frameIndex,
+          timestamp,
+          capturedLength,
+          originalLength,
+          srcIp,
+          dstIp,
+          srcPort,
+          dstPort,
+          tcpPayload,
+          tcpFlags: flags,
+        }
       }
     }
   } else if (protocol === IpProtocol.UDP) {

@@ -165,7 +165,7 @@ function computeTransportAlerts(allPackets: GenericPacket[]): DashboardAlert[] {
         title: 'No BGP messages and no TCP port 179 traffic',
         detail:
           tcpCount > 0
-            ? `${tcpCount} TCP packets on other ports — a session on a non-standard port is not decoded as BGP`
+            ? `${tcpCount} TCP packets on other ports — non-standard-port sessions are decoded only when BGP message markers are visible in the flow`
             : 'The capture contains no TCP traffic',
         timestamp: allPackets[0]?.timestamp ?? null,
         filter: '',
