@@ -1,7 +1,8 @@
 # BGP Packet Analyzer - Requirements & Design Document
 
 > This document describes the current design of the application. Related documents:
-> `ui-design.md` (screen specifications) and `design-duckdb-wasm.md` (DuckDB WASM design).
+> `ui-design.md` (screen specifications) and `design-duckdb-wasm.md` (the original
+> DuckDB WASM migration proposal — this document is authoritative where the two differ).
 
 ## 1. Project Overview
 
@@ -52,13 +53,18 @@ GitHub Pages (fully static site)
 | BGP Identifier | Router ID (IPv4 format) |
 | Optional Parameters | Expanded Capabilities view |
 
-**Supported Capabilities**
+**Capabilities parsed into structured values**
 - Multiprotocol Extensions (Code 1) - AFI/SAFI display
 - Route Refresh (Code 2)
-- 4-byte AS Number (Code 65)
-- Graceful Restart (Code 64)
-- ADD-PATH (Code 69)
 - Extended Next Hop Encoding (Code 5)
+- Graceful Restart (Code 64)
+- 4-byte AS Number (Code 65)
+- ADD-PATH (Code 69) - per AFI/SAFI send/receive
+- Enhanced Route Refresh (Code 70)
+
+Other IANA-assigned codes are recognised by name (`CapabilityCodeNames` in
+`src/lib/bgp/constants.ts`) and shown with their raw value; anything unassigned is
+listed as an unknown capability rather than dropped.
 
 #### 2.1.4 NOTIFICATION Message Analysis
 | Field | Display |
@@ -149,11 +155,23 @@ side-by-side diff of the two OPEN messages exchanged on that session
 - A missing OPEN on one or both sides is handled without breaking the page (one-sided
   comparison notice, or an empty-state message when neither side has one).
 
+#### 2.1.11 Theming
+
+Light and dark themes, following the system preference by default. The header
+toggle cycles light → dark → system (`useTheme` in `src/hooks/useTheme.ts`), and the
+choice is persisted in localStorage. Colours are defined once as CSS custom
+properties in `src/index.css` and consumed through the semantic Tailwind names in
+`tailwind.config.js`, so components never name a theme.
+
 ### 2.2 Future Features
 
-- URL fragment state sharing
 - IPv6 transport (BGP sessions over IPv6)
-- Dark mode
+- Multiple captures loaded side by side
+- Exporting a filtered result set back to pcap
+
+Screen state is already shareable through the URL query string: the Message Explorer
+keeps `?filter=` and `?selected=`, Neighbor Analysis `?router=` / `?peer=`, and Route
+Analysis its search term, selection, sort and match direction.
 
 ---
 
@@ -223,11 +241,11 @@ a browser downloads only the one bundle it selects.
 | Build Tool | Vite 6 |
 | Package Manager / Runtime | Bun |
 | Routing | React Router v7 (`BrowserRouter`, basename `/bgpshark`) |
-| Styling | Tailwind CSS |
+| Styling | Tailwind CSS over CSS custom properties (light / dark themes) |
 | State Management | React Context (`AppContext`) over the `useBgpAnalyzer` hook |
 | Query Engine | DuckDB WASM (in-browser OLAP) |
 | Persistence | IndexedDB (loaded pcap file) |
-| Testing | `bun test` (+ happy-dom, Testing Library for component tests) |
+| Testing | `bun test` for `tests/lib` (+ happy-dom, Testing Library), Playwright for `tests/e2e` |
 | Deployment | GitHub Actions → GitHub Pages |
 
 ### 4.2 Directory Structure
@@ -239,30 +257,35 @@ bgpshark/
 ├── docs/
 │   ├── design.md                # This document
 │   ├── ui-design.md             # Screen specifications
-│   └── design-duckdb-wasm.md    # DuckDB WASM design
+│   ├── design-duckdb-wasm.md    # Original DuckDB WASM migration proposal
+│   └── todo.md                  # Log of fixed issues
 ├── src/
 │   ├── App.tsx                  # Router and global drop overlay
 │   ├── main.tsx
-│   ├── index.css
+│   ├── index.css                # Theme custom properties + base styles
 │   ├── context/
 │   │   └── AppContext.tsx       # Global app state provider
 │   ├── pages/
 │   │   ├── FileUploadPage.tsx   # /
+│   │   ├── DashboardPage.tsx    # /dashboard
 │   │   ├── MessagesPage.tsx     # /messages
 │   │   ├── NeighborsPage.tsx    # /neighbors
 │   │   ├── RoutesPage.tsx       # /routes
 │   │   └── SqlConsolePage.tsx   # /sql
 │   ├── components/
 │   │   ├── common/              # FileDropzone, PacketList, HexDump, QueryInput, ...
-│   │   ├── layout/              # AppHeader, Header, MainContent
+│   │   ├── dashboard/           # SummaryCards, AlertList, NeighborSummaryTable, MessageTimeline
+│   │   ├── layout/              # AppHeader, ThemeToggle
 │   │   ├── message/             # PacketDetail + per-message-type views
-│   │   ├── neighbor/            # NeighborSummary
+│   │   ├── neighbor/            # NeighborSummary, CapabilityDiff
 │   │   └── sidebar/             # BgpPeersSidebar
 │   ├── hooks/
 │   │   ├── useBgpAnalyzer.ts    # Load → parse → DuckDB → state
 │   │   ├── useFileDropzone.ts
 │   │   ├── useFilter.ts
-│   │   └── useResizablePanes.ts
+│   │   ├── useMediaQuery.ts     # Compact-layout detection
+│   │   ├── useSplitPane.ts      # Draggable two-pane divider
+│   │   └── useTheme.ts          # Light / dark / system preference
 │   ├── lib/
 │   │   ├── pcap/
 │   │   │   ├── parser.ts        # libpcap parser
@@ -287,18 +310,27 @@ bgpshark/
 │   │   │   └── filter-to-sql.ts # Filter AST → SQL
 │   │   ├── filter/
 │   │   │   └── parser.ts        # Filter lexer/parser/evaluator
+│   │   ├── net/
+│   │   │   └── prefix.ts        # Prefix parsing, bit keys, containment
+│   │   ├── file-constraints.ts  # Accepted extensions and size limit
 │   │   └── storage.ts           # IndexedDB persistence
 ├── tests/
 │   ├── lib/pcap/                # parser, reader
-│   ├── lib/bgp/                 # parser
+│   ├── lib/bgp/                 # parser, neighbor, session events
+│   ├── lib/filter/              # filter expressions
+│   ├── lib/net/                 # prefix arithmetic
+│   ├── e2e/                     # Playwright specs (*.e2e.ts)
 │   └── bgp.pcapng               # Test fixture
 ├── testlab/                     # ContainerLab BGP topology for capture generation
 ├── .github/
 │   └── workflows/
+│       ├── ci.yml               # Pull request checks (lint, unit, build, e2e)
 │       └── deploy.yml           # GitHub Pages deployment
 ├── index.html
 ├── package.json
 ├── tsconfig.json
+├── playwright.config.ts
+├── flake.nix                    # Nix dev shell (Bun, Node, Playwright browsers)
 ├── vite.config.ts
 └── tailwind.config.js
 ```
@@ -484,8 +516,8 @@ analysis view. The Message Explorer (`/messages`) uses the classic two-pane layo
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  🦈 BGP Packet Analyzer  [Messages][Neighbors][Routes][SQL]     │
-│                          📁 file.pcap  [+ New File]   [GitHub]  │
+│  🦈 BGPShark  [Dashboard][Messages][Neighbors][Routes][SQL]     │
+│               📁 file.pcap  [+ New File]  [☀ Light]  [GitHub]   │
 ├─────────────────────────────────────────────────────────────────┤
 │  🔍 Filter: type = NOTIFICATION and src_ip = 10.0.0.1           │
 ├────────────────────────────┬────────────────────────────────────┤
@@ -554,11 +586,15 @@ analysis layout, though files can be dropped anywhere in the app at any time.
 - GitHub Pages deployment via GitHub Actions
 - ContainerLab test topology (`testlab/`) for generating capture fixtures
 - Capability diff: side-by-side OPEN comparison on the Neighbor Analysis page
+- Light / dark theme following the system preference
+- Screen state in the URL query string (filter, selection, sort, match direction)
+- Playwright end-to-end suite, run on pull requests and before deploy
 
 ### Next
 
-- Dark mode
 - IPv6 transport (BGP sessions carried over IPv6)
+- Multiple captures loaded side by side
+- Exporting a filtered result set back to pcap
 
 ---
 
