@@ -25,16 +25,20 @@ export function AppHeader() {
           </h1>
         </NavLink>
 
-        {/* Navigation */}
-        {isReady && (
-          <nav className="-mx-1 flex items-center gap-1 overflow-x-auto px-1">
-            <NavItem to="/dashboard">Dashboard</NavItem>
-            <NavItem to="/messages">Messages</NavItem>
-            <NavItem to="/neighbors">Neighbors</NavItem>
-            <NavItem to="/routes">Routes</NavItem>
-            <NavItem to="/sql">SQL</NavItem>
-          </nav>
-        )}
+        {/* Navigation. The analysis screens need a capture; the builder is how
+            you get one, so it is offered either way. */}
+        <nav className="-mx-1 flex items-center gap-1 overflow-x-auto px-1">
+          {isReady && (
+            <>
+              <NavItem to="/dashboard">Dashboard</NavItem>
+              <NavItem to="/messages">Messages</NavItem>
+              <NavItem to="/neighbors">Neighbors</NavItem>
+              <NavItem to="/routes">Routes</NavItem>
+              <NavItem to="/sql">SQL</NavItem>
+            </>
+          )}
+          <NavItem to="/builder">Build</NavItem>
+        </nav>
       </div>
 
       <div className="flex shrink-0 items-center gap-2">

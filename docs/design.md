@@ -312,11 +312,18 @@ bgpshark/
 │   │   │   └── parser.ts        # Filter lexer/parser/evaluator
 │   │   ├── net/
 │   │   │   └── prefix.ts        # Prefix parsing, bit keys, containment
+│   │   ├── build/
+│   │   │   ├── bytes.ts         # Byte writer, address encoding, checksums
+│   │   │   ├── bgp-encode.ts    # BGP message encoders (mirror of lib/bgp)
+│   │   │   ├── frame.ts         # TCP / IPv4 / IPv6 / Ethernet / SLL framing
+│   │   │   ├── scenario.ts      # Described session → pcap frames
+│   │   │   └── presets.ts       # Ready-made failure scenarios
 │   │   ├── file-constraints.ts  # Accepted extensions and size limit
 │   │   └── storage.ts           # IndexedDB persistence
 ├── tests/
 │   ├── lib/pcap/                # parser, reader
 │   ├── lib/bgp/                 # parser, neighbor, session events
+│   ├── lib/build/               # encoder round trips, checksum verification
 │   ├── lib/filter/              # filter expressions
 │   ├── lib/net/                 # prefix arithmetic
 │   ├── e2e/                     # Playwright specs (*.e2e.ts)
