@@ -1,8 +1,9 @@
 # BGP Packet Analyzer - Requirements & Design Document
 
-> This document describes the current design of the application. Related documents:
-> `ui-design.md` (screen specifications) and `design-duckdb-wasm.md` (the original
-> DuckDB WASM migration proposal — this document is authoritative where the two differ).
+> This document describes the current design of the application. `design-duckdb-wasm.md`
+> keeps the reasoning behind the DuckDB WASM migration; this document is authoritative
+> where the two differ. `troubleshooting-scenarios.md` is the counterpart from the
+> user's side: the faults this tool is pointed at, and which of them it answers.
 
 ## 1. Project Overview
 
@@ -122,6 +123,8 @@ in MP_REACH_NLRI / MP_UNREACH_NLRI.
   session-event summaries, plus the capability diff (§2.1.10)
 - **Route Analysis** (`/routes`): per-prefix announce/withdraw history and flap count
 - **SQL Console** (`/sql`): raw SQL against the DuckDB tables, with query templates
+- **Capture Builder** (`/build`): §2.1.12
+- **Manual** (`/manual`): §2.1.13
 
 #### 2.1.9 Filtering
 Two modes over the same expression language:
@@ -163,11 +166,55 @@ choice is persisted in localStorage. Colours are defined once as CSS custom
 properties in `src/index.css` and consumed through the semantic Tailwind names in
 `tailwind.config.js`, so components never name a theme.
 
+#### 2.1.12 Capture Builder
+
+The one screen that runs in the other direction: describe a session and it writes the
+pcap. It needs no capture loaded, which is the state you are in when you come looking
+for one.
+
+A scenario is two peers and a sequence of things that happen between them — the TCP
+handshake, the OPEN exchange, UPDATEs, a NOTIFICATION, a reset — compiled to frames by
+`lib/build/scenario.ts`. Two properties are derived from the scenario rather than asked
+for, because a capture that got them wrong is one no session could have produced: how
+UPDATEs are encoded (AS width and ADD-PATH Path Identifiers follow from the negotiated
+capabilities) and where TCP segment boundaries fall (messages sent in one step are
+packed into a byte stream and cut at the MSS).
+
+Output is a real capture, not one only this app can read: IPv4/TCP checksums are
+computed over the pseudo-header and short frames are padded to Ethernet's minimum, both
+verified in `tests/lib/build/checksums.test.ts`.
+
+The same thing is available as a library, which is the better route for fixtures in
+bulk — `testlab/scenarios.ts` uses it to build the thirteen captures behind
+`docs/troubleshooting-scenarios.md`.
+
+#### 2.1.13 User Manual
+
+A Help page inside the app rather than a link out of it, because the app's whole
+premise is that it works with nothing else available — a manual that needed the
+network would be missing exactly when the rest of the tool still worked.
+
+It sits outside `RequireCapture`: the reader most likely to want it has just
+arrived and has nothing loaded, and every gated screen would redirect that person
+to the upload page.
+
+The prose is Markdown (`src/pages/manual/manual.md`) converted to HTML by
+`markdownPlugin` in `vite.config.ts`, so `marked` runs during the build and no
+Markdown parser is shipped. The plugin also gives every `h2`/`h3` an id, which is
+what lets the page build its table of contents by reading its own output back —
+a section cannot be added to the prose and forgotten in the contents — and what
+makes `/manual#filters` land on the right section.
+
 ### 2.2 Future Features
 
-- IPv6 transport (BGP sessions over IPv6)
 - Multiple captures loaded side by side
-- Exporting a filtered result set back to pcap
+
+IPv6 transport and pcap export of a filtered result set were both on this list and
+are now implemented — `lib/pcap/ipv6.ts` and `lib/pcap/writer.ts` respectively.
+`docs/troubleshooting-scenarios.md` tracks what the tool still cannot answer, which
+is a more useful backlog than this section: a one-sided capture reported as healthy,
+a post-establishment TCP reset that never reaches the dashboard, and best-path
+attributes that stop at AS_PATH and Next Hop.
 
 Screen state is already shareable through the URL query string: the Message Explorer
 keeps `?filter=` and `?selected=`, Neighbor Analysis `?router=` / `?peer=`, and Route
@@ -178,8 +225,25 @@ Analysis its search term, selection, sort and match direction.
 ## 3. Non-Functional Requirements
 
 ### 3.1 Performance
-- Parse 1000-packet pcap within 3 seconds
-- Maintain 60fps UI
+
+Targets, in the sense of "if any of these stops holding, something regressed":
+
+| Measure | Target |
+|---------|--------|
+| DuckDB WASM ready | < 3s |
+| Parse a 1000-packet capture | < 2s |
+| Filter response | < 500ms |
+| SQL query response (ordinary query) | < 1s |
+| UI | 60fps |
+
+What buys them: the packet list is virtualized; each screen is a `React.lazy`
+chunk, so the upload screen loads only its own JS; DuckDB is a dynamic import and
+is not fetched until it is initialized; aggregations are `useMemo`d per capture and
+SQL filtering is debounced; and CIDR matching is answered from indexed bit-string
+columns (`prefix_bits` and friends) with `LIKE 'bits%'`.
+
+Parsing still runs on the main thread — moving it to a Web Worker is the obvious
+next lever and has not been needed.
 
 ### 3.2 Browser Support
 - Chrome/Edge (latest)
@@ -193,6 +257,15 @@ Analysis its search term, selection, sort and match direction.
 - No third-party requests. The DuckDB WASM runtime is self-hosted: `db/database.ts`
   imports the `.wasm` modules and worker scripts with Vite's `?url` suffix, so they
   are emitted into `dist/assets/` and served from the app's own origin
+- **Self-hosting the runtime is not the whole of it.** DuckDB fetches its
+  *extensions* from `extensions.duckdb.org` the first time one is used, so anything
+  outside the core engine is unavailable here by construction. This was not
+  theoretical: the loader inserted rows through `read_json_auto`, the JSON reader is
+  an extension, and behind the CSP that download failed — so every capture failed to
+  load and the SQL console was dead on the deployed site, while development looked
+  fine because the dev server ships no policy and the download succeeded.
+  `db/loader.ts` now inserts with literal `VALUES`, and
+  `tests/e2e/offline.e2e.ts` asserts that nothing leaves the origin
 - Content Security Policy is injected into the built `index.html` by the `inject-csp`
   plugin in `vite.config.ts`:
 
@@ -221,12 +294,48 @@ Pages cannot provide. Self-hosting adds roughly 74 MB to `dist/` (two `.wasm` fi
 a browser downloads only the one bundle it selects.
 
 ### 3.4 Accessibility
-- Keyboard navigation: the packet list is focusable and supports arrow-key selection,
-  scrolling the selection into view even when the row is outside the rendered window
-- Screen readers: the packet list is exposed as a grid, with `aria-rowcount` reporting
-  the total packet count rather than the virtualized slice, plus `aria-rowindex`,
+
+Implemented:
+
+- Keyboard: Tab moves focus; Enter presses a button, selects a row, or accepts an
+  autocomplete suggestion; arrow keys move through the packet list and the
+  suggestion list, scrolling a selection into view even when the row is outside the
+  rendered window; left/right nudge a pane divider that has focus
+- The packet list is exposed as a grid, with `aria-rowcount` reporting the total
+  packet count rather than the virtualized slice, plus `aria-rowindex`,
   `aria-selected` and `aria-activedescendant`
-- Not yet covered: the remaining screens have no dedicated ARIA work
+- Icon-only buttons (theme toggle, GitHub link) carry an `aria-label`, and the
+  timeline SVG has `role="img"` and a description
+- State is never carried by colour alone — the capability diff pairs every icon
+  with a text label
+
+Targets not yet met:
+
+- `aria-label` coverage on interactive elements outside the packet list
+- `scope` attributes on table headers
+- A live region for notifications
+- WCAG AA contrast: 4.5:1 for text, 3:1 for UI elements
+
+### 3.5 Error Handling
+
+Every failure has a place to appear and a way out. Nothing is allowed to fail
+silently, because a screen that shows an empty result for a broken reason is worse
+than one that shows an error.
+
+| Failure | Where it appears | Recovery |
+|---------|------------------|----------|
+| Unsupported file type or size | Message under the drop zone | Choose another file |
+| Partial parse failure | Warning banner under the header; parsing continues | What could be read is analysed |
+| DuckDB initialization failure | Notice on the SQL console, banner on load | Filtering falls back to in-memory; other screens unaffected |
+| SQL error | DuckDB's message in the results panel, not an empty result set | Fix the query |
+| Render exception | Error boundary screen | Reset, returning to the upload screen |
+
+Messages are written for the person reading them, not the code raising them:
+
+```
+✗ PCAP_MAGIC_MISMATCH: 0xd4c3b2a1 expected, got 0x00000000
+✓ This doesn't look like a valid pcap file. Please check the file format.
+```
 
 ---
 
@@ -253,12 +362,14 @@ a browser downloads only the one bundle it selects.
 ```
 bgpshark/
 ├── public/
-│   └── favicon.svg
+│   ├── favicon.svg
+│   └── sample.pcapng            # The "Load sample" capture, also an e2e fixture
+├── CLAUDE.md                    # Orientation for an agent starting a session
 ├── docs/
 │   ├── design.md                # This document
-│   ├── ui-design.md             # Screen specifications
-│   ├── design-duckdb-wasm.md    # Original DuckDB WASM migration proposal
-│   └── todo.md                  # Log of fixed issues
+│   ├── troubleshooting-scenarios.md  # Thirteen BGP faults vs. what the tool says
+│   ├── design-duckdb-wasm.md    # Why DuckDB, and how it diverged from the proposal
+│   └── images/
 ├── src/
 │   ├── App.tsx                  # Router and global drop overlay
 │   ├── main.tsx
@@ -271,25 +382,32 @@ bgpshark/
 │   │   ├── MessagesPage.tsx     # /messages
 │   │   ├── NeighborsPage.tsx    # /neighbors
 │   │   ├── RoutesPage.tsx       # /routes
-│   │   └── SqlConsolePage.tsx   # /sql
+│   │   ├── SqlConsolePage.tsx   # /sql
+│   │   ├── BuilderPage.tsx      # /build — describe a session, get a pcap
+│   │   ├── ManualPage.tsx       # /manual — renders the Markdown below
+│   │   └── manual/manual.md     # The user manual, converted at build time
 │   ├── components/
+│   │   ├── builder/             # ScenarioEditor + its editing model
 │   │   ├── common/              # FileDropzone, PacketList, HexDump, QueryInput, ...
 │   │   ├── dashboard/           # SummaryCards, AlertList, NeighborSummaryTable, MessageTimeline
 │   │   ├── layout/              # AppHeader, ThemeToggle
 │   │   ├── message/             # PacketDetail + per-message-type views
-│   │   ├── neighbor/            # NeighborSummary, CapabilityDiff
-│   │   └── sidebar/             # BgpPeersSidebar
+│   │   └── neighbor/            # CapabilityDiff
 │   ├── hooks/
 │   │   ├── useBgpAnalyzer.ts    # Load → parse → DuckDB → state
 │   │   ├── useFileDropzone.ts
 │   │   ├── useFilter.ts
 │   │   ├── useMediaQuery.ts     # Compact-layout detection
 │   │   ├── useSplitPane.ts      # Draggable two-pane divider
+│   │   ├── useVirtualRows.ts    # Row virtualization for long lists
 │   │   └── useTheme.ts          # Light / dark / system preference
 │   ├── lib/
 │   │   ├── pcap/
 │   │   │   ├── parser.ts        # libpcap parser
 │   │   │   ├── pcapng-parser.ts # pcapng parser
+│   │   │   ├── bgp-detect.ts    # BGP on non-standard ports, by marker
+│   │   │   ├── ipv6.ts          # IPv6 header walking and RFC 5952 formatting
+│   │   │   ├── writer.ts        # Frames → pcap, for filtered export
 │   │   │   ├── reader.ts        # Binary reading utilities
 │   │   │   └── types.ts
 │   │   ├── bgp/
@@ -297,9 +415,14 @@ bgpshark/
 │   │   │   ├── open.ts          # OPEN + capability parsing
 │   │   │   ├── update.ts        # UPDATE + path attribute parsing
 │   │   │   ├── notification.ts  # NOTIFICATION parsing
+│   │   │   ├── evpn.ts          # EVPN NLRI (RFC 7432)
+│   │   │   ├── extended-communities.ts
 │   │   │   ├── errors.ts        # Error Code/Subcode definitions and hints
 │   │   │   ├── neighbor.ts      # Neighbor/session aggregation
+│   │   │   ├── session.ts       # Negotiated capabilities per session
 │   │   │   ├── session-events.ts
+│   │   │   ├── prefix-stats.ts  # Per-prefix history and flap counting
+│   │   │   ├── as-path-display.ts
 │   │   │   ├── constants.ts     # AFI/SAFI names
 │   │   │   └── types.ts
 │   │   ├── db/
@@ -319,16 +442,23 @@ bgpshark/
 │   │   │   ├── scenario.ts      # Described session → pcap frames
 │   │   │   └── presets.ts       # Ready-made failure scenarios
 │   │   ├── file-constraints.ts  # Accepted extensions and size limit
+│   │   ├── packet-columns.ts    # What the packet list's Info column shows
+│   │   ├── format-time.ts       # One timestamp format, used by every screen
+│   │   ├── range.ts
 │   │   └── storage.ts           # IndexedDB persistence
 ├── tests/
 │   ├── lib/pcap/                # parser, reader
-│   ├── lib/bgp/                 # parser, neighbor, session events
+│   ├── lib/bgp/                 # parser, neighbor, session events, EVPN
 │   ├── lib/build/               # encoder round trips, checksum verification
+│   ├── lib/db/                  # schema splitting, filter → SQL
+│   ├── lib/dashboard/           # alert grouping and thresholds
 │   ├── lib/filter/              # filter expressions
 │   ├── lib/net/                 # prefix arithmetic
 │   ├── e2e/                     # Playwright specs (*.e2e.ts)
 │   └── bgp.pcapng               # Test fixture
-├── testlab/                     # ContainerLab BGP topology for capture generation
+├── testlab/
+│   ├── topology.clab.yml        # ContainerLab BGP topology for capture generation
+│   └── scenarios.ts             # Thirteen fault captures, built from lib/build
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml               # Pull request checks (lint, unit, build, e2e)
@@ -361,8 +491,8 @@ bgpshark/
 │  useBgpAnalyzer.processBuffer                                   │
 │  - isPcapng() → pcapng-parser.ts / parser.ts                    │
 │  - Parse headers, sequentially parse packets                    │
-│  - Strip Ethernet (or SLL) → VLAN → IPv4 → TCP                  │
-│  - Split into BGP packets (port 179) and all IP packets         │
+│  - Strip Ethernet (or SLL) → VLAN/QinQ → IPv4 or IPv6 → TCP     │
+│  - Split into BGP packets (port 179, or by marker) and all IP   │
 └─────────────────────────────────────────────────────────────────┘
         │ GenericPacket[]
         ▼
@@ -513,8 +643,27 @@ interface BgpNotificationMessage {
 
 ## 5. UI Design
 
-Full screen specifications are in `ui-design.md`. This section only summarises the
-overall shape.
+The screens are the code's business; this section fixes only the shape they share
+and the vocabulary they are built from.
+
+### 5.0 Colour tokens
+
+Colours change between light and dark, so components never name a hex value —
+they name a role. Definitions live in `src/index.css` as CSS custom properties and
+are exposed under semantic Tailwind names in `tailwind.config.js`.
+
+| Role | Token | Tailwind |
+|------|-------|----------|
+| Furthest-back background | `--canvas` | `bg-canvas` |
+| Surface / sunken / raised | `--surface`, `--surface-sunken`, `--surface-raised` | `bg-surface` |
+| Rules | `--hair`, `--hair-strong` | `border-hair` |
+| Text, strongest to faintest | `--text-strong`, `--text-body`, `--text-muted`, `--text-dim` | `text-muted` |
+| Accent | `--accent`, `--accent-hover`, `--accent-fg`, `--accent-subtle` | `bg-accent` |
+| Severity | `--critical`, `--warning`, `--ok` (each with `-subtle`) | `text-critical` |
+| BGP message type | `--msg-open`, `--msg-update`, `--msg-notification`, `--msg-keepalive`, `--msg-route-refresh` | `text-bgp-open` |
+
+Light is the default, the OS preference switches to dark, and `data-theme` on
+`<html>` overrides both.
 
 ### 5.1 Layout
 
@@ -596,12 +745,18 @@ analysis layout, though files can be dropped anywhere in the app at any time.
 - Light / dark theme following the system preference
 - Screen state in the URL query string (filter, selection, sort, match direction)
 - Playwright end-to-end suite, run on pull requests and before deploy
+- IPv6 transport, and BGP on non-standard ports detected by message marker
+- EVPN route decoding, and the filter fields that address it
+- Exporting the filtered packet list back to pcap
+- Capture Builder, and `testlab/scenarios.ts` on the same library
 
 ### Next
 
-- IPv6 transport (BGP sessions carried over IPv6)
 - Multiple captures loaded side by side
-- Exporting a filtered result set back to pcap
+- The gaps in `docs/troubleshooting-scenarios.md`: a one-sided capture reported as
+  healthy, a post-establishment TCP reset that never reaches the dashboard, and
+  best-path attributes (MED, LOCAL_PREF, communities) missing from the route history
+  and the filter language
 
 ---
 

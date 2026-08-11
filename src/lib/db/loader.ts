@@ -2,7 +2,7 @@
  * Data Loader - Load BgpPacket[] into DuckDB
  */
 import type { AsyncDuckDBConnection } from '@duckdb/duckdb-wasm'
-import { getConnection, getDatabase, resetDatabase, markDataLoaded } from './database'
+import { getConnection, resetDatabase, markDataLoaded } from './database'
 import { addressBitKey, bgpPrefixBitKey } from '../net/prefix'
 import type {
   BgpPacket,
@@ -98,23 +98,17 @@ export async function loadPackets(packets: BgpPacket[]): Promise<void> {
   largeCommunityIdCounter = 0
   extCommunityIdCounter = 0
 
-  const db = await getDatabase()
   const conn = await getConnection()
 
-  // Register data as Arrow tables for bulk insert
-  await insertPackets(conn, db, packets)
+  await insertPackets(conn, packets)
 
   markDataLoaded(true)
 }
 
 /**
- * Insert packets using Arrow for better performance
+ * Flatten every packet into the rows of the ten tables, then insert each table.
  */
-async function insertPackets(
-  conn: AsyncDuckDBConnection,
-  db: Awaited<ReturnType<typeof getDatabase>>,
-  packets: BgpPacket[]
-): Promise<void> {
+async function insertPackets(conn: AsyncDuckDBConnection, packets: BgpPacket[]): Promise<void> {
   // Prepare data arrays
   const packetsData: Array<{
     frame_index: number
@@ -250,25 +244,66 @@ async function insertPackets(
     }
   }
 
-  // Insert using JSON import for simplicity
-  await insertJsonData(conn, db, 'packets', packetsData)
-  await insertJsonData(conn, db, 'messages', messagesData)
-  await insertJsonData(conn, db, 'capabilities', capabilitiesData)
-  await insertJsonData(conn, db, 'path_attributes', pathAttrsData)
-  await insertJsonData(conn, db, 'as_path', asPathData)
-  await insertJsonData(conn, db, 'nlri', nlriData)
-  await insertJsonData(conn, db, 'withdrawn', withdrawnData)
-  await insertJsonData(conn, db, 'communities', communitiesData)
-  await insertJsonData(conn, db, 'large_communities', largeCommunitiesData)
-  await insertJsonData(conn, db, 'extended_communities', extCommunitiesData)
+  await insertRows(conn, 'packets', packetsData)
+  await insertRows(conn, 'messages', messagesData)
+  await insertRows(conn, 'capabilities', capabilitiesData)
+  await insertRows(conn, 'path_attributes', pathAttrsData)
+  await insertRows(conn, 'as_path', asPathData)
+  await insertRows(conn, 'nlri', nlriData)
+  await insertRows(conn, 'withdrawn', withdrawnData)
+  await insertRows(conn, 'communities', communitiesData)
+  await insertRows(conn, 'large_communities', largeCommunitiesData)
+  await insertRows(conn, 'extended_communities', extCommunitiesData)
 }
 
 /**
- * Insert data using DuckDB's JSON import
+ * How much SQL to put in one INSERT.
+ *
+ * Rows vary enormously in width — a `communities` row is a few dozen bytes, a
+ * `packets` row carries a base64 frame and can be several kilobytes — so
+ * batching by row count either wastes round trips on the narrow tables or
+ * builds a statement of many megabytes on the wide ones. Batching by the size
+ * of the statement keeps both in the same range.
  */
-async function insertJsonData(
+const MAX_STATEMENT_BYTES = 512 * 1024
+
+/**
+ * One SQL literal, the way DuckDB reads it back as the value it came from.
+ *
+ * `JSON.stringify` used to do this job, which is why non-finite numbers become
+ * NULL here too: that is what it did with them, and a loader that started
+ * writing `NaN` into an INTEGER column would be a change of behaviour hiding
+ * inside a change of transport.
+ */
+function toSqlLiteral(value: unknown): string {
+  if (value === null || value === undefined) return 'NULL'
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL'
+  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE'
+  if (Array.isArray(value)) return `[${value.map(toSqlLiteral).join(', ')}]`
+  // DuckDB does not process backslash escapes in a standard string literal, so
+  // doubling the quote is the whole of the escaping.
+  return `'${String(value).replace(/'/g, "''")}'`
+}
+
+/**
+ * Insert rows with literal `VALUES`, which is core SQL and needs no extension.
+ *
+ * This used to go through `read_json_auto`, which reads better — until you
+ * notice that the JSON reader is an *extension*, and DuckDB WASM fetches
+ * extensions from `extensions.duckdb.org` on first use. The production build
+ * serves a CSP of `connect-src 'self' blob: data:`, so that fetch cannot
+ * succeed, and the whole SQL console died with it. Nothing caught it because
+ * the end-to-end suite runs against the dev server, which ships no CSP.
+ *
+ * So the requirement is not "load quickly", it is "load without reaching the
+ * network at all" — the same promise the rest of the app makes. `VALUES` is
+ * the cheapest way to keep it: a 100,000-route capture is queryable about nine
+ * seconds after it is dropped in, and captures that size are far past what
+ * session troubleshooting produces. If that ever stops being true, Arrow IPC
+ * (`conn.insertArrowTable`) is the faster transport that is also extension-free.
+ */
+async function insertRows(
   conn: AsyncDuckDBConnection,
-  db: Awaited<ReturnType<typeof getDatabase>>,
   tableName: string,
   data: unknown[]
 ): Promise<void> {
@@ -279,12 +314,28 @@ async function insertJsonData(
   // added in a different order — lands silently in the wrong column.
   const columns = Object.keys(data[0] as Record<string, unknown>)
   const columnList = columns.map((c) => `"${c}"`).join(', ')
+  const prefix = `INSERT INTO ${tableName} (${columnList}) VALUES `
 
-  const jsonStr = JSON.stringify(data)
-  await db.registerFileText(`${tableName}.json`, jsonStr)
-  await conn.query(
-    `INSERT INTO ${tableName} (${columnList}) SELECT ${columnList} FROM read_json_auto('${tableName}.json')`
-  )
+  let batch: string[] = []
+  let batchBytes = 0
+
+  const flush = async (): Promise<void> => {
+    if (batch.length === 0) return
+    await conn.query(prefix + batch.join(', '))
+    batch = []
+    batchBytes = 0
+  }
+
+  for (const row of data as Record<string, unknown>[]) {
+    const tuple = `(${columns.map((column) => toSqlLiteral(row[column])).join(', ')})`
+    // Flush before adding, so a single row wider than the budget still goes out
+    // on its own rather than being dropped or split.
+    if (batchBytes > 0 && batchBytes + tuple.length > MAX_STATEMENT_BYTES) await flush()
+    batch.push(tuple)
+    batchBytes += tuple.length + 2
+  }
+
+  await flush()
 }
 
 /**

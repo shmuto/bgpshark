@@ -32,6 +32,9 @@ const SqlConsolePage = lazy(() =>
 const BuilderPage = lazy(() =>
   import('./pages/BuilderPage').then((m) => ({ default: m.BuilderPage }))
 )
+const ManualPage = lazy(() =>
+  import('./pages/ManualPage').then((m) => ({ default: m.ManualPage }))
+)
 
 /**
  * Gate for the screens that need a capture.
@@ -101,6 +104,9 @@ function AppContent() {
               reachable with nothing loaded — which is the state you are in when
               you come here to produce a file in the first place. */}
           <Route path="/builder" element={<BuilderPage />} />
+          {/* Outside RequireCapture on purpose: the reader most likely to want
+              it is the one who has not loaded anything yet. */}
+          <Route path="/manual" element={<ManualPage />} />
 
           {/* Protected routes - wait for the restore, then redirect if there is no file */}
           <Route

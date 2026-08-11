@@ -2,6 +2,19 @@
 
 ContainerLab environment for testing BGP packet captures.
 
+For captures you want *now*, without Docker or four SR Linux images, see
+`scenarios.ts` in this directory: thirteen reproductions of specific faults,
+compiled through `src/lib/build` and described in
+[../docs/troubleshooting-scenarios.md](../docs/troubleshooting-scenarios.md).
+
+```bash
+bun run testlab/scenarios.ts          # all of them, into testlab/scenarios/
+bun run testlab/scenarios.ts s3 s11   # just these
+```
+
+The lab below is still what produces traffic no description would think to
+include — real timers, real convergence, real vendor quirks.
+
 ## Topology
 
 ```

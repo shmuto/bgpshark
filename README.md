@@ -33,6 +33,9 @@ uploaded to a server.
   autocomplete and a rule-builder mode. `src_port` / `dst_port` separate two TCP
   sessions between the same IP pair, and `frame` takes `<`, `<=`, `>`, `>=` for a
   frame range (`frame >= 100 and frame < 200`)
+- **User manual** — a Help page inside the app at `/manual`, readable before
+  anything is loaded, covering the screens, the filter language and what to do
+  when a session will not come up
 - Light / dark theme, following the system preference by default
 - Loaded captures persist in IndexedDB and are restored on reload
 
@@ -75,6 +78,21 @@ bunx playwright install chromium    # once
 bun run test:e2e
 bun run test:e2e --ui               # pick through them interactively
 bun run test:e2e layout             # one file
+```
+
+Where `playwright install` cannot run — an offline machine, or one that ships a
+Chromium of its own — `CHROMIUM_PATH` skips the revision lookup entirely:
+
+```bash
+CHROMIUM_PATH=/usr/bin/chromium bun run test:e2e
+```
+
+The suite drives the **dev server**, which by design ships no Content Security
+Policy. Anything that fetches — a wasm module, a DuckDB extension — therefore
+needs checking against the built app too, where the policy is real:
+
+```bash
+bun run build && bun run preview
 ```
 
 ### On Nix
@@ -202,9 +220,9 @@ app still works, minus the SQL console.
 | `src/lib/db/` | DuckDB schema, loader, queries, filter→SQL compiler |
 | `src/lib/filter/` | Filter expression lexer, parser and evaluator |
 | `src/lib/net/` | Prefix arithmetic shared by the filter, the DB and the UI |
-| `src/pages/` | One component per route |
-| `src/components/` | `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `sidebar/` |
-| `testlab/` | ContainerLab topology for generating test captures |
+| `src/pages/` | One component per route; `manual/manual.md` is the user manual |
+| `src/components/` | `builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/` |
+| `testlab/` | ContainerLab topology, and `scenarios.ts` for building fault captures |
 | `docs/` | Design documents |
 
 ## Capture builder
@@ -275,13 +293,23 @@ The builder covers the cases the lab makes awkward — a peer that never answers
 specific NOTIFICATION subcode, a 576-byte MTU — while the lab produces the
 traffic no description would think to include.
 
+`testlab/scenarios.ts` sits between the two: thirteen fixed reproductions of real
+faults, built through the library rather than the lab, described in
+[docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md).
+
+```bash
+bun run testlab/scenarios.ts          # all of them, into testlab/scenarios/
+bun run testlab/scenarios.ts s3 s11   # just these
+```
+
 ## Documentation
 
 - [docs/design.md](docs/design.md) — requirements and technical design
-- [docs/ui-design.md](docs/ui-design.md) — screen specifications
-- [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — the original DuckDB
-  WASM migration proposal, kept for context; `design.md` describes what shipped
-- [docs/todo.md](docs/todo.md) — log of fixed issues
+- [docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md) —
+  thirteen BGP faults, what you want from a capture of each, and what BGPShark
+  says about it today. `bun run testlab/scenarios.ts` builds all of them
+- [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — why DuckDB, and how
+  the implementation diverged from the proposal; `design.md` describes what shipped
 
 ## Deployment
 
@@ -296,3 +324,10 @@ The app makes no third-party requests. Captures are parsed in the browser and st
 only in IndexedDB, and the DuckDB WASM runtime is self-hosted rather than loaded from
 a CDN. The production build ships a Content Security Policy restricting every fetch
 to the app's own origin.
+
+That constrains how the database may be used, not just how it is served: DuckDB
+fetches its **extensions** from `extensions.duckdb.org` on first use, so anything
+outside the core engine — the JSON reader among them — is unavailable by
+construction. The loader inserts with plain `VALUES` for exactly that reason.
+`tests/e2e/offline.e2e.ts` holds the line, asserting that loading and querying a
+capture sends nothing off-origin.

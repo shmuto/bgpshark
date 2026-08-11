@@ -2,6 +2,7 @@ import { copyFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import { marked } from 'marked'
 
 /**
  * Content Security Policy for the production build.
@@ -76,9 +77,55 @@ function spaFallbackPlugin(): Plugin {
   }
 }
 
+/**
+ * Turns an imported `.md` file into the HTML it renders to, at build time.
+ *
+ * The user manual is prose, and prose is worth writing in Markdown rather than
+ * in JSX. Converting here rather than in the browser is what keeps that from
+ * costing anything: `marked` is a devDependency that runs during the build, and
+ * no Markdown parser is shipped to anyone.
+ *
+ * The HTML is trusted by the component that renders it, which is only sound
+ * because the input is a file in this repository. Never point this at Markdown
+ * that arrived from a user — and note the production CSP forbids inline script
+ * regardless, so an injected `<script>` would not run even then.
+ */
+function markdownPlugin(): Plugin {
+  return {
+    name: 'markdown-to-html',
+    async transform(code, id) {
+      if (!id.endsWith('.md')) return null
+      const html = withHeadingIds(await marked.parse(code, { async: true, gfm: true }))
+      return { code: `export default ${JSON.stringify(html)}`, map: null }
+    },
+  }
+}
+
+/**
+ * Gives every h2 and h3 an `id` derived from its text.
+ *
+ * Two things need them: the table of contents the manual page builds by reading
+ * its own HTML back, and links from elsewhere in the app into a specific section
+ * — `/manual#filters` should land on Filters rather than at the top.
+ *
+ * Done with a regex over the output rather than through a `marked` renderer
+ * because the renderer API is the part of `marked` that changes between major
+ * versions, and this does not need to know about any of it.
+ */
+function withHeadingIds(html: string): string {
+  return html.replace(/<h([23])>(.*?)<\/h\1>/g, (whole, level: string, inner: string) => {
+    const slug = inner
+      .replace(/<[^>]+>/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    return slug ? `<h${level} id="${slug}">${inner}</h${level}>` : whole
+  })
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), cspPlugin(), spaFallbackPlugin()],
+  plugins: [react(), markdownPlugin(), cspPlugin(), spaFallbackPlugin()],
   base: '/bgpshark/',
   build: {
     outDir: 'dist',

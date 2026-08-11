@@ -204,3 +204,82 @@
     outline-offset: 1px;
   }
 }
+
+/* The user manual is the one place in the app rendering HTML it did not build
+   element by element — the Markdown is converted at build time — so its tags
+   need styling by name rather than by className. Everything here is drawn from
+   the same tokens the components use, so the manual follows the theme. */
+@layer components {
+  .manual-prose {
+    @apply text-body leading-relaxed;
+  }
+
+  .manual-prose h1 {
+    @apply mb-3 text-3xl font-semibold text-strong;
+  }
+
+  .manual-prose h2 {
+    @apply mt-12 mb-3 border-b border-hair pb-2 text-xl font-semibold text-strong;
+  }
+
+  .manual-prose h3 {
+    @apply mt-8 mb-2 text-base font-semibold text-strong;
+  }
+
+  /* Anchored headings are link targets; without this the sticky header covers
+     whatever you just jumped to. */
+  .manual-prose h2[id],
+  .manual-prose h3[id] {
+    scroll-margin-top: 1.5rem;
+  }
+
+  .manual-prose p {
+    @apply my-3;
+  }
+
+  .manual-prose ul {
+    @apply my-3 list-disc space-y-1 pl-5;
+  }
+
+  .manual-prose ol {
+    @apply my-3 list-decimal space-y-1 pl-5;
+  }
+
+  .manual-prose a {
+    @apply text-accent underline underline-offset-2;
+  }
+
+  .manual-prose strong {
+    @apply font-semibold text-strong;
+  }
+
+  .manual-prose code {
+    @apply rounded bg-surface-sunken px-1 py-0.5 font-mono text-[0.85em] text-strong;
+  }
+
+  .manual-prose pre {
+    @apply my-4 overflow-x-auto rounded-lg border border-hair bg-surface-sunken p-4;
+  }
+
+  .manual-prose pre code {
+    @apply bg-transparent p-0 text-sm;
+  }
+
+  /* Tables are the densest thing in here — the filter field reference is one —
+     so they scroll rather than forcing the page to. */
+  .manual-prose table {
+    @apply my-4 block w-full overflow-x-auto border-collapse text-sm;
+  }
+
+  .manual-prose th {
+    @apply border-b border-hair-strong px-3 py-2 text-left font-semibold text-strong;
+  }
+
+  .manual-prose td {
+    @apply border-b border-hair px-3 py-2 align-top;
+  }
+
+  .manual-prose blockquote {
+    @apply my-4 border-l-2 border-accent pl-4 text-muted;
+  }
+}

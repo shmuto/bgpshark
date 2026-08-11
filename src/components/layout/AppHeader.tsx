@@ -38,6 +38,7 @@ export function AppHeader() {
             </>
           )}
           <NavItem to="/builder">Build</NavItem>
+          <NavItem to="/manual">Help</NavItem>
         </nav>
       </div>
 
