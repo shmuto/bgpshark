@@ -79,7 +79,11 @@ function createUpdatePacket(): BgpPacket {
 
 describe('filter field definitions', () => {
   test('every alias resolves to a defined field', () => {
-    for (const alias of ['src', 'dst', 'as', 'aspath', 'nexthop', 'nlri', 'my_as']) {
+    const aliases = [
+      'src', 'dst', 'as', 'aspath', 'nexthop', 'nlri', 'my_as',
+      'route-target', 'ext-community', 'evpn-type',
+    ]
+    for (const alias of aliases) {
       const canonical = normalizeFieldName(alias)
       expect(FILTER_FIELDS).toHaveProperty(canonical)
     }
@@ -194,6 +198,10 @@ describe('SQL compilation', () => {
       `prefix = "10' OR 1=1--/8"`,
       `router_id = "x' OR 1=1--"`,
       `community = "x' OR 1=1--"`,
+      `rt = "x' OR 1=1--"`,
+      `ext_community = "x' OR 1=1--"`,
+      `mac = "x' OR 1=1--"`,
+      `rd = "x' OR 1=1--"`,
       `capability = "x' OR 1=1--"`,
       `next_hop = "x' OR 1=1--"`,
       `origin = "x' OR 1=1--"`,
@@ -225,6 +233,12 @@ describe('SQL compilation', () => {
       prefix: '10.0.0.0/8',
       withdrawn: '10.0.0.0/8',
       community: '65000:100',
+      rt: '65000:100',
+      ext_community: 'Route Target 65000:100',
+      mac: '00:0c:29:aa:bb:cc',
+      vni: '10100',
+      rd: '10.0.0.1:100',
+      evpn_type: '2',
       capability: 'Route Refresh',
       src_port: '179',
       dst_port: '50000',
@@ -548,5 +562,147 @@ describe('SQL and in-memory paths ask the same question', () => {
   test('a value that is not an address stays escaped text', () => {
     const sql = expressionToSql(parseQuery(`prefix = "10' OR 1=1--"`).expression)
     expect(stripSqlLiterals(sql)).not.toContain('OR 1=1')
+  })
+})
+
+/**
+ * The two halves of a MAC move: leaf1 withdraws 00:0c:29:aa:bb:cc, leaf2
+ * announces it, carrying the Route Target and the MAC Mobility sequence that
+ * settles which advertisement wins.
+ */
+function createEvpnPacket(options: { announce: boolean }): BgpPacket {
+  const evpn = {
+    routeType: 2,
+    routeTypeName: 'MAC/IP Advertisement',
+    rd: options.announce ? '10.0.0.2:100' : '10.0.0.1:100',
+    macAddress: '00:0c:29:aa:bb:cc',
+    label: 10100,
+    esi: '0 (single-homed)',
+    ethernetTag: 0,
+  }
+  const prefix = { prefix: '[2] 00:0c:29:aa:bb:cc', length: 0, evpn }
+
+  const mp = options.announce
+    ? { type: 'MP_REACH_NLRI', afi: 25, safi: 70, nextHop: '10.0.0.2', nlri: [prefix] }
+    : { type: 'MP_UNREACH_NLRI', afi: 25, safi: 70, withdrawnRoutes: [prefix] }
+
+  const update = {
+    type: 'UPDATE',
+    withdrawnRoutesLength: 0,
+    withdrawnRoutes: [],
+    totalPathAttributeLength: 0,
+    pathAttributes: [
+      { typeCode: 14, typeName: 'MP_REACH_NLRI', parsed: mp },
+      {
+        typeCode: 16,
+        typeName: 'EXTENDED_COMMUNITIES',
+        parsed: {
+          type: 'EXTENDED_COMMUNITIES',
+          communities: [
+            { kind: 'Route Target', value: '65002:100', transitive: true, typeCode: 0, subtype: 2 },
+            { kind: 'MAC Mobility', value: 'seq 3', transitive: true, typeCode: 6, subtype: 0 },
+          ],
+        },
+      },
+    ],
+    nlri: [],
+  } as unknown as BgpUpdateMessage
+
+  return {
+    frameIndex: options.announce ? 9 : 8,
+    timestamp: new Date(0),
+    srcIp: options.announce ? '10.0.0.2' : '10.0.0.1',
+    dstIp: '10.0.0.3',
+    srcPort: 179,
+    dstPort: 50000,
+    messages: [update],
+    rawData: new Uint8Array(),
+    parseWarnings: [],
+  }
+}
+
+describe('EVPN and extended community filters', () => {
+  const announced = createEvpnPacket({ announce: true })
+  const withdrawn = createEvpnPacket({ announce: false })
+
+  function matches(expression: string, packet: BgpPacket): boolean {
+    const query = parseQuery(expression)
+    expect(query.errors).toHaveLength(0)
+    return matchPacket(packet, query)
+  }
+
+  test('a MAC search finds the announcement and the withdrawal alike', () => {
+    // Half a MAC move is not an answer: the withdrawal is what says it left.
+    expect(matches('mac = 00:0c:29:aa:bb:cc', announced)).toBe(true)
+    expect(matches('mac = 00:0c:29:aa:bb:cc', withdrawn)).toBe(true)
+    expect(matches('mac = 00:0c:29:aa:bb:cd', announced)).toBe(false)
+    // Captures print MACs lower case; operators type them either way.
+    expect(matches('mac = 00:0C:29:AA:BB:CC', announced)).toBe(true)
+  })
+
+  test('rt matches the Route Target value alone', () => {
+    expect(matches('rt = 65002:100', announced)).toBe(true)
+    expect(matches('rt = 65002:200', announced)).toBe(false)
+  })
+
+  test('rt does not match a MAC Mobility value that happens to read alike', () => {
+    // The kind restriction is the point: rt asks about Route Targets only.
+    expect(matches('rt contains seq', announced)).toBe(false)
+    expect(matches('ext_community contains "MAC Mobility"', announced)).toBe(true)
+  })
+
+  test('vni narrows a capture to one bridge domain', () => {
+    expect(matches('vni = 10100', announced)).toBe(true)
+    expect(matches('vni = 10200', announced)).toBe(false)
+  })
+
+  test('rd names the leaf a route came from', () => {
+    expect(matches('rd = 10.0.0.2:100', announced)).toBe(true)
+    expect(matches('rd = 10.0.0.2:100', withdrawn)).toBe(false)
+  })
+
+  test('evpn_type selects one route type', () => {
+    expect(matches('evpn_type = 2', announced)).toBe(true)
+    expect(matches('evpn_type = 3', announced)).toBe(false)
+  })
+
+  test('the EVPN fields ignore packets with no EVPN in them', () => {
+    const plain = createUpdatePacket()
+    expect(matches('mac = 00:0c:29:aa:bb:cc', plain)).toBe(false)
+    expect(matches('vni = 10100', plain)).toBe(false)
+    expect(matches('rt = 65002:100', plain)).toBe(false)
+  })
+})
+
+describe('EVPN filters compile to SQL that asks the same question', () => {
+  test('a MAC search reaches announced and withdrawn routes both', () => {
+    const sql = expressionToSql(parseQuery('mac = 00:0c:29:aa:bb:cc').expression)
+    expect(sql).toContain('FROM nlri')
+    expect(sql).toContain('FROM withdrawn')
+    expect(sql).toContain('evpn_mac')
+  })
+
+  test('rt restricts to Route Targets rather than matching any extended community', () => {
+    const sql = expressionToSql(parseQuery('rt = 65002:100').expression)
+    expect(sql).toContain('extended_communities')
+    expect(sql).toContain("ec.kind = 'Route Target'")
+  })
+
+  test('a VNI search considers the second label too', () => {
+    const sql = expressionToSql(parseQuery('vni = 10100').expression)
+    expect(sql).toContain('evpn_vni = 10100')
+    expect(sql).toContain('evpn_vni2 = 10100')
+  })
+
+  test('the negated forms are NOT EXISTS, matching "no route says so"', () => {
+    expect(expressionToSql(parseQuery('mac != 00:0c:29:aa:bb:cc').expression)).toContain('NOT EXISTS')
+    expect(expressionToSql(parseQuery('rt != 65002:100').expression)).toContain('NOT EXISTS')
+  })
+
+  test('ordered comparisons work on vni and evpn_type', () => {
+    expect(expressionToSql(parseQuery('vni > 10000').expression)).toContain('evpn_vni > 10000')
+    expect(expressionToSql(parseQuery('evpn_type <= 3').expression)).toContain(
+      'evpn_route_type <= 3'
+    )
   })
 })

@@ -12,12 +12,15 @@ import type {
   BgpNotificationMessage,
   BgpRouteRefreshMessage,
   BgpPathAttribute,
+  BgpPrefix,
   AsPathAttribute,
   CommunitiesAttribute,
+  ExtendedCommunitiesAttribute,
   LargeCommunitiesAttribute,
   MpReachNlriAttribute,
   MpUnreachNlriAttribute,
 } from '../bgp/types'
+import { formatExtendedCommunity } from '../bgp/extended-communities'
 
 // Helper function to convert Uint8Array to Base64
 function uint8ArrayToBase64(bytes: Uint8Array): string {
@@ -26,6 +29,41 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(bytes[i])
   }
   return btoa(binary)
+}
+
+/**
+ * A row of `nlri` or `withdrawn`. Named because the two tables share it and
+ * both the buffer and the function taking it repeat the shape otherwise —
+ * which is how a column added to one and forgotten in the other happens.
+ */
+interface PrefixRow {
+  id: number
+  message_id: number
+  prefix: string
+  prefix_length: number
+  prefix_bits: string | null
+  afi: number
+  safi: number
+  evpn_route_type: number | null
+  evpn_type_name: string | null
+  evpn_rd: string | null
+  evpn_mac: string | null
+  evpn_ip: string | null
+  evpn_vni: number | null
+  evpn_vni2: number | null
+  evpn_esi: string | null
+  evpn_eth_tag: number | null
+}
+
+interface ExtendedCommunityRow {
+  id: number
+  message_id: number
+  kind: string
+  value: string
+  formatted: string
+  transitive: boolean
+  type_code: number
+  subtype: number
 }
 
 // ID counters for auto-increment
@@ -37,6 +75,7 @@ let nlriIdCounter = 0
 let withdrawnIdCounter = 0
 let communityIdCounter = 0
 let largeCommunityIdCounter = 0
+let extCommunityIdCounter = 0
 
 /**
  * Load packets into DuckDB
@@ -57,6 +96,7 @@ export async function loadPackets(packets: BgpPacket[]): Promise<void> {
   withdrawnIdCounter = 0
   communityIdCounter = 0
   largeCommunityIdCounter = 0
+  extCommunityIdCounter = 0
 
   const db = await getDatabase()
   const conn = await getConnection()
@@ -147,25 +187,9 @@ async function insertPackets(
     asn: number
   }> = []
 
-  const nlriData: Array<{
-    id: number
-    message_id: number
-    prefix: string
-    prefix_length: number
-    prefix_bits: string | null
-    afi: number
-    safi: number
-  }> = []
-
-  const withdrawnData: Array<{
-    id: number
-    message_id: number
-    prefix: string
-    prefix_length: number
-    prefix_bits: string | null
-    afi: number
-    safi: number
-  }> = []
+  const nlriData: PrefixRow[] = []
+  const withdrawnData: PrefixRow[] = []
+  const extCommunitiesData: ExtendedCommunityRow[] = []
 
   const communitiesData: Array<{
     id: number
@@ -219,7 +243,8 @@ async function insertPackets(
           nlriData,
           withdrawnData,
           communitiesData,
-          largeCommunitiesData
+          largeCommunitiesData,
+          extCommunitiesData
         )
       }
     }
@@ -235,6 +260,7 @@ async function insertPackets(
   await insertJsonData(conn, db, 'withdrawn', withdrawnData)
   await insertJsonData(conn, db, 'communities', communitiesData)
   await insertJsonData(conn, db, 'large_communities', largeCommunitiesData)
+  await insertJsonData(conn, db, 'extended_communities', extCommunitiesData)
 }
 
 /**
@@ -248,10 +274,17 @@ async function insertJsonData(
 ): Promise<void> {
   if (data.length === 0) return
 
-  // Register JSON as a view and insert
+  // Name the columns rather than inserting positionally: `SELECT *` binds by
+  // position, so a column added to the table but not to the row object — or
+  // added in a different order — lands silently in the wrong column.
+  const columns = Object.keys(data[0] as Record<string, unknown>)
+  const columnList = columns.map((c) => `"${c}"`).join(', ')
+
   const jsonStr = JSON.stringify(data)
   await db.registerFileText(`${tableName}.json`, jsonStr)
-  await conn.query(`INSERT INTO ${tableName} SELECT * FROM read_json_auto('${tableName}.json')`)
+  await conn.query(
+    `INSERT INTO ${tableName} (${columnList}) SELECT ${columnList} FROM read_json_auto('${tableName}.json')`
+  )
 }
 
 /**
@@ -400,24 +433,8 @@ function extractUpdateData(
     as_index: number
     asn: number
   }>,
-  nlriData: Array<{
-    id: number
-    message_id: number
-    prefix: string
-    prefix_length: number
-    prefix_bits: string | null
-    afi: number
-    safi: number
-  }>,
-  withdrawnData: Array<{
-    id: number
-    message_id: number
-    prefix: string
-    prefix_length: number
-    prefix_bits: string | null
-    afi: number
-    safi: number
-  }>,
+  nlriData: PrefixRow[],
+  withdrawnData: PrefixRow[],
   communitiesData: Array<{
     id: number
     message_id: number
@@ -432,7 +449,8 @@ function extractUpdateData(
     local_data1: number
     local_data2: number
     formatted: string
-  }>
+  }>,
+  extCommunitiesData: ExtendedCommunityRow[]
 ): void {
   // Path attributes
   for (const attr of msg.pathAttributes) {
@@ -454,19 +472,27 @@ function extractUpdateData(
       extractLargeCommunities(attr.parsed as LargeCommunitiesAttribute, messageId, largeCommunitiesData)
     }
 
+    // Extract extended communities
+    if (attr.parsed?.type === 'EXTENDED_COMMUNITIES') {
+      for (const community of (attr.parsed as ExtendedCommunitiesAttribute).communities) {
+        extCommunitiesData.push({
+          id: ++extCommunityIdCounter,
+          message_id: messageId,
+          kind: community.kind,
+          value: community.value,
+          formatted: formatExtendedCommunity(community),
+          transitive: community.transitive,
+          type_code: community.typeCode,
+          subtype: community.subtype,
+        })
+      }
+    }
+
     // Extract MP_REACH_NLRI
     if (attr.parsed?.type === 'MP_REACH_NLRI') {
       const mp = attr.parsed as MpReachNlriAttribute
       for (const prefix of mp.nlri) {
-        nlriData.push({
-          id: ++nlriIdCounter,
-          message_id: messageId,
-          prefix: prefix.prefix,
-          prefix_length: prefix.length,
-          prefix_bits: bgpPrefixBitKey(prefix),
-          afi: mp.afi,
-          safi: mp.safi,
-        })
+        nlriData.push(prefixRow(++nlriIdCounter, messageId, prefix, mp.afi, mp.safi))
       }
     }
 
@@ -474,43 +500,52 @@ function extractUpdateData(
     if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
       const mp = attr.parsed as MpUnreachNlriAttribute
       for (const prefix of mp.withdrawnRoutes) {
-        withdrawnData.push({
-          id: ++withdrawnIdCounter,
-          message_id: messageId,
-          prefix: prefix.prefix,
-          prefix_length: prefix.length,
-          prefix_bits: bgpPrefixBitKey(prefix),
-          afi: mp.afi,
-          safi: mp.safi,
-        })
+        withdrawnData.push(prefixRow(++withdrawnIdCounter, messageId, prefix, mp.afi, mp.safi))
       }
     }
   }
 
   // IPv4 NLRI
   for (const prefix of msg.nlri) {
-    nlriData.push({
-      id: ++nlriIdCounter,
-      message_id: messageId,
-      prefix: prefix.prefix,
-      prefix_length: prefix.length,
-      prefix_bits: bgpPrefixBitKey(prefix),
-      afi: 1,
-      safi: 1,
-    })
+    nlriData.push(prefixRow(++nlriIdCounter, messageId, prefix, 1, 1))
   }
 
   // IPv4 Withdrawn
   for (const prefix of msg.withdrawnRoutes) {
-    withdrawnData.push({
-      id: ++withdrawnIdCounter,
-      message_id: messageId,
-      prefix: prefix.prefix,
-      prefix_length: prefix.length,
-      prefix_bits: bgpPrefixBitKey(prefix),
-      afi: 1,
-      safi: 1,
-    })
+    withdrawnData.push(prefixRow(++withdrawnIdCounter, messageId, prefix, 1, 1))
+  }
+}
+
+/**
+ * One row of `nlri` or `withdrawn`. EVPN routes fill the evpn_* columns as
+ * well; every other family leaves them NULL, which is what makes
+ * `WHERE evpn_mac = …` a question SQL can answer over a mixed capture.
+ */
+function prefixRow(
+  id: number,
+  messageId: number,
+  prefix: BgpPrefix,
+  afi: number,
+  safi: number
+): PrefixRow {
+  const evpn = prefix.evpn
+  return {
+    id,
+    message_id: messageId,
+    prefix: prefix.prefix,
+    prefix_length: prefix.length,
+    prefix_bits: bgpPrefixBitKey(prefix),
+    afi,
+    safi,
+    evpn_route_type: evpn?.routeType ?? null,
+    evpn_type_name: evpn?.routeTypeName ?? null,
+    evpn_rd: evpn?.rd ?? null,
+    evpn_mac: evpn?.macAddress ?? null,
+    evpn_ip: evpn?.ipAddress ?? null,
+    evpn_vni: evpn?.label ?? null,
+    evpn_vni2: evpn?.label2 ?? null,
+    evpn_esi: evpn?.esi ?? null,
+    evpn_eth_tag: evpn?.ethernetTag ?? null,
   }
 }
 

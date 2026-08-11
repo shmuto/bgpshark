@@ -44,6 +44,37 @@ HAVING COUNT(*) > 5
 ORDER BY flap_count DESC`,
   },
   {
+    // The question a fabric raises most often: which host is being claimed by
+    // more than one leaf. Two RDs for one MAC is a move if it settled, and a
+    // loop if it did not.
+    name: 'EVPN MAC Moves',
+    query: `SELECT
+  evpn_mac,
+  COUNT(*) AS locations,
+  STRING_AGG(evpn_rd, ', ') AS seen_behind
+FROM (
+  SELECT DISTINCT evpn_mac, evpn_rd FROM (
+    SELECT evpn_mac, evpn_rd FROM nlri
+    UNION ALL
+    SELECT evpn_mac, evpn_rd FROM withdrawn
+  )
+  WHERE evpn_mac IS NOT NULL
+)
+GROUP BY evpn_mac
+HAVING COUNT(*) > 1
+ORDER BY locations DESC`,
+  },
+  {
+    name: 'EVPN Route Targets',
+    query: `SELECT
+  value AS route_target,
+  COUNT(*) AS routes
+FROM extended_communities
+WHERE kind = 'Route Target'
+GROUP BY value
+ORDER BY routes DESC`,
+  },
+  {
     name: 'Error Analysis',
     query: `SELECT
   error_code_name,
@@ -288,7 +319,7 @@ export function SqlConsolePage() {
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
               <span className="text-sm font-medium text-strong">📝 Query Templates</span>
             </div>
-            <div className="p-2">
+            <div className="p-2" data-testid="query-templates">
               {QUERY_TEMPLATES.map((template) => (
                 <button
                   key={template.name}
@@ -331,9 +362,19 @@ export function SqlConsolePage() {
               <SchemaTable name="packets" columns={['frame_index', 'timestamp', 'src_ip', 'dst_ip', '...']} />
               <SchemaTable name="messages" columns={['id', 'frame_index', 'type', '...']} />
               <SchemaTable name="as_path" columns={['message_id', 'segment_index', 'asn']} />
-              <SchemaTable name="nlri" columns={['message_id', 'prefix']} />
-              <SchemaTable name="withdrawn" columns={['message_id', 'prefix']} />
+              <SchemaTable
+                name="nlri"
+                columns={['message_id', 'prefix', 'afi', 'safi', 'evpn_route_type', 'evpn_rd', 'evpn_mac', 'evpn_ip', 'evpn_vni', 'evpn_esi', '...']}
+              />
+              <SchemaTable
+                name="withdrawn"
+                columns={['message_id', 'prefix', 'afi', 'safi', 'evpn_route_type', 'evpn_rd', 'evpn_mac', 'evpn_ip', 'evpn_vni', 'evpn_esi', '...']}
+              />
               <SchemaTable name="communities" columns={['message_id', 'asn', 'value', 'formatted']} />
+              <SchemaTable
+                name="extended_communities"
+                columns={['message_id', 'kind', 'value', 'formatted', 'transitive']}
+              />
             </div>
           </div>
         </div>

@@ -2,11 +2,11 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { BgpMessage, BgpPacket, BgpUpdateMessage } from '../../lib/bgp/types'
 import { endOfRibMarker, countUpdatePrefixes } from '../../lib/bgp/update'
 import {
-  formatDeltaTime,
   summarizePacketPrefixes,
   type PrefixGroup,
 } from '../../lib/packet-columns'
 import type { GenericPacket } from '../../lib/pcap'
+import { formatDelta } from '../../lib/format-time'
 
 /**
  * A row in the packet list: either a packet the BGP parser understood, or a
@@ -65,7 +65,7 @@ const ALL_COLUMNS: ColumnDef[] = [
       if (!previousTimestamp) return <span className="font-mono text-dim">-</span>
       return (
         <span className="font-mono text-muted">
-          {formatDeltaTime(dp.timestamp.getTime() - previousTimestamp.getTime())}
+          {formatDelta(dp.timestamp.getTime() - previousTimestamp.getTime())}
         </span>
       )
     },

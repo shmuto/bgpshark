@@ -14,6 +14,8 @@ uploaded to a server.
 - **Full BGP decode** — OPEN capabilities, UPDATE path attributes (AS_PATH,
   communities, large communities, MP_REACH/MP_UNREACH including IPv6 NLRI, …),
   NOTIFICATION error codes with troubleshooting hints
+- **EVPN** — MAC/IP Advertisement and Inclusive Multicast routes decoded to
+  their RD, MAC, VNI and ESI; the other route types identified
 - **Dashboard** — message counts, severity-sorted alerts, neighbor table and a
   message timeline
 - **Message Explorer** — packet list, hierarchical detail view, hex dump
@@ -151,10 +153,16 @@ not (type = KEEPALIVE)
 | `prefix` | Announced or withdrawn NLRI prefix |
 | `withdrawn` | Withdrawn prefix |
 | `community` | Standard or large community |
+| `rt` | Route Target, e.g. `rt = 65001:100` |
+| `ext_community` | Any extended community as displayed, e.g. `ext_community contains "MAC Mobility"` |
+| `mac` | MAC in an EVPN route, announced or withdrawn |
+| `vni` | VNI carried by an EVPN route |
+| `rd` | Route Distinguisher of an EVPN route |
+| `evpn_type` | EVPN route type (1 A-D, 2 MAC/IP, 3 IMET, 4 Ethernet Segment, 5 IP Prefix) |
 | `capability` | Capability name from an OPEN message |
 
 Aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `nlri`, `router-id`, `my_as`,
-`large-community`.
+`large-community`, `route-target`, `ext-community`, `evpn-type`.
 Operators: `=`, `!=`, `contains`, `not contains`, combined with `and` / `or` / `not`
 and parentheses.
 
@@ -168,6 +176,11 @@ honoured to the bit — `src_ip = 192.168.0.0/23` covers 192.168.0.0 through
 
 The route analysis screen answers the same way, so a prefix that shows up there
 also shows up in a filter using the same text.
+
+EVPN carries no prefix, so the `mac`, `vni`, `rd` and `evpn_type` fields address
+its routes instead. They look at announcements and withdrawals together: a MAC
+move is a withdrawal from one leaf and an advertisement from another, and
+`mac = 00:0c:29:aa:bb:cc` has to show both halves of it.
 
 ## Architecture
 

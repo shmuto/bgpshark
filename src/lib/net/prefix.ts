@@ -29,6 +29,9 @@ export interface ParsedPrefix {
 
 /** `10.0.12.0/24` — the form a route should always be shown and keyed by. */
 export function formatPrefix(prefix: BgpPrefix): string {
+  // An EVPN route is not a prefix and has no mask; its own description is
+  // already the whole identity, and a trailing /0 would only read as a bug.
+  if (prefix.evpn) return prefix.prefix
   return `${prefix.prefix}/${prefix.length}`
 }
 

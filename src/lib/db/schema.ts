@@ -119,12 +119,26 @@ CREATE TABLE IF NOT EXISTS nlri (
   -- address form.
   prefix_bits     VARCHAR,
   afi             INTEGER DEFAULT 1,
-  safi            INTEGER DEFAULT 1
+  safi            INTEGER DEFAULT 1,
+  -- EVPN (AFI 25 / SAFI 70) carries no prefix, so the columns above say little
+  -- about it. These hold what an EVPN route is actually identified by; they are
+  -- NULL for every other family.
+  evpn_route_type INTEGER,
+  evpn_type_name  VARCHAR,
+  evpn_rd         VARCHAR,
+  evpn_mac        VARCHAR,
+  evpn_ip         VARCHAR,
+  evpn_vni        INTEGER,
+  -- A MAC/IP route carries a second label when it also has an L3 VNI.
+  evpn_vni2       INTEGER,
+  evpn_esi        VARCHAR,
+  evpn_eth_tag    INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_nlri_message ON nlri(message_id);
 CREATE INDEX IF NOT EXISTS idx_nlri_prefix ON nlri(prefix);
 CREATE INDEX IF NOT EXISTS idx_nlri_prefix_bits ON nlri(prefix_bits);
+CREATE INDEX IF NOT EXISTS idx_nlri_evpn_mac ON nlri(evpn_mac);
 
 -- Withdrawn routes table
 CREATE TABLE IF NOT EXISTS withdrawn (
@@ -134,12 +148,26 @@ CREATE TABLE IF NOT EXISTS withdrawn (
   prefix_length   INTEGER,
   prefix_bits     VARCHAR,
   afi             INTEGER DEFAULT 1,
-  safi            INTEGER DEFAULT 1
+  safi            INTEGER DEFAULT 1,
+  -- EVPN (AFI 25 / SAFI 70) carries no prefix, so the columns above say little
+  -- about it. These hold what an EVPN route is actually identified by; they are
+  -- NULL for every other family.
+  evpn_route_type INTEGER,
+  evpn_type_name  VARCHAR,
+  evpn_rd         VARCHAR,
+  evpn_mac        VARCHAR,
+  evpn_ip         VARCHAR,
+  evpn_vni        INTEGER,
+  -- A MAC/IP route carries a second label when it also has an L3 VNI.
+  evpn_vni2       INTEGER,
+  evpn_esi        VARCHAR,
+  evpn_eth_tag    INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_withdrawn_message ON withdrawn(message_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawn_prefix ON withdrawn(prefix);
 CREATE INDEX IF NOT EXISTS idx_withdrawn_prefix_bits ON withdrawn(prefix_bits);
+CREATE INDEX IF NOT EXISTS idx_withdrawn_evpn_mac ON withdrawn(evpn_mac);
 
 -- Communities table
 CREATE TABLE IF NOT EXISTS communities (
@@ -152,6 +180,24 @@ CREATE TABLE IF NOT EXISTS communities (
 
 CREATE INDEX IF NOT EXISTS idx_communities_message ON communities(message_id);
 CREATE INDEX IF NOT EXISTS idx_communities_formatted ON communities(formatted);
+
+-- Extended communities table (RFC 4360). \`kind\` and \`value\` are the decoded
+-- halves — 'Route Target' and '65001:100' — and \`formatted\` is the two joined,
+-- so a search can be as loose or as exact as the question being asked.
+CREATE TABLE IF NOT EXISTS extended_communities (
+  id              INTEGER PRIMARY KEY,
+  message_id      INTEGER NOT NULL,
+  kind            VARCHAR,
+  value           VARCHAR,
+  formatted       VARCHAR,
+  transitive      BOOLEAN,
+  type_code       INTEGER,
+  subtype         INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_ext_communities_message ON extended_communities(message_id);
+CREATE INDEX IF NOT EXISTS idx_ext_communities_value ON extended_communities(value);
+CREATE INDEX IF NOT EXISTS idx_ext_communities_formatted ON extended_communities(formatted);
 
 -- Large communities table
 CREATE TABLE IF NOT EXISTS large_communities (
@@ -168,6 +214,7 @@ CREATE INDEX IF NOT EXISTS idx_large_communities_message ON large_communities(me
 
 export const DROP_TABLES_SQL = `
 DROP TABLE IF EXISTS large_communities;
+DROP TABLE IF EXISTS extended_communities;
 DROP TABLE IF EXISTS communities;
 DROP TABLE IF EXISTS withdrawn;
 DROP TABLE IF EXISTS nlri;
@@ -177,3 +224,86 @@ DROP TABLE IF EXISTS capabilities;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS packets;
 `
+
+/**
+ * Split a script into statements, the way the schema above is written.
+ *
+ * DuckDB WASM takes one statement per `query`, so the script has to be cut up
+ * first — and cutting on every `;` is wrong, because a semicolon inside a
+ * comment or a string literal is not a statement boundary. Getting that wrong
+ * severs a CREATE TABLE mid-column, and what the app then reports is not a bad
+ * comment but "Failed to initialize DuckDB", with every table after the cut
+ * missing and every filter silently returning nothing.
+ *
+ * Comment-only trailing text is dropped rather than sent on as a statement,
+ * since an empty parse is an error of its own.
+ */
+export function splitSqlStatements(script: string): string[] {
+  const statements: string[] = []
+  let current = ''
+  let i = 0
+
+  while (i < script.length) {
+    const char = script[i]
+    const next = script[i + 1]
+
+    // A line comment runs to the newline, semicolons and quotes included.
+    if (char === '-' && next === '-') {
+      const newline = script.indexOf('\n', i)
+      const end = newline === -1 ? script.length : newline
+      current += script.slice(i, end)
+      i = end
+      continue
+    }
+
+    if (char === '/' && next === '*') {
+      const close = script.indexOf('*/', i + 2)
+      const end = close === -1 ? script.length : close + 2
+      current += script.slice(i, end)
+      i = end
+      continue
+    }
+
+    // A string literal, in which '' is an escaped quote rather than the end.
+    if (char === "'") {
+      let end = i + 1
+      while (end < script.length) {
+        if (script[end] === "'") {
+          if (script[end + 1] === "'") {
+            end += 2
+            continue
+          }
+          end++
+          break
+        }
+        end++
+      }
+      current += script.slice(i, end)
+      i = end
+      continue
+    }
+
+    if (char === ';') {
+      statements.push(current)
+      current = ''
+      i++
+      continue
+    }
+
+    current += char
+    i++
+  }
+  statements.push(current)
+
+  return statements.filter(hasStatement)
+}
+
+/** True when something other than whitespace and comments is left. */
+function hasStatement(chunk: string): boolean {
+  return (
+    chunk
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/--[^\n]*/g, '')
+      .trim() !== ''
+  )
+}

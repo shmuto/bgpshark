@@ -82,6 +82,24 @@ function comparisonToSql(expr: Comparison): string {
       // Handle both standard and large communities
       return `(${communitySql(operator, value)} OR ${largeCommunitySql(operator, value)})`
 
+    case 'rt':
+      return extCommunitySql('value', operator, value, "ec.kind = 'Route Target'")
+
+    case 'ext_community':
+      return extCommunitySql('formatted', operator, value)
+
+    case 'mac':
+      return evpnTextSql('evpn_mac', operator, value)
+
+    case 'rd':
+      return evpnTextSql('evpn_rd', operator, value)
+
+    case 'vni':
+      return evpnVniSql(operator, value)
+
+    case 'evpn_type':
+      return evpnNumberSql('evpn_route_type', operator, value)
+
     case 'prefix':
       return prefixSql('nlri', operator, value)
 
@@ -127,8 +145,117 @@ function orderedComparisonToSql(field: string, operator: OrderedOperator, value:
         WHERE m.frame_index = p.frame_index AND ap.asn ${operator} ${numeric}
       )`
 
+    case 'vni':
+      return evpnExists(
+        `(r.evpn_vni ${operator} ${numeric} OR r.evpn_vni2 ${operator} ${numeric})`
+      )
+
+    case 'evpn_type':
+      return evpnExists(`r.evpn_route_type ${operator} ${numeric}`)
+
     default:
       return '1=0' // Ordered comparison on a non-numeric field
+  }
+}
+
+/**
+ * Announced and withdrawn EVPN routes are one population here: a MAC move is a
+ * withdrawal from one leaf and an advertisement from another, and a filter that
+ * saw only announcements would show half of it. Mirrors `evpnRoutes` in the
+ * in-memory evaluator, which walks both lists for the same reason.
+ */
+const EVPN_ROUTES_SUBQUERY = `(
+        SELECT message_id, evpn_route_type, evpn_rd, evpn_mac, evpn_vni, evpn_vni2 FROM nlri
+        UNION ALL
+        SELECT message_id, evpn_route_type, evpn_rd, evpn_mac, evpn_vni, evpn_vni2 FROM withdrawn
+      )`
+
+function evpnExists(condition: string, negated = false): string {
+  return `${negated ? 'NOT EXISTS' : 'EXISTS'} (
+        SELECT 1 FROM ${EVPN_ROUTES_SUBQUERY} r
+        JOIN messages m ON r.message_id = m.id
+        WHERE m.frame_index = p.frame_index AND ${condition}
+      )`
+}
+
+/** A text column of an EVPN route — the MAC or the Route Distinguisher. */
+function evpnTextSql(column: string, operator: MatchOperator, value: FilterValue): string {
+  const strValue = escapeString(String(value))
+  const exact = `LOWER(r.${column}) = LOWER('${strValue}')`
+  const loose = `LOWER(r.${column}) LIKE LOWER('%${strValue}%')`
+
+  switch (operator) {
+    case '=':
+      return evpnExists(exact)
+    case '!=':
+      return evpnExists(exact, true)
+    case 'contains':
+      return evpnExists(loose)
+    case 'not contains':
+      return evpnExists(loose, true)
+  }
+}
+
+function evpnNumberSql(column: string, operator: MatchOperator, value: FilterValue): string {
+  const numeric = coerceNumericValue(value)
+  if (typeof numeric !== 'number') return '1=0'
+  const equals = `r.${column} = ${numeric}`
+
+  switch (operator) {
+    case '=':
+    case 'contains':
+      return evpnExists(equals)
+    case '!=':
+    case 'not contains':
+      return evpnExists(equals, true)
+  }
+}
+
+/** Either label satisfies a VNI search; a MAC/IP route may carry an L3 VNI too. */
+function evpnVniSql(operator: MatchOperator, value: FilterValue): string {
+  const numeric = coerceNumericValue(value)
+  if (typeof numeric !== 'number') return '1=0'
+  const equals = `(r.evpn_vni = ${numeric} OR r.evpn_vni2 = ${numeric})`
+
+  switch (operator) {
+    case '=':
+    case 'contains':
+      return evpnExists(equals)
+    case '!=':
+    case 'not contains':
+      return evpnExists(equals, true)
+  }
+}
+
+/**
+ * SQL for extended communities. `column` picks how exact the match is: `value`
+ * is the bare `65001:100`, `formatted` the whole `Route Target 65001:100`.
+ */
+function extCommunitySql(
+  column: 'value' | 'formatted',
+  operator: MatchOperator,
+  value: FilterValue,
+  extraCondition?: string
+): string {
+  const strValue = escapeString(String(value))
+  const kind = extraCondition ? `${extraCondition} AND ` : ''
+  const exists = (condition: string, negated: boolean) => `${negated ? 'NOT EXISTS' : 'EXISTS'} (
+        SELECT 1 FROM extended_communities ec
+        JOIN messages m ON ec.message_id = m.id
+        WHERE m.frame_index = p.frame_index AND ${kind}${condition}
+      )`
+  const exact = `LOWER(ec.${column}) = LOWER('${strValue}')`
+  const loose = `LOWER(ec.${column}) LIKE LOWER('%${strValue}%')`
+
+  switch (operator) {
+    case '=':
+      return exists(exact, false)
+    case '!=':
+      return exists(exact, true)
+    case 'contains':
+      return exists(loose, false)
+    case 'not contains':
+      return exists(loose, true)
   }
 }
 

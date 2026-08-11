@@ -6,7 +6,7 @@ import mvpWasm from '@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm?url'
 import mvpWorker from '@duckdb/duckdb-wasm/dist/duckdb-browser-mvp.worker.js?url'
 import ehWasm from '@duckdb/duckdb-wasm/dist/duckdb-eh.wasm?url'
 import ehWorker from '@duckdb/duckdb-wasm/dist/duckdb-browser-eh.worker.js?url'
-import { SCHEMA_SQL, DROP_TABLES_SQL } from './schema'
+import { SCHEMA_SQL, DROP_TABLES_SQL, splitSqlStatements } from './schema'
 
 /**
  * Bundles are served from our own origin rather than a CDN, so the app makes no
@@ -110,8 +110,7 @@ async function createSchema(): Promise<void> {
     throw new Error('Database not initialized')
   }
 
-  // Split and execute each statement
-  const statements = SCHEMA_SQL.split(';').filter((s) => s.trim())
+  const statements = splitSqlStatements(SCHEMA_SQL)
   for (const stmt of statements) {
     await conn.query(stmt)
   }
@@ -144,7 +143,7 @@ export async function resetDatabase(): Promise<void> {
   const connection = await getConnection()
 
   // Drop all tables
-  const dropStatements = DROP_TABLES_SQL.split(';').filter((s) => s.trim())
+  const dropStatements = splitSqlStatements(DROP_TABLES_SQL)
   for (const stmt of dropStatements) {
     await connection.query(stmt)
   }

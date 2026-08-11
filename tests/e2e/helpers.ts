@@ -63,6 +63,111 @@ export async function runSql(page: Page, sql: string): Promise<string> {
 }
 
 /**
+ * A small VXLAN fabric: two leaves peering, both joining a VNI, MACs learned
+ * behind leaf2, and then one MAC moving to leaf1 — withdrawn by the leaf that
+ * had it and re-announced by the leaf that now does.
+ *
+ * Built here rather than committed as a fixture so what it contains is legible
+ * next to the assertions that depend on it. EVPN needs a capture of its own:
+ * the sample has no L2VPN in it, so nothing else in this suite would notice if
+ * EVPN stopped reaching the database.
+ */
+export function evpnCapture(): Buffer {
+  const bgp = (type: number, body: number[]) => {
+    const length = 19 + body.length
+    return Buffer.from([...Array(16).fill(0xff), length >> 8, length & 0xff, type, ...body])
+  }
+  const attribute = (flags: number, type: number, value: number[]) => [flags, type, value.length, ...value]
+  const ip4 = (address: string) => address.split('.').map(Number)
+  const u32 = (n: number) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]
+
+  // OPEN advertising 4-byte AS and MP-BGP for L2VPN/EVPN (AFI 25 / SAFI 70).
+  const open = (as: number, routerId: string) => {
+    const caps = [2, 6, 65, 4, ...u32(as), 2, 6, 1, 4, 0, 25, 0, 70]
+    return bgp(1, [4, as >> 8, as & 0xff, 0, 90, ...ip4(routerId), caps.length, ...caps])
+  }
+
+  const rd = (address: string, n: number) => [0, 1, ...ip4(address), n >> 8, n & 0xff]
+  const vni = (v: number) => [(v << 4) >> 16, ((v << 4) >> 8) & 0xff, (v << 4) & 0xff]
+  const mac = (text: string) => text.split(':').map((byte) => parseInt(byte, 16))
+  const nlri = (type: number, value: number[]) => [type, value.length, ...value]
+
+  const macRoute = (leaf: string, id: number, address: string, tag: number) =>
+    nlri(2, [...rd(leaf, id), ...new Array(10).fill(0), ...u32(0), 48, ...mac(address), 0, ...vni(tag)])
+  const imet = (leaf: string, id: number) => nlri(3, [...rd(leaf, id), ...u32(0), 32, ...ip4(leaf)])
+
+  // Route Target 65002:100 and the VXLAN encapsulation community, on every route.
+  const routeTarget = [0x00, 0x02, 0xfd, 0xea, ...u32(100)]
+  const vxlan = [0x03, 0x0c, 0, 0, 0, 0, 0, 8]
+  const withAttributes = (attrs: number[]) => bgp(2, [0, 0, attrs.length >> 8, attrs.length & 0xff, ...attrs])
+
+  const announce = (nextHop: string, routes: number[], as: number) =>
+    withAttributes([
+      ...attribute(0x40, 1, [0]),
+      ...attribute(0x40, 2, [2, 1, ...u32(as)]),
+      ...attribute(0x80, 14, [0, 25, 70, 4, ...ip4(nextHop), 0, ...routes]),
+      ...attribute(0xc0, 16, [...routeTarget, ...vxlan]),
+    ])
+  const withdraw = (routes: number[]) =>
+    withAttributes(attribute(0x80, 15, [0, 25, 70, ...routes]))
+
+  const LEAF1 = '10.0.0.1'
+  const LEAF2 = '10.0.0.2'
+  const events = [
+    { t: 0, from: LEAF1, message: open(65001, LEAF1) },
+    { t: 0.05, from: LEAF2, message: open(65002, LEAF2) },
+    { t: 1, from: LEAF2, message: announce(LEAF2, [...imet(LEAF2, 100), ...imet(LEAF2, 200)], 65002) },
+    { t: 3, from: LEAF2, message: announce(LEAF2, macRoute(LEAF2, 100, '00:0c:29:aa:bb:cc', 10100), 65002) },
+    { t: 60, from: LEAF2, message: withdraw(macRoute(LEAF2, 100, '00:0c:29:aa:bb:cc', 10100)) },
+    { t: 62, from: LEAF1, message: announce(LEAF1, macRoute(LEAF1, 100, '00:0c:29:aa:bb:cc', 10100), 65001) },
+  ]
+
+  const header = Buffer.alloc(24)
+  header.writeUInt32LE(0xa1b2c3d4, 0)
+  header.writeUInt16LE(2, 4)
+  header.writeUInt16LE(4, 6)
+  header.writeUInt32LE(65535, 16)
+  header.writeUInt32LE(1, 20)
+
+  const chunks: Buffer[] = [header]
+  for (const event of events) {
+    const outbound = event.from === LEAF1
+    const tcp = Buffer.alloc(20)
+    tcp.writeUInt16BE(outbound ? 54001 : 179, 0)
+    tcp.writeUInt16BE(outbound ? 179 : 54001, 2)
+    tcp.writeUInt32BE(1, 4)
+    tcp[12] = 0x50
+    tcp[13] = 0x18
+    tcp.writeUInt16BE(65535, 14)
+
+    const payload = Buffer.concat([tcp, event.message])
+    const ip = Buffer.alloc(20)
+    ip[0] = 0x45
+    ip.writeUInt16BE(20 + payload.length, 2)
+    ip[8] = 64
+    ip[9] = 6
+    Buffer.from(ip4(event.from)).copy(ip, 12)
+    Buffer.from(ip4(outbound ? LEAF2 : LEAF1)).copy(ip, 16)
+
+    const frame = Buffer.concat([
+      Buffer.from('aabbccddeeff112233445566', 'hex'),
+      Buffer.from([0x08, 0x00]),
+      ip,
+      payload,
+    ])
+    const record = Buffer.alloc(16)
+    const seconds = 1764547200 + event.t
+    record.writeUInt32LE(Math.floor(seconds), 0)
+    record.writeUInt32LE(Math.round((seconds % 1) * 1e6), 4)
+    record.writeUInt32LE(frame.length, 8)
+    record.writeUInt32LE(frame.length, 12)
+    chunks.push(record, frame)
+  }
+
+  return Buffer.concat(chunks)
+}
+
+/**
  * A pcapng whose first packets claim more captured bytes than they carry, so
  * the parser produces warnings. Built from the sample rather than committed as
  * a second fixture, so it cannot drift away from it.

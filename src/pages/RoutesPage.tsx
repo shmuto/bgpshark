@@ -270,6 +270,13 @@ export function RoutesPage() {
     navigate(`/messages?selected=${event.packetIndex}`)
   }
 
+  /**
+   * EVPN routes carry a Route Distinguisher and nothing else does, so the
+   * column only appears when the selected route has one. On a MAC move it is
+   * the column that tells the story: the RD changes and the MAC does not.
+   */
+  const showRdColumn = selectedPrefixStats?.history.some((event) => event.rd) ?? false
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-canvas">
       {/* Search Bar */}
@@ -295,7 +302,7 @@ export function RoutesPage() {
                 // having to press Search.
                 if (!e.target.value.trim()) updateParams({ q: null })
               }}
-              placeholder="10.0.0.0/8, 10.0.13.1 or AS65001"
+              placeholder="10.0.0.0/8, 10.0.13.1, AS65001 or a MAC"
               className="flex-1 px-3 py-2 border border-hair-strong rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-sm"
             />
             <button
@@ -469,6 +476,14 @@ export function RoutesPage() {
                     <th className="px-4 py-2 font-medium" title="Time since the previous event">Δ</th>
                     <th className="px-4 py-2 font-medium">Action</th>
                     <th className="px-4 py-2 font-medium">AS_PATH</th>
+                    {showRdColumn && (
+                      <th
+                        className="px-4 py-2 font-medium"
+                        title="Route Distinguisher — which leaf advertised this route"
+                      >
+                        RD
+                      </th>
+                    )}
                     <th className="px-4 py-2 font-medium" title="The peer this event arrived from">From</th>
                     <th className="px-4 py-2 font-medium">Next Hop</th>
                   </tr>
@@ -500,6 +515,9 @@ export function RoutesPage() {
                       <td className="px-4 py-2 font-mono text-muted">
                         {event.asPath ? formatAsPath(event.asPath) : '-'}
                       </td>
+                      {showRdColumn && (
+                        <td className="px-4 py-2 font-mono text-muted">{event.rd ?? '-'}</td>
+                      )}
                       <td className="px-4 py-2 font-mono text-muted">{event.source}</td>
                       <td className="px-4 py-2 font-mono text-muted">
                         {event.nextHop || '-'}

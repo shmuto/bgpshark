@@ -33,11 +33,24 @@ describe('formatDelta', () => {
     expect(formatDelta(3_900_000)).toBe('+1h05m')
   })
 
+  test('a gap that rounds up into the next unit is shown in that unit', () => {
+    // Otherwise the boundary reads as "+60.0s", which is a minute written the
+    // one way the column never uses.
+    expect(formatDelta(999.7)).toBe('+1.0s')
+    expect(formatDelta(59_990)).toBe('+1m00s')
+  })
+
   test('a gap backwards is signed', () => {
+    // Timestamps that go backwards are a property of the capture worth seeing.
     expect(formatDelta(-2000)).toBe('-2.0s')
+    expect(formatDelta(-120_000)).toBe('-2m00s')
   })
 
   test('no gap at all', () => {
     expect(formatDelta(0)).toBe('+0.000s')
+  })
+
+  test('a gap that is not a number says nothing', () => {
+    expect(formatDelta(NaN)).toBe('-')
   })
 })

@@ -1,6 +1,8 @@
 import { BinaryReader } from '../pcap/reader'
 import { getAfiName, getSafiName } from './constants'
 import { DEFAULT_DECODING, afiSafiKey, type UpdateDecoding } from './session'
+import { formatEvpnRoute, parseEvpnNlri } from './evpn'
+import { parseExtendedCommunities } from './extended-communities'
 import type {
   BgpUpdateMessage,
   BgpPrefix,
@@ -83,8 +85,25 @@ export function parseUpdateMessage(
 /** Longest prefix each family can have; anything above it is corruption. */
 const MAX_PREFIX_LENGTH: Record<number, number> = { 1: 32, 2: 128 }
 
+/**
+ * An unknown family is read as IPv4, so it takes IPv4's limit — a longer
+ * "prefix" would be more bytes than an IPv4 address can hold, and formatting
+ * it as one throws rather than warning.
+ */
 function maxPrefixLength(afi: number): number {
-  return MAX_PREFIX_LENGTH[afi] ?? 128
+  return MAX_PREFIX_LENGTH[afi] ?? 32
+}
+
+/** SAFI 70: EVPN, whose NLRI is a tagged union rather than a list of prefixes. */
+const SAFI_EVPN = 70
+
+/** EVPN routes ride through the prefix pipeline carrying their decoded form. */
+function evpnPrefixes(reader: BinaryReader, length: number, warnings: string[]): BgpPrefix[] {
+  return parseEvpnNlri(reader, length, warnings).map((route) => ({
+    prefix: formatEvpnRoute(route),
+    length: 0,
+    evpn: route,
+  }))
 }
 
 /**
@@ -268,6 +287,9 @@ function parsePathAttributeValue(
     case 8: // COMMUNITIES
       return parseCommunities(reader, data.length)
 
+    case 16: // EXTENDED_COMMUNITIES
+      return { type: 'EXTENDED_COMMUNITIES', communities: parseExtendedCommunities(reader, data.length) }
+
     case 14: // MP_REACH_NLRI
       return parseMpReachNlri(reader, data.length, warnings, decoding)
 
@@ -404,18 +426,24 @@ function parseMpReachNlri(
   const safi = reader.readUint8()
   const nextHopLength = reader.readUint8()
 
-  // Parse next hop (varies by AFI)
+  // The next hop's width says what it is, and the AFI does not: EVPN and the
+  // VPN families all carry a plain IPv4 or IPv6 address here (the VTEP, for a
+  // fabric), and VPN next hops arrive with an 8-byte zero RD in front.
   let nextHop = ''
-  if (afi === 1 && nextHopLength === 4) {
-    // IPv4
+  if (nextHopLength === 4) {
     nextHop = reader.readIpv4Address()
-  } else if (afi === 2 && nextHopLength >= 16) {
-    // IPv6
+  } else if (nextHopLength === 12) {
+    reader.skip(8) // RD, always zero on a next hop
+    nextHop = reader.readIpv4Address()
+  } else if (nextHopLength === 16) {
     nextHop = reader.readIpv6Address()
-    if (nextHopLength === 32) {
-      // Link-local address follows
-      reader.skip(16)
-    }
+  } else if (nextHopLength === 24) {
+    reader.skip(8) // RD, as above
+    nextHop = reader.readIpv6Address()
+  } else if (nextHopLength === 32) {
+    // Global address followed by a link-local one; the global is the useful half.
+    nextHop = reader.readIpv6Address()
+    reader.skip(16)
   } else {
     reader.skip(nextHopLength)
     nextHop = `(${nextHopLength} bytes)`
@@ -426,14 +454,15 @@ function parseMpReachNlri(
 
   // Parse NLRI
   const nlri: BgpPrefix[] = []
-  // The rest of the attribute is one NLRI block, so it can go through the same
-  // validated reader as the classic fields — including Path Identifiers, which
-  // ADD-PATH negotiates per address family.
+  // The rest of the attribute is one NLRI block. EVPN frames its entries by
+  // route type rather than by prefix length, so it needs its own reader.
   nlri.push(
-    ...parsePrefixes(reader, reader.remaining(), warnings, {
-      afi,
-      addPath: decoding.addPath.has(afiSafiKey(afi, safi)),
-    })
+    ...(safi === SAFI_EVPN
+      ? evpnPrefixes(reader, reader.remaining(), warnings)
+      : parsePrefixes(reader, reader.remaining(), warnings, {
+          afi,
+          addPath: decoding.addPath.has(afiSafiKey(afi, safi)),
+        }))
   )
 
   return {
@@ -456,10 +485,13 @@ function parseMpUnreachNlri(
   const afi = reader.readUint16()
   const safi = reader.readUint8()
 
-  const withdrawnRoutes = parsePrefixes(reader, reader.remaining(), warnings, {
-    afi,
-    addPath: decoding.addPath.has(afiSafiKey(afi, safi)),
-  })
+  const withdrawnRoutes =
+    safi === SAFI_EVPN
+      ? evpnPrefixes(reader, reader.remaining(), warnings)
+      : parsePrefixes(reader, reader.remaining(), warnings, {
+          afi,
+          addPath: decoding.addPath.has(afiSafiKey(afi, safi)),
+        })
 
   return {
     type: 'MP_UNREACH_NLRI',

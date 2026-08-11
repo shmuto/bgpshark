@@ -45,11 +45,13 @@ export const CapabilityCodeNames: Record<number, string> = {
 export const Afi = {
   IPV4: 1,
   IPV6: 2,
+  L2VPN: 25,
 } as const
 
 export const AfiNames: Record<number, string> = {
   [Afi.IPV4]: 'IPv4',
   [Afi.IPV6]: 'IPv6',
+  [Afi.L2VPN]: 'L2VPN',
 }
 
 /**
