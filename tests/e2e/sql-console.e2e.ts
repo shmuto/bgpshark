@@ -43,6 +43,23 @@ test.describe('SQL console', () => {
     expect(body).toContain('4:000010100000000000001100')
   })
 
+  test('every query template runs', async ({ page }) => {
+    // A template is a query the user did not write, so a typo in one reads as
+    // a broken tool rather than as a mistake they can fix. Zero rows is a fine
+    // answer here — the sample capture has no EVPN in it — an error is not.
+    const buttons = page.getByTestId('query-templates').getByRole('button')
+    const count = await buttons.count()
+    expect(count).toBeGreaterThan(4)
+
+    for (let i = 0; i < count; i++) {
+      const name = await buttons.nth(i).innerText()
+      await buttons.nth(i).click()
+      await page.getByRole('button', { name: /Run/ }).click()
+      await expect(page.getByText(/Results \(|Error:|no results/).first()).toBeVisible()
+      expect(await page.locator('body').innerText(), `template: ${name}`).not.toContain('Error:')
+    }
+  })
+
   test('packets carry their address bits', async ({ page }) => {
     const body = await runSql(page, 'select count(*) as n from packets where src_ip_bits is null')
     expect(body).toContain('Results (1 rows)')

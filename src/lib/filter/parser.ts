@@ -5,12 +5,16 @@ import type {
   BgpUpdateMessage,
   AsPathAttribute,
   CommunitiesAttribute,
+  ExtendedCommunitiesAttribute,
   LargeCommunitiesAttribute,
   NextHopAttribute,
   OriginAttribute,
   MpReachNlriAttribute,
   MpUnreachNlriAttribute,
 } from '../bgp/types'
+import type { EvpnRoute } from '../bgp/evpn'
+import type { ExtendedCommunity } from '../bgp/extended-communities'
+import { formatExtendedCommunity } from '../bgp/extended-communities'
 import { contains, formatPrefix, parseBgpPrefix, parsePrefix } from '../net/prefix'
 
 // =============================================================================
@@ -156,6 +160,40 @@ export const FILTER_FIELDS = {
     valueType: 'string' as const,
   },
 
+  // Extended communities (SQL: extended_communities table)
+  rt: {
+    description: 'Route Target, e.g. rt = 65001:100 — what decides which VRF a route lands in',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+  ext_community: {
+    description: 'Extended community as displayed, e.g. ext_community contains "MAC Mobility"',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+
+  // EVPN routes (SQL: nlri, withdrawn tables)
+  mac: {
+    description: 'MAC in an EVPN route — follows one host, announced or withdrawn',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+  vni: {
+    description: 'VNI carried by an EVPN route — narrows a capture to one bridge domain',
+    values: [] as string[],
+    valueType: 'number' as const,
+  },
+  rd: {
+    description: 'Route Distinguisher of an EVPN route, e.g. rd = 10.0.0.1:100',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+  evpn_type: {
+    description: 'EVPN route type: 1 A-D, 2 MAC/IP, 3 IMET, 4 Ethernet Segment, 5 IP Prefix',
+    values: [] as string[],
+    valueType: 'number' as const,
+  },
+
   // Capabilities (SQL: capabilities table)
   capability: {
     description: 'Capability (capabilities.name)',
@@ -175,6 +213,12 @@ export const FIELD_ALIASES: Record<string, string> = {
   nexthop: 'next_hop',
   nlri: 'prefix',
   'large-community': 'community', // Same handling as community
+  'route-target': 'rt',
+  route_target: 'rt',
+  'ext-community': 'ext_community',
+  extcommunity: 'ext_community',
+  'evpn-type': 'evpn_type',
+  evpn: 'evpn_type',
 }
 
 export type FilterFieldName = keyof typeof FILTER_FIELDS
@@ -693,6 +737,53 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
       }
       return false
 
+    case 'rt':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const targets = getExtendedCommunities(msg as BgpUpdateMessage)
+          .filter((c) => c.kind === 'Route Target')
+          .map((c) => c.value)
+        if (matchStringArray(targets, operator, value)) return true
+      }
+      return false
+
+    case 'ext_community':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const formatted = getExtendedCommunities(msg as BgpUpdateMessage).map(
+          formatExtendedCommunity
+        )
+        if (matchStringArray(formatted, operator, value)) return true
+      }
+      return false
+
+    // The EVPN fields look at announced and withdrawn routes alike: following a
+    // MAC through a move means seeing the withdrawal as much as the new route.
+    case 'mac':
+      for (const route of evpnRoutes(packet)) {
+        if (route.macAddress && matchString(route.macAddress, operator, value)) return true
+      }
+      return false
+
+    case 'rd':
+      for (const route of evpnRoutes(packet)) {
+        if (matchString(route.rd, operator, value)) return true
+      }
+      return false
+
+    case 'vni':
+      for (const route of evpnRoutes(packet)) {
+        if (route.label !== undefined && matchNumber(route.label, operator, value)) return true
+        if (route.label2 !== undefined && matchNumber(route.label2, operator, value)) return true
+      }
+      return false
+
+    case 'evpn_type':
+      for (const route of evpnRoutes(packet)) {
+        if (matchNumber(route.routeType, operator, value)) return true
+      }
+      return false
+
     case 'prefix':
       // Match both announced (NLRI) and withdrawn prefixes
       for (const msg of packet.messages) {
@@ -762,6 +853,19 @@ function evaluateOrderedComparison(
       }
       return false
 
+    case 'vni':
+      for (const route of evpnRoutes(packet)) {
+        if (route.label !== undefined && compareOrdered(route.label, operator, query)) return true
+        if (route.label2 !== undefined && compareOrdered(route.label2, operator, query)) return true
+      }
+      return false
+
+    case 'evpn_type':
+      for (const route of evpnRoutes(packet)) {
+        if (compareOrdered(route.routeType, operator, query)) return true
+      }
+      return false
+
     default:
       return false
   }
@@ -824,6 +928,30 @@ function getLargeCommunities(msg: BgpUpdateMessage): string[] {
   return (attr.parsed as LargeCommunitiesAttribute).communities.map(
     (c) => `${c.globalAdmin}:${c.localData1}:${c.localData2}`
   )
+}
+
+function getExtendedCommunities(msg: BgpUpdateMessage): ExtendedCommunity[] {
+  const attr = msg.pathAttributes.find((a) => a.parsed?.type === 'EXTENDED_COMMUNITIES')
+  if (!attr?.parsed || attr.parsed.type !== 'EXTENDED_COMMUNITIES') return []
+  return (attr.parsed as ExtendedCommunitiesAttribute).communities
+}
+
+/**
+ * Every EVPN route in the packet, announced and withdrawn together.
+ *
+ * A MAC move is a withdrawal from one leaf and an advertisement from another,
+ * so a filter that only saw announcements would show half of it.
+ */
+function evpnRoutes(packet: BgpPacket): EvpnRoute[] {
+  const routes: EvpnRoute[] = []
+  for (const msg of packet.messages) {
+    if (msg.type !== 'UPDATE') continue
+    const update = msg as BgpUpdateMessage
+    for (const prefix of [...getNlriPrefixes(update), ...getWithdrawnPrefixes(update)]) {
+      if (prefix.evpn) routes.push(prefix.evpn)
+    }
+  }
+  return routes
 }
 
 function getNlriPrefixes(msg: BgpUpdateMessage): BgpPrefix[] {
@@ -1227,6 +1355,12 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
     origin: new Set(),
     next_hop: new Set(),
     community: new Set(),
+    rt: new Set(),
+    ext_community: new Set(),
+    mac: new Set(),
+    vni: new Set(),
+    rd: new Set(),
+    evpn_type: new Set(),
     prefix: new Set(),
     withdrawn: new Set(),
   }
@@ -1234,6 +1368,13 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
   for (const packet of packets) {
     values.src_ip.add(packet.srcIp)
     values.dst_ip.add(packet.dstIp)
+
+    for (const route of evpnRoutes(packet)) {
+      if (route.macAddress) values.mac.add(route.macAddress)
+      if (route.rd) values.rd.add(route.rd)
+      if (route.label !== undefined) values.vni.add(String(route.label))
+      values.evpn_type.add(String(route.routeType))
+    }
 
     for (const msg of packet.messages) {
       if (msg.type === 'OPEN') {
@@ -1260,6 +1401,10 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
         }
         for (const c of getLargeCommunities(updateMsg)) {
           values.community.add(c) // Merge large communities into community
+        }
+        for (const c of getExtendedCommunities(updateMsg)) {
+          values.ext_community.add(formatExtendedCommunity(c))
+          if (c.kind === 'Route Target') values.rt.add(c.value)
         }
         for (const p of getNlriPrefixes(updateMsg)) {
           values.prefix.add(formatPrefix(p))
