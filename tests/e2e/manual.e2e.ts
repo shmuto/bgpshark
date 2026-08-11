@@ -54,6 +54,55 @@ test.describe('the user manual', () => {
     }
   })
 
+  test('cross-references inside the prose point at sections that exist', async ({ page }) => {
+    // The walkthroughs send the reader back and forth — "see The capture may be
+    // lying to you" — and those anchors are hand-written against slugs the build
+    // generates. A renamed heading breaks them silently.
+    await page.goto('./manual', { waitUntil: 'networkidle' })
+
+    const links = page.locator('.manual-prose a[href^="#"]')
+    const count = await links.count()
+    expect(count).toBeGreaterThan(0)
+
+    for (let i = 0; i < count; i++) {
+      const href = await links.nth(i).getAttribute('href')
+      await expect(page.locator(`.manual-prose ${href}`), `${href} has no heading`).toHaveCount(1)
+    }
+  })
+
+  test('every screenshot in the walkthroughs resolves and loads', async ({ page }) => {
+    // The images are files in `public/manual/`, referenced from Markdown that
+    // becomes a string of HTML — so nothing in the build resolves them, and the
+    // base path is applied by hand in `markdownPlugin`. A wrong base or a
+    // screenshot that was never regenerated shows up here and nowhere else.
+    await page.goto('./manual', { waitUntil: 'networkidle' })
+
+    const images = page.locator('.manual-prose img')
+    const count = await images.count()
+    expect(count).toBeGreaterThan(5)
+
+    for (let i = 0; i < count; i++) {
+      const image = images.nth(i)
+      const source = await image.getAttribute('src')
+      expect(source, 'screenshots are referenced through the app base path').toMatch(
+        /^\/bgpshark\/manual\/[\w-]+\.png$/
+      )
+
+      // Loading is deferred, so each one has to be brought into view first.
+      await image.scrollIntoViewIfNeeded()
+      await expect
+        .poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth), {
+          message: `${source} did not load`,
+        })
+        .toBeGreaterThan(0)
+
+      // A caption, from the alt text: a screenshot of a dense screen without a
+      // line saying what to look at is decoration.
+      const caption = image.locator('xpath=following-sibling::figcaption')
+      await expect(caption).not.toBeEmpty()
+    }
+  })
+
   test('a link into a section lands on that section', async ({ page }) => {
     // The content is injected as HTML after the first paint, so the browser's
     // own hash handling has nothing to scroll to when it runs. The page has to
