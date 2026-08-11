@@ -21,7 +21,7 @@ bun run build      # tsc -b && vite build
 
 `README.md` has the architecture table and the filter syntax reference.
 `docs/design.md` is the requirements and technical design;
-`docs/troubleshooting-scenarios.md` maps thirteen real BGP faults to what the
+`docs/troubleshooting-scenarios.md` maps fourteen real BGP faults to what the
 tool does and does not say about each, and is the fastest way to understand what
 this app is *for*.
 
@@ -108,7 +108,7 @@ console.log(await page.locator('body').innerText())
 the screens are text-dense, so one dump usually answers the question. See
 `tests/e2e/helpers.ts` for the same moves written properly.
 
-Generate captures to feed it with `bun run testlab/scenarios.ts` (thirteen
+Generate captures to feed it with `bun run testlab/scenarios.ts` (fourteen
 troubleshooting scenarios) or the `src/lib/build` library directly. Do not go
 looking for pcaps to download.
 

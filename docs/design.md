@@ -185,7 +185,7 @@ computed over the pseudo-header and short frames are padded to Ethernet's minimu
 verified in `tests/lib/build/checksums.test.ts`.
 
 The same thing is available as a library, which is the better route for fixtures in
-bulk — `testlab/scenarios.ts` uses it to build the thirteen captures behind
+bulk — `testlab/scenarios.ts` uses it to build the fourteen captures behind
 `docs/troubleshooting-scenarios.md`.
 
 #### 2.1.13 User Manual
@@ -367,7 +367,7 @@ bgpshark/
 ├── CLAUDE.md                    # Orientation for an agent starting a session
 ├── docs/
 │   ├── design.md                # This document
-│   ├── troubleshooting-scenarios.md  # Thirteen BGP faults vs. what the tool says
+│   ├── troubleshooting-scenarios.md  # Fourteen BGP faults vs. what the tool says
 │   ├── design-duckdb-wasm.md    # Why DuckDB, and how it diverged from the proposal
 │   └── images/
 ├── src/
@@ -458,7 +458,7 @@ bgpshark/
 │   └── bgp.pcapng               # Test fixture
 ├── testlab/
 │   ├── topology.clab.yml        # ContainerLab BGP topology for capture generation
-│   └── scenarios.ts             # Thirteen fault captures, built from lib/build
+│   └── scenarios.ts             # Fourteen fault captures, built from lib/build
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml               # Pull request checks (lint, unit, build, e2e)

@@ -27,10 +27,12 @@ block, and the rest of the file is still analysed — a warning is not a failure
 
 Two things worth knowing before you trust what you see:
 
-- **A capture with only one direction will look healthy.** If your mirror or
-  `tcpdump` filter caught only one side of the conversation, the messages that
-  explain a failure may simply be absent. BGPShark cannot currently tell you
-  this, so check that you have traffic in both directions.
+- **A capture with only one direction will look healthy.** Check that you have
+  traffic both ways before trusting anything. Two very different things produce a
+  one-sided file: a mirror or `tcpdump` filter that caught one leg, or the peer's
+  packets genuinely not arriving — a one-way link, an ACL applied in one
+  direction, MD5 set on one side. The second is an outage, not a capture problem,
+  and BGPShark currently reports neither.
 - **TCP-level frames are hidden by default.** The packet list shows BGP only
   until you switch it to **All Packets**. A session killed by a firewall shows
   up as a `[R]` frame there and nowhere else.
@@ -231,6 +233,11 @@ in the capture at all, the alert will tell you what the TCP layer shows — SYNs
 answered by RST means something is refusing the connection (an ACL, an MD5
 mismatch, or BGP not running), and SYNs with no answer at all means the traffic
 is not getting there.
+
+If TCP *does* come up and you see your own OPEN but no reply, the fault is at the
+far end: a missing neighbor statement, a peer left passive, or MD5 set on one
+side so your OPEN is discarded before BGP sees it. Nothing on the Dashboard says
+this yet — check the Messages list for OPENs from one address only.
 
 **The session is up but a route is missing.** Search for the prefix on the Routes
 screen. If it is not there, it was never announced on this session. If it is,
