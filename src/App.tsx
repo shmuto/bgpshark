@@ -29,6 +29,9 @@ const RoutesPage = lazy(() =>
 const SqlConsolePage = lazy(() =>
   import('./pages/SqlConsolePage').then((m) => ({ default: m.SqlConsolePage }))
 )
+const BuilderPage = lazy(() =>
+  import('./pages/BuilderPage').then((m) => ({ default: m.BuilderPage }))
+)
 
 /**
  * Gate for the screens that need a capture.
@@ -93,6 +96,11 @@ function AppContent() {
         <Routes>
           {/* File Upload - always accessible */}
           <Route path="/" element={<FileUploadPage />} />
+
+          {/* The builder makes a capture rather than needing one, so it is
+              reachable with nothing loaded — which is the state you are in when
+              you come here to produce a file in the first place. */}
+          <Route path="/builder" element={<BuilderPage />} />
 
           {/* Protected routes - wait for the restore, then redirect if there is no file */}
           <Route

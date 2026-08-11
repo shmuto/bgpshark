@@ -25,6 +25,10 @@ uploaded to a server.
 - **SQL Console** — query the capture directly with DuckDB WASM
 - **Export** — save the filtered packet list back out as a pcap, for attaching
   to a ticket or handing to a vendor
+- **Capture builder** — describe a BGP session and get a pcap of it, without a
+  lab. Eight starting scenarios (clean establishment, hold timer expiry, AS
+  mismatch, TCP rejected, IPv6 transport, route flap, 4-byte AS, segmented
+  UPDATEs), then edit the peers, routes and message sequence
 - **Filter expressions** — `type = NOTIFICATION and src_ip = 10.0.0.1`, with
   autocomplete and a rule-builder mode. `src_port` / `dst_port` separate two TCP
   sessions between the same IP pair, and `frame` takes `<`, `<=`, `>`, `>=` for a
@@ -192,8 +196,9 @@ app still works, minus the SQL console.
 
 | Path | Contents |
 |------|----------|
-| `src/lib/pcap/` | pcap and pcapng parsers, binary reader |
+| `src/lib/pcap/` | pcap and pcapng parsers, pcap writer, binary reader |
 | `src/lib/bgp/` | BGP message and path attribute parsers, error hints |
+| `src/lib/build/` | BGP message encoders, TCP/IP/Ethernet framing, scenario compiler |
 | `src/lib/db/` | DuckDB schema, loader, queries, filter→SQL compiler |
 | `src/lib/filter/` | Filter expression lexer, parser and evaluator |
 | `src/lib/net/` | Prefix arithmetic shared by the filter, the DB and the UI |
@@ -202,11 +207,73 @@ app still works, minus the SQL console.
 | `testlab/` | ContainerLab topology for generating test captures |
 | `docs/` | Design documents |
 
+## Capture builder
+
+The **Build** screen goes the other way: you describe a session and it writes the
+pcap. It needs no capture loaded, which is the state you are in when you come
+looking for one.
+
+![The capture builder: a session described on the left, the built pcap read back on the right](docs/images/builder.png)
+
+A scenario is two peers and a sequence of things that happen between them — the
+TCP handshake, the OPEN exchange, some UPDATEs, a NOTIFICATION, a reset. Pick one
+of the presets for the shape of the problem, then change the addresses, AS
+numbers and routes to match the one in front of you. The preview is the built
+file read back through the same parsers the analysis screens use, so what you see
+there is what you will get.
+
+Two things are decided from the scenario rather than asked for, because both are
+consequences of it:
+
+- **How UPDATEs are encoded.** AS number width and ADD-PATH Path Identifiers are
+  negotiated in the OPENs, so they are derived from the two peers' capabilities.
+  A capture whose OPENs and UPDATEs disagree is one no session could produce.
+- **Where TCP segment boundaries fall.** Messages sent in one step are packed
+  into a byte stream and cut at the MSS. Lowering the MTU is therefore how you
+  build a capture whose BGP messages span segments.
+
+![Editing a step: the messages inside one write, and the frames they produce](docs/images/builder-sequence.png)
+
+The same thing is available as a library, which is the better route for
+generating fixtures in bulk:
+
+```ts
+import { buildScenario, announce } from './src/lib/build'
+
+const { bytes } = buildScenario({
+  a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1' },
+  b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2' },
+  steps: [
+    { kind: 'handshake' },
+    { kind: 'open', from: 'a' },
+    { kind: 'open', from: 'b' },
+    { kind: 'keepalive', from: 'a' },
+    { kind: 'keepalive', from: 'b' },
+    {
+      kind: 'send',
+      from: 'a',
+      messages: [announce(['10.1.0.0/24'], { nextHop: '10.0.0.1', asPath: [65001] })],
+    },
+    { kind: 'send', from: 'b', messages: [{ type: 'NOTIFICATION', errorCode: 6, errorSubcode: 2 }] },
+  ],
+})
+```
+
+Output is a real capture, not one only this app can read: IPv4 and TCP checksums
+are computed properly over the pseudo-header, short frames are padded to
+Ethernet's minimum, and `tests/lib/build/checksums.test.ts` verifies every built
+frame the way a receiving stack would. Ethernet and Linux SLL, IPv4 and IPv6
+transport, and VLAN/QinQ tagging are all available.
+
 ## Test lab
 
 `testlab/` contains a ContainerLab topology of four SR Linux nodes (two ASes, iBGP
 plus a full eBGP mesh) for producing realistic captures, including session flaps and
 administrative shutdowns. See [testlab/README.md](testlab/README.md).
+
+The builder covers the cases the lab makes awkward — a peer that never answers, a
+specific NOTIFICATION subcode, a 576-byte MTU — while the lab produces the
+traffic no description would think to include.
 
 ## Documentation
 
