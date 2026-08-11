@@ -147,6 +147,16 @@ looking for pcaps to download.
   Markdown parser reaches the browser. Edit the Markdown, not the component.
   The plugin also slugs `h2`/`h3` ids, which is how the page builds its own
   table of contents and how `/manual#filters` works.
+- **The manual's screenshots are generated, and are not optional.** `bun run
+  screenshots` (`testlab/screenshots.ts`) drives the real app over the scenario
+  captures and writes `public/manual/*.png`, which *are* committed. Re-run it
+  after changing any screen the manual points at, and commit what changes — the
+  script fails rather than photographing the wrong thing when a click path
+  breaks, but nothing re-runs it for you. It starts its own dev server if one is
+  not already up, and takes `CHROMIUM_PATH` like the e2e suite does.
+  In the Markdown the images are written `![alt](manual/x.png)`: the plugin
+  prefixes the base path, reads the PNG's dimensions so lazy loading does not
+  shift the page under a `#anchor`, and turns the alt text into a caption.
 
 ### Known inconsistency
 

@@ -34,8 +34,10 @@ uploaded to a server.
   sessions between the same IP pair, and `frame` takes `<`, `<=`, `>`, `>=` for a
   frame range (`frame >= 100 and frame < 200`)
 - **User manual** — a Help page inside the app at `/manual`, readable before
-  anything is loaded, covering the screens, the filter language and what to do
-  when a session will not come up
+  anything is loaded, covering the screens, the filter language and a dozen
+  screenshotted walkthroughs that take a complaint — "it flaps every few
+  minutes", "traffic leaves by the wrong upstream" — to the screen that answers
+  it
 - Light / dark theme, following the system preference by default
 - Loaded captures persist in IndexedDB and are restored on reload
 
@@ -301,6 +303,20 @@ faults, built through the library rather than the lab, described in
 bun run testlab/scenarios.ts          # all of them, into testlab/scenarios/
 bun run testlab/scenarios.ts s3 s11   # just these
 ```
+
+The same scenarios are what the user manual is illustrated with.
+`testlab/screenshots.ts` loads each one into the real app, walks the click path
+the manual describes, and photographs the answer:
+
+```bash
+bun run screenshots                   # every shot, into public/manual/
+bun run screenshots s2 s11            # just these
+```
+
+Those PNGs are committed, unlike the captures — a browser cannot generate its
+own illustrations. Re-run this after changing a screen the manual points at.
+The script starts a dev server if one is not already listening, and honours
+`CHROMIUM_PATH` the same way the e2e suite does.
 
 ## Documentation
 

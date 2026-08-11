@@ -279,6 +279,25 @@
     @apply border-b border-hair px-3 py-2 align-top;
   }
 
+  /* Screenshots. They are photographs of a light-themed app whatever theme the
+     manual itself is in, so they get a border of their own — without one, a
+     white screenshot bleeds into the page in light mode and floats in dark. */
+  .manual-prose figure {
+    @apply my-5;
+  }
+
+  /* `h-auto` is load-bearing: the width and height attributes on these images
+     are there so the browser reserves the right box before a lazily loaded
+     screenshot arrives, and without it the fixed height would win and squash
+     them. */
+  .manual-prose img {
+    @apply h-auto w-full rounded-lg border border-hair-strong shadow-sm;
+  }
+
+  .manual-prose figcaption {
+    @apply mt-2 text-xs leading-relaxed text-muted;
+  }
+
   .manual-prose blockquote {
     @apply my-4 border-l-2 border-accent pl-4 text-muted;
   }

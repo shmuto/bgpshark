@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -91,11 +91,16 @@ function spaFallbackPlugin(): Plugin {
  * regardless, so an injected `<script>` would not run even then.
  */
 function markdownPlugin(): Plugin {
+  let base = '/'
   return {
     name: 'markdown-to-html',
+    configResolved(config) {
+      base = config.base
+    },
     async transform(code, id) {
       if (!id.endsWith('.md')) return null
-      const html = withHeadingIds(await marked.parse(code, { async: true, gfm: true }))
+      const parsed = await marked.parse(code, { async: true, gfm: true })
+      const html = withFigures(withHeadingIds(parsed), base)
       return { code: `export default ${JSON.stringify(html)}`, map: null }
     },
   }
@@ -121,6 +126,71 @@ function withHeadingIds(html: string): string {
       .replace(/^-+|-+$/g, '')
     return slug ? `<h${level} id="${slug}">${inner}</h${level}>` : whole
   })
+}
+
+/**
+ * A PNG's pixel dimensions, read from its header.
+ *
+ * Eleven bytes of parsing rather than an image library, because that is all a
+ * PNG needs: an 8-byte signature, then the IHDR chunk's length and type, then
+ * width and height as big-endian 32-bit integers.
+ */
+function pngSize(path: string): { width: number; height: number } {
+  const bytes = readFileSync(path)
+  if (bytes.length < 24 || bytes.readUInt32BE(0) !== 0x89504e47) {
+    throw new Error(`${path} is not a PNG`)
+  }
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
+}
+
+/**
+ * Turns a paragraph that is nothing but an image into a captioned figure.
+ *
+ * Four things happen here, all of them consequences of the Markdown being
+ * converted to a *string* rather than to a module Vite can analyse:
+ *
+ * - **The source is rewritten against the app's base path.** The screenshots
+ *   live in `public/manual/` and the app is served under `/bgpshark/`, so a
+ *   `manual/x.png` in the Markdown has to become `/bgpshark/manual/x.png`.
+ *   Nothing else resolves it: Vite rewrites asset URLs it finds in HTML and
+ *   in imports, and this HTML is neither. Reading the base from the resolved
+ *   config rather than hard-coding it keeps the manual working if the app is
+ *   ever served from somewhere else.
+ * - **The alt text becomes a visible caption.** The manual's images are
+ *   screenshots of dense screens, and a screenshot without a line saying what
+ *   to look at is decoration.
+ * - **Loading is deferred, and space is reserved for it.** The manual is one
+ *   long page carrying a dozen screenshots, and a reader who arrived with a
+ *   question about filters should not wait for a picture of the SQL console.
+ *   But `loading="lazy"` without intrinsic dimensions is a trap: the images
+ *   occupy no height until they load, so every anchor below them points at the
+ *   wrong place and the page jumps around under the reader. The width and
+ *   height attributes come from the file itself, so the browser can reserve
+ *   the right box before fetching a byte.
+ * - **A missing screenshot fails the build.** Reading the file is what makes
+ *   that automatic: the manual cannot reference an image that is not there.
+ *
+ * Only a paragraph containing a single image is a figure. An image used inline
+ * in a sentence stays where it is, and still gets its src rewritten.
+ */
+function withFigures(html: string, base: string): string {
+  const prefix = base.endsWith('/') ? base : `${base}/`
+  const absolute = /^(?:[a-z]+:|\/|data:)/i
+
+  const withBase = html.replace(
+    /<img([^>]*?)src="([^"]+)"/g,
+    (whole, attributes: string, src: string) => {
+      if (absolute.test(src)) return whole
+      const { width, height } = pngSize(resolve(__dirname, 'public', src))
+      return `<img${attributes}src="${prefix}${src}" width="${width}" height="${height}" loading="lazy"`
+    }
+  )
+
+  return withBase.replace(
+    /<p>(<img [^>]*alt="([^"]*)"[^>]*>)<\/p>/g,
+    (_whole, image: string, alt: string) =>
+      `<figure>${image}<figcaption>${alt}</figcaption></figure>`
+  )
 }
 
 // https://vite.dev/config/
