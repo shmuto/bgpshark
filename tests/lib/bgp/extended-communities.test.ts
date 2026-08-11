@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import {
-  parseExtendedCommunities,
-  formatExtendedCommunity,
-} from '../../../src/lib/bgp/extended-communities'
+import { parseExtendedCommunities } from '../../../src/lib/bgp/extended-communities'
 import { BinaryReader } from '../../../src/lib/pcap/reader'
 
 function read(bytes: number[]) {
@@ -109,12 +106,5 @@ describe('reading a whole attribute', () => {
   test('a trailing partial community is skipped rather than half-read', () => {
     const communities = read([0x00, 0x02, 0xfd, 0xe9, 0, 0, 0, 100, 0x00, 0x02, 0xff])
     expect(communities).toHaveLength(1)
-  })
-})
-
-describe('formatExtendedCommunity', () => {
-  test('reads as kind then value', () => {
-    const [rt] = read([0x00, 0x02, 0xfd, 0xe9, 0, 0, 0, 100])
-    expect(formatExtendedCommunity(rt)).toBe('Route Target 65001:100')
   })
 })

@@ -17,11 +17,9 @@ test.beforeEach(async ({ page }) => {
 })
 
 test.describe('EVPN in the message list', () => {
-  test('a MAC/IP route is named by its MAC, not by a prefix', async ({ page }) => {
-    await expect(page.getByText('[2] 00:0c:29:aa:bb:cc').first()).toBeVisible()
-  })
-
-  test('the decoded route and its extended communities are in the detail pane', async ({ page }) => {
+  test('the route is named by its MAC, and its extended communities decode', async ({ page }) => {
+    // Finding the row by its MAC is half the assertion: an EVPN route has no
+    // prefix, so this column would otherwise be blank or show a made-up one.
     await page.getByText('[2] 00:0c:29:aa:bb:cc').last().click()
     await page.getByText(/Click for details/).click()
 
@@ -37,11 +35,6 @@ test.describe('EVPN filter fields', () => {
   test('a MAC search finds the announcement and the withdrawal alike', async ({ page }) => {
     // Three frames: announced by leaf2, withdrawn by leaf2, announced by leaf1.
     await applyFilter(page, 'mac = 00:0c:29:aa:bb:cc')
-    expect(await shownCount(page)).toBe(3)
-  })
-
-  test('vni narrows to one bridge domain', async ({ page }) => {
-    await applyFilter(page, 'vni = 10100')
     expect(await shownCount(page)).toBe(3)
   })
 

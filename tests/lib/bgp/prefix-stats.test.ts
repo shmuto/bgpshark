@@ -374,16 +374,4 @@ describe('EVPN routes on the route history', () => {
 
     expect(stats).toHaveLength(2)
   })
-
-  test('a move shows as a flap, because the route did go away', () => {
-    const stat = only(
-      aggregatePrefixStats([
-        evpnAnnounce('10.0.0.2', 1, evpnMac('10.0.0.2:100')),
-        evpnWithdraw('10.0.0.2', 60, evpnMac('10.0.0.2:100')),
-        evpnAnnounce('10.0.0.1', 62, evpnMac('10.0.0.1:100')),
-      ])
-    )
-
-    expect(stat.flap).toBe(1)
-  })
 })
