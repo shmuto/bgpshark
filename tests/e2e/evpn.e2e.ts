@@ -91,7 +91,7 @@ test.describe('EVPN on the route history', () => {
     await expect(page.getByRole('heading', { name: 'Prefix Statistics' })).toBeVisible()
 
     // Keyed by MAC and VNI, so the leaf it sat behind is not part of its identity.
-    const row = page.getByText('[2] 00:0c:29:aa:bb:cc VNI 10100')
+    const row = page.getByText('[2] 00:0c:29:aa:bb:cc VNI 10100').first()
     await expect(row).toBeVisible()
     await row.click()
 

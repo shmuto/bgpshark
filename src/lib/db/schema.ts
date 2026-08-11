@@ -224,3 +224,86 @@ DROP TABLE IF EXISTS capabilities;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS packets;
 `
+
+/**
+ * Split a script into statements, the way the schema above is written.
+ *
+ * DuckDB WASM takes one statement per `query`, so the script has to be cut up
+ * first — and cutting on every `;` is wrong, because a semicolon inside a
+ * comment or a string literal is not a statement boundary. Getting that wrong
+ * severs a CREATE TABLE mid-column, and what the app then reports is not a bad
+ * comment but "Failed to initialize DuckDB", with every table after the cut
+ * missing and every filter silently returning nothing.
+ *
+ * Comment-only trailing text is dropped rather than sent on as a statement,
+ * since an empty parse is an error of its own.
+ */
+export function splitSqlStatements(script: string): string[] {
+  const statements: string[] = []
+  let current = ''
+  let i = 0
+
+  while (i < script.length) {
+    const char = script[i]
+    const next = script[i + 1]
+
+    // A line comment runs to the newline, semicolons and quotes included.
+    if (char === '-' && next === '-') {
+      const newline = script.indexOf('\n', i)
+      const end = newline === -1 ? script.length : newline
+      current += script.slice(i, end)
+      i = end
+      continue
+    }
+
+    if (char === '/' && next === '*') {
+      const close = script.indexOf('*/', i + 2)
+      const end = close === -1 ? script.length : close + 2
+      current += script.slice(i, end)
+      i = end
+      continue
+    }
+
+    // A string literal, in which '' is an escaped quote rather than the end.
+    if (char === "'") {
+      let end = i + 1
+      while (end < script.length) {
+        if (script[end] === "'") {
+          if (script[end + 1] === "'") {
+            end += 2
+            continue
+          }
+          end++
+          break
+        }
+        end++
+      }
+      current += script.slice(i, end)
+      i = end
+      continue
+    }
+
+    if (char === ';') {
+      statements.push(current)
+      current = ''
+      i++
+      continue
+    }
+
+    current += char
+    i++
+  }
+  statements.push(current)
+
+  return statements.filter(hasStatement)
+}
+
+/** True when something other than whitespace and comments is left. */
+function hasStatement(chunk: string): boolean {
+  return (
+    chunk
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/--[^\n]*/g, '')
+      .trim() !== ''
+  )
+}
