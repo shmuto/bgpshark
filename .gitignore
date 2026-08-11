@@ -36,3 +36,6 @@ npm-debug.log*
 .env.*.local
 
 clab-*
+
+# Captures written by testlab/scenarios.ts — regenerate, don't commit
+testlab/scenarios/
