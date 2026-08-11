@@ -122,6 +122,7 @@ in MP_REACH_NLRI / MP_UNREACH_NLRI.
   session-event summaries, plus the capability diff (§2.1.10)
 - **Route Analysis** (`/routes`): per-prefix announce/withdraw history and flap count
 - **SQL Console** (`/sql`): raw SQL against the DuckDB tables, with query templates
+- **Capture Builder** (`/build`): §2.1.12
 
 #### 2.1.9 Filtering
 Two modes over the same expression language:
@@ -163,11 +164,38 @@ choice is persisted in localStorage. Colours are defined once as CSS custom
 properties in `src/index.css` and consumed through the semantic Tailwind names in
 `tailwind.config.js`, so components never name a theme.
 
+#### 2.1.12 Capture Builder
+
+The one screen that runs in the other direction: describe a session and it writes the
+pcap. It needs no capture loaded, which is the state you are in when you come looking
+for one.
+
+A scenario is two peers and a sequence of things that happen between them — the TCP
+handshake, the OPEN exchange, UPDATEs, a NOTIFICATION, a reset — compiled to frames by
+`lib/build/scenario.ts`. Two properties are derived from the scenario rather than asked
+for, because a capture that got them wrong is one no session could have produced: how
+UPDATEs are encoded (AS width and ADD-PATH Path Identifiers follow from the negotiated
+capabilities) and where TCP segment boundaries fall (messages sent in one step are
+packed into a byte stream and cut at the MSS).
+
+Output is a real capture, not one only this app can read: IPv4/TCP checksums are
+computed over the pseudo-header and short frames are padded to Ethernet's minimum, both
+verified in `tests/lib/build/checksums.test.ts`.
+
+The same thing is available as a library, which is the better route for fixtures in
+bulk — `testlab/scenarios.ts` uses it to build the thirteen captures behind
+`docs/troubleshooting-scenarios.md`. Screen layout is specified in `ui-design.md` §4.7.
+
 ### 2.2 Future Features
 
-- IPv6 transport (BGP sessions over IPv6)
 - Multiple captures loaded side by side
-- Exporting a filtered result set back to pcap
+
+IPv6 transport and pcap export of a filtered result set were both on this list and
+are now implemented — `lib/pcap/ipv6.ts` and `lib/pcap/writer.ts` respectively.
+`docs/troubleshooting-scenarios.md` tracks what the tool still cannot answer, which
+is a more useful backlog than this section: a one-sided capture reported as healthy,
+a post-establishment TCP reset that never reaches the dashboard, and best-path
+attributes that stop at AS_PATH and Next Hop.
 
 Screen state is already shareable through the URL query string: the Message Explorer
 keeps `?filter=` and `?selected=`, Neighbor Analysis `?router=` / `?peer=`, and Route
@@ -193,6 +221,15 @@ Analysis its search term, selection, sort and match direction.
 - No third-party requests. The DuckDB WASM runtime is self-hosted: `db/database.ts`
   imports the `.wasm` modules and worker scripts with Vite's `?url` suffix, so they
   are emitted into `dist/assets/` and served from the app's own origin
+- **Self-hosting the runtime is not the whole of it.** DuckDB fetches its
+  *extensions* from `extensions.duckdb.org` the first time one is used, so anything
+  outside the core engine is unavailable here by construction. This was not
+  theoretical: the loader inserted rows through `read_json_auto`, the JSON reader is
+  an extension, and behind the CSP that download failed — so every capture failed to
+  load and the SQL console was dead on the deployed site, while development looked
+  fine because the dev server ships no policy and the download succeeded.
+  `db/loader.ts` now inserts with literal `VALUES`, and
+  `tests/e2e/offline.e2e.ts` asserts that nothing leaves the origin
 - Content Security Policy is injected into the built `index.html` by the `inject-csp`
   plugin in `vite.config.ts`:
 
@@ -253,10 +290,13 @@ a browser downloads only the one bundle it selects.
 ```
 bgpshark/
 ├── public/
-│   └── favicon.svg
+│   ├── favicon.svg
+│   └── sample.pcapng            # The "Load sample" capture, also an e2e fixture
+├── CLAUDE.md                    # Orientation for an agent starting a session
 ├── docs/
 │   ├── design.md                # This document
 │   ├── ui-design.md             # Screen specifications
+│   ├── troubleshooting-scenarios.md  # Thirteen BGP faults vs. what the tool says
 │   ├── design-duckdb-wasm.md    # Original DuckDB WASM migration proposal
 │   └── todo.md                  # Log of fixed issues
 ├── src/
@@ -271,25 +311,30 @@ bgpshark/
 │   │   ├── MessagesPage.tsx     # /messages
 │   │   ├── NeighborsPage.tsx    # /neighbors
 │   │   ├── RoutesPage.tsx       # /routes
-│   │   └── SqlConsolePage.tsx   # /sql
+│   │   ├── SqlConsolePage.tsx   # /sql
+│   │   └── BuilderPage.tsx      # /build — describe a session, get a pcap
 │   ├── components/
+│   │   ├── builder/             # ScenarioEditor + its editing model
 │   │   ├── common/              # FileDropzone, PacketList, HexDump, QueryInput, ...
 │   │   ├── dashboard/           # SummaryCards, AlertList, NeighborSummaryTable, MessageTimeline
 │   │   ├── layout/              # AppHeader, ThemeToggle
 │   │   ├── message/             # PacketDetail + per-message-type views
-│   │   ├── neighbor/            # NeighborSummary, CapabilityDiff
-│   │   └── sidebar/             # BgpPeersSidebar
+│   │   └── neighbor/            # CapabilityDiff
 │   ├── hooks/
 │   │   ├── useBgpAnalyzer.ts    # Load → parse → DuckDB → state
 │   │   ├── useFileDropzone.ts
 │   │   ├── useFilter.ts
 │   │   ├── useMediaQuery.ts     # Compact-layout detection
 │   │   ├── useSplitPane.ts      # Draggable two-pane divider
+│   │   ├── useVirtualRows.ts    # Row virtualization for long lists
 │   │   └── useTheme.ts          # Light / dark / system preference
 │   ├── lib/
 │   │   ├── pcap/
 │   │   │   ├── parser.ts        # libpcap parser
 │   │   │   ├── pcapng-parser.ts # pcapng parser
+│   │   │   ├── bgp-detect.ts    # BGP on non-standard ports, by marker
+│   │   │   ├── ipv6.ts          # IPv6 header walking and RFC 5952 formatting
+│   │   │   ├── writer.ts        # Frames → pcap, for filtered export
 │   │   │   ├── reader.ts        # Binary reading utilities
 │   │   │   └── types.ts
 │   │   ├── bgp/
@@ -297,9 +342,14 @@ bgpshark/
 │   │   │   ├── open.ts          # OPEN + capability parsing
 │   │   │   ├── update.ts        # UPDATE + path attribute parsing
 │   │   │   ├── notification.ts  # NOTIFICATION parsing
+│   │   │   ├── evpn.ts          # EVPN NLRI (RFC 7432)
+│   │   │   ├── extended-communities.ts
 │   │   │   ├── errors.ts        # Error Code/Subcode definitions and hints
 │   │   │   ├── neighbor.ts      # Neighbor/session aggregation
+│   │   │   ├── session.ts       # Negotiated capabilities per session
 │   │   │   ├── session-events.ts
+│   │   │   ├── prefix-stats.ts  # Per-prefix history and flap counting
+│   │   │   ├── as-path-display.ts
 │   │   │   ├── constants.ts     # AFI/SAFI names
 │   │   │   └── types.ts
 │   │   ├── db/
@@ -319,16 +369,23 @@ bgpshark/
 │   │   │   ├── scenario.ts      # Described session → pcap frames
 │   │   │   └── presets.ts       # Ready-made failure scenarios
 │   │   ├── file-constraints.ts  # Accepted extensions and size limit
+│   │   ├── packet-columns.ts    # What the packet list's Info column shows
+│   │   ├── format-time.ts       # One timestamp format, used by every screen
+│   │   ├── range.ts
 │   │   └── storage.ts           # IndexedDB persistence
 ├── tests/
 │   ├── lib/pcap/                # parser, reader
-│   ├── lib/bgp/                 # parser, neighbor, session events
+│   ├── lib/bgp/                 # parser, neighbor, session events, EVPN
 │   ├── lib/build/               # encoder round trips, checksum verification
+│   ├── lib/db/                  # schema splitting, filter → SQL
+│   ├── lib/dashboard/           # alert grouping and thresholds
 │   ├── lib/filter/              # filter expressions
 │   ├── lib/net/                 # prefix arithmetic
 │   ├── e2e/                     # Playwright specs (*.e2e.ts)
 │   └── bgp.pcapng               # Test fixture
-├── testlab/                     # ContainerLab BGP topology for capture generation
+├── testlab/
+│   ├── topology.clab.yml        # ContainerLab BGP topology for capture generation
+│   └── scenarios.ts             # Thirteen fault captures, built from lib/build
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml               # Pull request checks (lint, unit, build, e2e)
@@ -361,8 +418,8 @@ bgpshark/
 │  useBgpAnalyzer.processBuffer                                   │
 │  - isPcapng() → pcapng-parser.ts / parser.ts                    │
 │  - Parse headers, sequentially parse packets                    │
-│  - Strip Ethernet (or SLL) → VLAN → IPv4 → TCP                  │
-│  - Split into BGP packets (port 179) and all IP packets         │
+│  - Strip Ethernet (or SLL) → VLAN/QinQ → IPv4 or IPv6 → TCP     │
+│  - Split into BGP packets (port 179, or by marker) and all IP   │
 └─────────────────────────────────────────────────────────────────┘
         │ GenericPacket[]
         ▼
@@ -596,12 +653,18 @@ analysis layout, though files can be dropped anywhere in the app at any time.
 - Light / dark theme following the system preference
 - Screen state in the URL query string (filter, selection, sort, match direction)
 - Playwright end-to-end suite, run on pull requests and before deploy
+- IPv6 transport, and BGP on non-standard ports detected by message marker
+- EVPN route decoding, and the filter fields that address it
+- Exporting the filtered packet list back to pcap
+- Capture Builder, and `testlab/scenarios.ts` on the same library
 
 ### Next
 
-- IPv6 transport (BGP sessions carried over IPv6)
 - Multiple captures loaded side by side
-- Exporting a filtered result set back to pcap
+- The gaps in `docs/troubleshooting-scenarios.md`: a one-sided capture reported as
+  healthy, a post-establishment TCP reset that never reaches the dashboard, and
+  best-path attributes (MED, LOCAL_PREF, communities) missing from the route history
+  and the filter language
 
 ---
 

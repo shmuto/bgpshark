@@ -218,8 +218,8 @@ app still works, minus the SQL console.
 | `src/lib/filter/` | Filter expression lexer, parser and evaluator |
 | `src/lib/net/` | Prefix arithmetic shared by the filter, the DB and the UI |
 | `src/pages/` | One component per route |
-| `src/components/` | `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `sidebar/` |
-| `testlab/` | ContainerLab topology for generating test captures |
+| `src/components/` | `builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/` |
+| `testlab/` | ContainerLab topology, and `scenarios.ts` for building fault captures |
 | `docs/` | Design documents |
 
 ## Capture builder
