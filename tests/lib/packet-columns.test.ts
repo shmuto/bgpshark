@@ -1,6 +1,5 @@
 import { describe, test, expect } from 'bun:test'
 import {
-  formatDeltaTime,
   summarizePacketPrefixes,
   PREFIX_DISPLAY_LIMIT,
 } from '../../src/lib/packet-columns'
@@ -168,41 +167,5 @@ describe('summarizePacketPrefixes', () => {
 
     expect(summary?.endOfRib).toBe(true)
     expect(summary?.announced.shown).toEqual(['10.1.1.0/24'])
-  })
-})
-
-describe('formatDeltaTime', () => {
-  test('sub-second gaps keep their milliseconds', () => {
-    expect(formatDeltaTime(12)).toBe('+0.012s')
-    expect(formatDeltaTime(0)).toBe('+0.000s')
-    expect(formatDeltaTime(999)).toBe('+0.999s')
-  })
-
-  test('gaps of seconds read as seconds', () => {
-    expect(formatDeltaTime(1000)).toBe('+1.0s')
-    expect(formatDeltaTime(2040)).toBe('+2.0s')
-    expect(formatDeltaTime(59_900)).toBe('+59.9s')
-  })
-
-  test('gaps past a minute read as minutes and seconds', () => {
-    expect(formatDeltaTime(60_000)).toBe('+1m0s')
-    expect(formatDeltaTime(100_000)).toBe('+1m40s')
-    expect(formatDeltaTime(91_000)).toBe('+1m31s')
-    expect(formatDeltaTime(3_599_000)).toBe('+59m59s')
-  })
-
-  test('gaps past an hour read as hours and minutes', () => {
-    expect(formatDeltaTime(3_600_000)).toBe('+1h0m')
-    expect(formatDeltaTime(7_500_000)).toBe('+2h5m')
-  })
-
-  test('a gap that rounds up to the next unit is shown in that unit', () => {
-    expect(formatDeltaTime(999.7)).toBe('+1.0s')
-    expect(formatDeltaTime(59_990)).toBe('+1m0s')
-  })
-
-  test('timestamps that go backwards are shown, not hidden', () => {
-    expect(formatDeltaTime(-500)).toBe('-0.500s')
-    expect(formatDeltaTime(-120_000)).toBe('-2m0s')
   })
 })

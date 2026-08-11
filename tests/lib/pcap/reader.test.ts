@@ -1,185 +1,76 @@
 import { describe, test, expect } from 'bun:test'
 import { BinaryReader } from '../../../src/lib/pcap/reader'
 
+/**
+ * What is worth pinning here is the reader's own behaviour at the edges, not
+ * that `DataView` reads integers. Every parser in the suite drives this class
+ * on real captures, so a broken `readUint16` does not slip through quietly —
+ * it takes those tests down with it. What those tests would *not* diagnose is
+ * a bound checked one byte too late, so that is what is covered.
+ */
 describe('BinaryReader', () => {
-  describe('constructor', () => {
-    test('creates reader from ArrayBuffer', () => {
-      const buffer = new ArrayBuffer(10)
-      const reader = new BinaryReader(buffer)
-      expect(reader.length).toBe(10)
-      expect(reader.offset).toBe(0)
-    })
-
-    test('creates reader from Uint8Array', () => {
-      const data = new Uint8Array([1, 2, 3, 4, 5])
-      const reader = new BinaryReader(data)
-      expect(reader.length).toBe(5)
-    })
+  test('reads past the end rather than returning garbage', () => {
+    // The parsers depend on this: a truncated capture has to raise, because
+    // the alternative is decoding whatever follows in memory as a route.
+    const reader = new BinaryReader(new Uint8Array([0x42]))
+    expect(reader.readUint8()).toBe(0x42)
+    expect(() => reader.readUint8()).toThrow('Buffer underflow')
+    expect(() => new BinaryReader(new Uint8Array([1, 2, 3])).readBytes(5)).toThrow(
+      'Buffer underflow'
+    )
   })
 
-  describe('readUint8', () => {
-    test('reads single byte', () => {
-      const data = new Uint8Array([0x42, 0xff])
-      const reader = new BinaryReader(data)
-      expect(reader.readUint8()).toBe(0x42)
-      expect(reader.readUint8()).toBe(0xff)
-      expect(reader.offset).toBe(2)
-    })
-
-    test('throws on buffer underflow', () => {
-      const data = new Uint8Array([0x42])
-      const reader = new BinaryReader(data)
-      reader.readUint8()
-      expect(() => reader.readUint8()).toThrow('Buffer underflow')
-    })
+  test('seeking outside the buffer throws at both ends', () => {
+    const reader = new BinaryReader(new Uint8Array([1, 2, 3]))
+    expect(() => reader.seek(10)).toThrow('out of bounds')
+    expect(() => reader.seek(-1)).toThrow('out of bounds')
   })
 
-  describe('readUint16', () => {
-    test('reads little-endian by default', () => {
-      const data = new Uint8Array([0x34, 0x12])
-      const reader = new BinaryReader(data, true)
-      expect(reader.readUint16()).toBe(0x1234)
-    })
+  test('remaining and hasBytes agree with the position', () => {
+    // Both are read as "is there enough left for this field", so an off-by-one
+    // here is a field read from past the end.
+    const reader = new BinaryReader(new Uint8Array([1, 2, 3, 4, 5]))
+    expect(reader.remaining()).toBe(5)
+    expect(reader.hasBytes(5)).toBe(true)
+    expect(reader.hasBytes(6)).toBe(false)
 
-    test('reads big-endian when configured', () => {
-      const data = new Uint8Array([0x12, 0x34])
-      const reader = new BinaryReader(data, false)
-      expect(reader.readUint16()).toBe(0x1234)
-    })
+    reader.skip(3)
+    expect(reader.remaining()).toBe(2)
+    expect(reader.hasBytes(2)).toBe(true)
+    expect(reader.hasBytes(3)).toBe(false)
   })
 
-  describe('readUint32', () => {
-    test('reads little-endian by default', () => {
-      const data = new Uint8Array([0x78, 0x56, 0x34, 0x12])
-      const reader = new BinaryReader(data, true)
-      expect(reader.readUint32()).toBe(0x12345678)
-    })
-
-    test('reads big-endian when configured', () => {
-      const data = new Uint8Array([0x12, 0x34, 0x56, 0x78])
-      const reader = new BinaryReader(data, false)
-      expect(reader.readUint32()).toBe(0x12345678)
-    })
+  test('endianness can change part-way through', () => {
+    // pcap takes its byte order from the file header, so this is decided after
+    // the reader already exists.
+    const reader = new BinaryReader(new Uint8Array([0x12, 0x34, 0x12, 0x34]), true)
+    reader.setLittleEndian(false)
+    expect(reader.readUint16()).toBe(0x1234)
+    reader.setLittleEndian(true)
+    expect(reader.readUint16()).toBe(0x3412)
   })
 
-  describe('readBytes', () => {
-    test('reads specified number of bytes', () => {
-      const data = new Uint8Array([1, 2, 3, 4, 5])
-      const reader = new BinaryReader(data)
-      const bytes = reader.readBytes(3)
-      expect(Array.from(bytes)).toEqual([1, 2, 3])
-      expect(reader.offset).toBe(3)
-    })
-
-    test('throws on buffer underflow', () => {
-      const data = new Uint8Array([1, 2, 3])
-      const reader = new BinaryReader(data)
-      expect(() => reader.readBytes(5)).toThrow('Buffer underflow')
-    })
+  test('peeking does not move the position', () => {
+    const reader = new BinaryReader(new Uint8Array([0x01, 0x02, 0x12, 0x34]), false)
+    expect(Array.from(reader.peek(2))).toEqual([0x01, 0x02])
+    expect(reader.peekUint16At(2)).toBe(0x1234)
+    expect(reader.offset).toBe(0)
   })
 
-  describe('readIpv4Address', () => {
-    test('reads IPv4 address as dotted-decimal string', () => {
-      const data = new Uint8Array([192, 168, 1, 1])
-      const reader = new BinaryReader(data)
-      expect(reader.readIpv4Address()).toBe('192.168.1.1')
-    })
-
-    test('reads 0.0.0.0', () => {
-      const data = new Uint8Array([0, 0, 0, 0])
-      const reader = new BinaryReader(data)
-      expect(reader.readIpv4Address()).toBe('0.0.0.0')
-    })
-
-    test('reads 255.255.255.255', () => {
-      const data = new Uint8Array([255, 255, 255, 255])
-      const reader = new BinaryReader(data)
-      expect(reader.readIpv4Address()).toBe('255.255.255.255')
-    })
+  test('a sub-reader is bounded, and the parent moves past it', () => {
+    // This is how an attribute is read inside its own declared length: what the
+    // sub-reader does cannot run into the next attribute, and the parent
+    // resumes at the right place whether or not the body was read in full.
+    const reader = new BinaryReader(new Uint8Array([1, 2, 3, 4, 5]))
+    reader.skip(1)
+    const sub = reader.subReader(3)
+    expect(sub.length).toBe(3)
+    expect(sub.readUint8()).toBe(2)
+    expect(reader.offset).toBe(4)
   })
 
-  describe('position management', () => {
-    test('seek moves to absolute position', () => {
-      const data = new Uint8Array([1, 2, 3, 4, 5])
-      const reader = new BinaryReader(data)
-      reader.seek(3)
-      expect(reader.offset).toBe(3)
-      expect(reader.readUint8()).toBe(4)
-    })
-
-    test('seek throws on out of bounds', () => {
-      const data = new Uint8Array([1, 2, 3])
-      const reader = new BinaryReader(data)
-      expect(() => reader.seek(10)).toThrow('out of bounds')
-      expect(() => reader.seek(-1)).toThrow('out of bounds')
-    })
-
-    test('skip advances position', () => {
-      const data = new Uint8Array([1, 2, 3, 4, 5])
-      const reader = new BinaryReader(data)
-      reader.skip(2)
-      expect(reader.offset).toBe(2)
-      expect(reader.readUint8()).toBe(3)
-    })
-
-    test('remaining returns correct count', () => {
-      const data = new Uint8Array([1, 2, 3, 4, 5])
-      const reader = new BinaryReader(data)
-      expect(reader.remaining()).toBe(5)
-      reader.skip(2)
-      expect(reader.remaining()).toBe(3)
-    })
-
-    test('hasBytes checks availability', () => {
-      const data = new Uint8Array([1, 2, 3])
-      const reader = new BinaryReader(data)
-      expect(reader.hasBytes(3)).toBe(true)
-      expect(reader.hasBytes(4)).toBe(false)
-      reader.skip(1)
-      expect(reader.hasBytes(3)).toBe(false)
-      expect(reader.hasBytes(2)).toBe(true)
-    })
-  })
-
-  describe('endianness', () => {
-    test('setLittleEndian changes byte order', () => {
-      const data = new Uint8Array([0x12, 0x34, 0x12, 0x34])
-      const reader = new BinaryReader(data, true)
-
-      reader.setLittleEndian(false)
-      expect(reader.readUint16()).toBe(0x1234)
-
-      reader.setLittleEndian(true)
-      expect(reader.readUint16()).toBe(0x3412)
-    })
-  })
-
-  describe('peek', () => {
-    test('peek returns bytes without advancing position', () => {
-      const data = new Uint8Array([1, 2, 3, 4, 5])
-      const reader = new BinaryReader(data)
-      const peeked = reader.peek(3)
-      expect(Array.from(peeked)).toEqual([1, 2, 3])
-      expect(reader.offset).toBe(0)
-    })
-
-    test('peekUint16At reads at relative offset', () => {
-      const data = new Uint8Array([0x00, 0x00, 0x12, 0x34])
-      const reader = new BinaryReader(data, false)
-      expect(reader.peekUint16At(2)).toBe(0x1234)
-      expect(reader.offset).toBe(0)
-    })
-  })
-
-  describe('subReader', () => {
-    test('creates sub-reader with portion of buffer', () => {
-      const data = new Uint8Array([1, 2, 3, 4, 5])
-      const reader = new BinaryReader(data)
-      reader.skip(1)
-      const sub = reader.subReader(3)
-      expect(sub.length).toBe(3)
-      expect(sub.readUint8()).toBe(2)
-      expect(reader.offset).toBe(4)
-    })
+  test('an IPv4 address reads as dotted decimal', () => {
+    const reader = new BinaryReader(new Uint8Array([192, 168, 1, 1]))
+    expect(reader.readIpv4Address()).toBe('192.168.1.1')
   })
 })

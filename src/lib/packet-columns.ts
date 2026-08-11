@@ -95,36 +95,3 @@ export function summarizePacketPrefixes(
     endOfRib,
   }
 }
-
-/**
- * Gap between two packets, in the units the gap is actually about.
- *
- * Sub-second gaps are the inside of a burst and need milliseconds
- * (`+0.012s`); a gap of seconds is read as a number of seconds (`+2.0s`); past
- * a minute the decimal stops meaning anything and the question becomes "how
- * long was the session quiet", so it reads as `+1m40s` / `+2h5m`.
- *
- * Negative gaps are shown rather than hidden: timestamps that go backwards are
- * a property of the capture worth seeing, not a rounding artefact to suppress.
- */
-export function formatDeltaTime(deltaMs: number): string {
-  if (!Number.isFinite(deltaMs)) return '-'
-
-  const sign = deltaMs < 0 ? '-' : '+'
-  const abs = Math.abs(deltaMs)
-
-  // Each tier rounds before its own boundary check, so a value that rounds up
-  // to the next unit is shown in that unit instead of as "+60.0s".
-  const millis = Math.round(abs)
-  if (millis < 1000) return `${sign}${(millis / 1000).toFixed(3)}s`
-
-  const tenths = Math.round(abs / 100)
-  if (tenths < 600) return `${sign}${(tenths / 10).toFixed(1)}s`
-
-  const totalSeconds = Math.round(abs / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  if (minutes < 60) return `${sign}${minutes}m${totalSeconds % 60}s`
-
-  const hours = Math.floor(minutes / 60)
-  return `${sign}${hours}h${minutes % 60}m`
-}

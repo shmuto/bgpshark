@@ -16,16 +16,30 @@ export function formatTimeOfDayUtc(date: Date): string {
  * that reading absolute timestamps turns into arithmetic — how long a route
  * was gone, how long after the last keepalive the hold timer fired.
  *
- * Sub-second gaps keep their milliseconds because a session reset exchanges
- * its whole burst inside one second; longer ones lose that precision in
- * favour of being readable at a glance.
+ * Sub-second gaps are the inside of a burst and keep their milliseconds
+ * (`+0.012s`), because a session reset exchanges its whole
+ * OPEN/NOTIFICATION exchange within one second. A gap of seconds reads as
+ * seconds (`+2.0s`); past a minute the decimal stops meaning anything and the
+ * question becomes "how long was it quiet", so it reads as `+1m40s` / `+2h05m`.
+ *
+ * Each tier rounds before its own boundary is checked, so a gap that rounds up
+ * into the next unit is shown in that unit rather than as `+60.0s`.
+ *
+ * Negative gaps are shown rather than hidden: timestamps that go backwards are
+ * a property of the capture worth seeing, not a rounding artefact to suppress.
+ * A gap that is not a number at all has nothing to say, so it says nothing.
  */
 export function formatDelta(milliseconds: number): string {
+  if (!Number.isFinite(milliseconds)) return '-'
+
   const ms = Math.abs(milliseconds)
   const sign = milliseconds < 0 ? '-' : '+'
 
-  if (ms < 1000) return `${sign}${(ms / 1000).toFixed(3)}s`
-  if (ms < 60_000) return `${sign}${(ms / 1000).toFixed(1)}s`
+  const millis = Math.round(ms)
+  if (millis < 1000) return `${sign}${(millis / 1000).toFixed(3)}s`
+
+  const tenths = Math.round(ms / 100)
+  if (tenths < 600) return `${sign}${(tenths / 10).toFixed(1)}s`
 
   const totalSeconds = Math.round(ms / 1000)
   const minutes = Math.floor(totalSeconds / 60)
