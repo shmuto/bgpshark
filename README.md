@@ -33,6 +33,9 @@ uploaded to a server.
   autocomplete and a rule-builder mode. `src_port` / `dst_port` separate two TCP
   sessions between the same IP pair, and `frame` takes `<`, `<=`, `>`, `>=` for a
   frame range (`frame >= 100 and frame < 200`)
+- **User manual** — a Help page inside the app at `/manual`, readable before
+  anything is loaded, covering the screens, the filter language and what to do
+  when a session will not come up
 - Light / dark theme, following the system preference by default
 - Loaded captures persist in IndexedDB and are restored on reload
 
@@ -217,7 +220,7 @@ app still works, minus the SQL console.
 | `src/lib/db/` | DuckDB schema, loader, queries, filter→SQL compiler |
 | `src/lib/filter/` | Filter expression lexer, parser and evaluator |
 | `src/lib/net/` | Prefix arithmetic shared by the filter, the DB and the UI |
-| `src/pages/` | One component per route |
+| `src/pages/` | One component per route; `manual/manual.md` is the user manual |
 | `src/components/` | `builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/` |
 | `testlab/` | ContainerLab topology, and `scenarios.ts` for building fault captures |
 | `docs/` | Design documents |

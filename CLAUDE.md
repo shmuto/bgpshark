@@ -46,7 +46,12 @@ Same for a one-off script:
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
 ```
 
-Expect **86 passing**. If more than a couple fail, something is actually wrong.
+Expect **91 passing**. If more than a couple fail, something is actually wrong.
+
+One test is flaky *in this container* and nowhere else:
+`navigation.e2e.ts:21` ("reloading keeps the screen you were on") waits on an
+IndexedDB restore, and loses the race under parallel load. It passes reliably at
+`--workers=2` and always in isolation. Re-run it alone before believing it.
 
 ## What used to bite here, and does not any more
 
@@ -136,6 +141,12 @@ looking for pcaps to download.
   both, and the e2e suite only covers the SQL path when DuckDB is up.
 - **`tsconfig.json` includes `src`, `tests` and `testlab`**, so `bun run build`
   typechecks scripts too.
+- **Prose ships as Markdown, converted at build time.** The user manual is
+  `src/pages/manual/manual.md`; `markdownPlugin` in `vite.config.ts` turns an
+  imported `.md` into a string of HTML, so `marked` is a devDependency and no
+  Markdown parser reaches the browser. Edit the Markdown, not the component.
+  The plugin also slugs `h2`/`h3` ids, which is how the page builds its own
+  table of contents and how `/manual#filters` works.
 
 ### Known inconsistency
 

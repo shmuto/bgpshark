@@ -124,6 +124,7 @@ in MP_REACH_NLRI / MP_UNREACH_NLRI.
 - **Route Analysis** (`/routes`): per-prefix announce/withdraw history and flap count
 - **SQL Console** (`/sql`): raw SQL against the DuckDB tables, with query templates
 - **Capture Builder** (`/build`): §2.1.12
+- **Manual** (`/manual`): §2.1.13
 
 #### 2.1.9 Filtering
 Two modes over the same expression language:
@@ -186,6 +187,23 @@ verified in `tests/lib/build/checksums.test.ts`.
 The same thing is available as a library, which is the better route for fixtures in
 bulk — `testlab/scenarios.ts` uses it to build the thirteen captures behind
 `docs/troubleshooting-scenarios.md`.
+
+#### 2.1.13 User Manual
+
+A Help page inside the app rather than a link out of it, because the app's whole
+premise is that it works with nothing else available — a manual that needed the
+network would be missing exactly when the rest of the tool still worked.
+
+It sits outside `RequireCapture`: the reader most likely to want it has just
+arrived and has nothing loaded, and every gated screen would redirect that person
+to the upload page.
+
+The prose is Markdown (`src/pages/manual/manual.md`) converted to HTML by
+`markdownPlugin` in `vite.config.ts`, so `marked` runs during the build and no
+Markdown parser is shipped. The plugin also gives every `h2`/`h3` an id, which is
+what lets the page build its table of contents by reading its own output back —
+a section cannot be added to the prose and forgotten in the contents — and what
+makes `/manual#filters` land on the right section.
 
 ### 2.2 Future Features
 
@@ -365,7 +383,9 @@ bgpshark/
 │   │   ├── NeighborsPage.tsx    # /neighbors
 │   │   ├── RoutesPage.tsx       # /routes
 │   │   ├── SqlConsolePage.tsx   # /sql
-│   │   └── BuilderPage.tsx      # /build — describe a session, get a pcap
+│   │   ├── BuilderPage.tsx      # /build — describe a session, get a pcap
+│   │   ├── ManualPage.tsx       # /manual — renders the Markdown below
+│   │   └── manual/manual.md     # The user manual, converted at build time
 │   ├── components/
 │   │   ├── builder/             # ScenarioEditor + its editing model
 │   │   ├── common/              # FileDropzone, PacketList, HexDump, QueryInput, ...
