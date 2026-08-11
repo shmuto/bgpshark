@@ -32,6 +32,8 @@ Two things worth knowing before you trust what you see:
   mirror or `tcpdump` filter caught one leg, or the peer's packets genuinely are
   not arriving — a one-way link, an ACL applied in one direction. The second is
   an outage rather than a capture problem, so check before you re-capture.
+  [The capture may be lying to you](#the-capture-may-be-lying-to-you) is two
+  ways of telling them apart in under a minute.
 - **TCP-level frames are hidden by default.** The packet list shows BGP only
   until you switch it to **All Packets**. A session killed by a firewall shows
   up as a `[R]` frame there and nowhere else.
@@ -39,7 +41,9 @@ Two things worth knowing before you trust what you see:
 ## The screens
 
 Each screen answers a different question. If you do not know where to start,
-start at the Dashboard.
+start at the Dashboard — or skip to
+[Investigating by symptom](#investigating-by-symptom), which takes a dozen real
+complaints and walks each one to its answer.
 
 | Screen | The question it answers |
 |--------|-------------------------|
@@ -163,6 +167,322 @@ you build a capture whose messages span segments.
 The output is a real capture — checksums are computed properly — so it can be fed
 to other tools, not just back into this one.
 
+## Investigating by symptom
+
+The rest of the manual describes the screens. This part describes the *cases* —
+the complaint as it arrives, the click path that answers it, and a picture of
+what you should be looking at when you get there.
+
+Every screenshot below is a capture BGPShark built itself, so each walkthrough
+is reproducible: the **Build** screen writes captures like these, and the
+scenarios they come from are in `testlab/scenarios.ts` in the repository. If a
+picture here does not match your screen, the difference is your capture, not
+your version.
+
+### Start here
+
+Whatever the complaint, the first thirty seconds are the same.
+
+1. **Dashboard.** Read the counters, then the **Alerts** panel. Alerts are
+   sorted worst-first and grouped one row per problem.
+2. **Check the capture is complete** before you trust any of it — see
+   [The capture may be lying to you](#the-capture-may-be-lying-to-you) at the
+   end of this section.
+3. Follow the alert's **View →**, which lands you on the packet where the story
+   starts with a filter already applied.
+
+![The Dashboard on a capture of a flapping session: counters, two alerts, the neighbour table and the timeline](manual/dashboard.png)
+
+"No issues detected — every session looks healthy" means every session in the
+capture came up and stayed up. It does **not** mean nothing is wrong: a route
+leak and a best-path surprise both produce that message, because nothing about
+the sessions carrying them is unhealthy.
+
+### “The session will not come up”
+
+The neighbour sits in Idle or Connect and no BGP is ever exchanged. What you
+want from the capture is what answers the SYN to port 179 — a SYN-ACK, an RST,
+or nothing at all.
+
+Go to the **Dashboard**. When a capture contains no BGP whatsoever, the alerts
+are computed from the TCP layer instead:
+
+![A critical alert reading "TCP connections to port 179 are being refused — 3 SYNs answered by RST"](manual/s1-tcp-refused.png)
+
+- **SYNs answered by RST** — something is refusing the connection. An ACL or
+  firewall, a TCP-MD5/TCP-AO mismatch, or BGP simply not running on the peer.
+- **SYNs with no answer at all** — the packets are not arriving, or the replies
+  are not coming back. This is a routing or filtering problem below BGP.
+- **SYN-ACK, then nothing** — TCP came up and the OPEN never followed. The
+  Dashboard says so directly: *"TCP connects but 10.0.0.2 sends no BGP"*. Read
+  it for what the successful handshake **rules out** — the port is open, no ACL
+  is dropping the SYN, and MD5 agrees, because a one-sided MD5 fails the
+  handshake rather than surviving it. What is left is the peer's BGP unwilling
+  to talk to your address, or the payload not surviving a path that carries the
+  handshake fine: a TCP middlebox that terminates the connection, a PMTU black
+  hole that passes small segments and drops full ones, control-plane policing.
+
+Switch the packet list to **All Packets** to count the retries and read the
+intervals; with the list on BGP Only there is nothing to see, because there is
+no BGP in the file.
+
+### “It is Established, but a whole address family never arrives”
+
+The session is up, the IPv4 routes are fine, and no IPv6 route ever appears —
+or no EVPN route, or no VPNv4 route. This is a capability question, and the
+answer is one screen deep.
+
+**Neighbors → click a router → click one of its sessions.** The Capability Diff
+appears only once a *session* is selected; it is not on the router row.
+
+![The Capability Diff: session fields matching, and four capabilities advertised by only one end, including IPv6/Unicast Multiprotocol Extensions](manual/s2-capability-diff.png)
+
+Capabilities are compared per address family, so "both support Multiprotocol"
+cannot hide one side offering IPv4 and the other IPv6. Mismatches are listed
+before matches, since that is what you came for. Read the **Status** column:
+
+- **⚠ Only *x*** — one side advertised it and the other did not. Routes for that
+  family have nowhere to go, and this is your answer.
+- **Differs — normal for eBGP** on My AS, and a Hold Time that differs, are both
+  expected. Only the lower hold time is used.
+- **The same BGP Identifier on both sides** is flagged as an error, because it
+  is one.
+
+### “It flaps every few minutes”
+
+The Dashboard groups the repeats: one row for the NOTIFICATIONs with a count,
+one for the re-establishments.
+
+![Alerts reading "NOTIFICATION: Hold Timer Expired / Unspecific ×3" and "Session flapping detected — 6 OPEN messages (~3 establishments)"](manual/s3-holdtimer-alerts.png)
+
+`Hold Timer Expired` means one side stopped hearing from the other. That is a
+statement about reachability, not about BGP — and the number that decides it is
+how long *before* the teardown the last KEEPALIVE arrived. The Dashboard does not
+compute that interval; the SQL console will:
+
+```sql
+select m.type, p.src_ip, p.timestamp,
+       epoch(p.timestamp - lag(p.timestamp) over (order by p.timestamp)) as gap_s
+from packets p join messages m using(frame_index)
+order by p.frame_index
+```
+
+![The query and its result: a 90.2 second gap between the last KEEPALIVE and the NOTIFICATION](manual/s3-holdtimer-gap.png)
+
+A gap that matches the negotiated hold time — 90.2 seconds against a hold time
+of 90 — means KEEPALIVEs stopped arriving one way while the session was
+otherwise healthy. Look at the path between the routers, not at the routers.
+A gap much *shorter* than the hold time means something else killed it, and the
+NOTIFICATION is only reporting what it saw.
+
+(The results grid renders `timestamp` as raw epoch milliseconds. Read the `gap_s`
+column, not the absolute times.)
+
+### “It dropped, and nothing says why”
+
+No NOTIFICATION anywhere in the capture, and the session came back a minute
+later. The evidence is at the TCP layer, and the packet list hides it by
+default.
+
+**Messages → All Packets.** The tell is already visible before you switch: the
+frame numbers in BGP Only jump — 10, then 15 — and the missing frames are the
+ones that ended the session.
+
+![The packet list in All Packets mode with frame 11 selected: an [AR] frame from 10.0.0.2, and a detail pane reading "TCP Flags: ACK, RST"](manual/s11-tcp-reset.png)
+
+`[AR]` is ACK+RST — the session was reset, in this case by the far end 26
+seconds after the last KEEPALIVE, with a fresh SYN 60 seconds later. `[F]` for a
+FIN is the polite version of the same story: something closed the connection
+deliberately, and BGP never got the chance to say why.
+
+The Dashboard stays silent about this. Transport-level alerts are only computed
+for a capture that contains no BGP at all, so a *post-establishment* reset is
+never surfaced — you have to come and look. There is also no filter field for
+TCP flags; **All Packets** and your eyes are the whole toolkit here.
+
+### “The session drops the moment routes are advertised”
+
+Establishment is clean, the first UPDATE goes out, and the far end tears the
+session down. The NOTIFICATION names what it objected to.
+
+**Messages → click the NOTIFICATION.**
+
+![A NOTIFICATION detail: error code 3 UPDATE Message Error, subcode 2 Unrecognized Well-known Attribute, with a troubleshooting hint and the raw bytes](manual/s6-notification.png)
+
+Error code **3** is an UPDATE the peer refused, and the subcode says why —
+`Unrecognized Well-known Attribute`, `Invalid NEXT_HOP`, `Malformed AS_PATH`.
+Every code carries a Troubleshooting Hint under it.
+
+Then read the UPDATE immediately before it, which is the one being complained
+about. An attribute the parser could not identify is shown as
+`UNKNOWN(199) · Transitive · Unparsed` with its bytes, which is usually enough to
+recognise the feature the far end does not implement.
+
+The NOTIFICATION's own data field is shown as a hex dump and nothing more. For
+error code 3 those bytes *are* the offending attribute, but you have to decode
+them yourself.
+
+### “A prefix is missing”
+
+Search for it on the **Routes** screen, and let the match mode do the work:
+
+- **Exact** — this prefix and nothing else.
+- **Subnets** — everything inside what you typed, so `10.0.0.0/8` finds
+  `10.0.12.0/24`. Use this when the peer may be sending more specifics.
+- **Supernets** — everything covering what you typed, so `10.0.12.7` finds the
+  aggregate that carries it. Use this when a host is unreachable and you want
+  the route that should have covered it.
+
+If the prefix is not there at all, it was never announced on this session, and
+the question moves to the peer's policy. If it is there but the family is wrong
+— an IPv6 prefix on a session that only negotiated IPv4 — the Capability Diff
+above is the next stop.
+
+A capture whose UPDATEs are split across TCP segments needs nothing special
+from you: the segments are reassembled before parsing, and a 400-prefix UPDATE
+at a 576-byte MTU still counts 400 prefixes here.
+
+### “Traffic leaves by the wrong upstream”
+
+The Routes screen shows AS_PATH and Next Hop per announcement, which decides
+some best-path questions and not the interesting ones. MED, LOCAL_PREF and
+communities reach the database but not that screen, so this one is a SQL
+question:
+
+```sql
+select n.prefix || '/' || n.prefix_length as route, p.src_ip,
+       (select string_agg(a.asn, ' ' order by a.as_index)
+          from as_path a where a.message_id = m.id) as as_path,
+       (select max(med_value)  from path_attributes where message_id = m.id) as med,
+       (select max(local_pref) from path_attributes where message_id = m.id) as local_pref
+from nlri n join messages m on m.id = n.message_id join packets p using(frame_index)
+order by route, p.src_ip
+```
+
+![The SQL console with that query and its result: one prefix, two source addresses, two AS_PATHs, and a LOCAL_PREF of 200 on the longer path](manual/s4-bestpath.png)
+
+Every path for the prefix, side by side, which is the shape the decision was
+made in: here the longer AS_PATH wins because it carries LOCAL_PREF 200, and
+LOCAL_PREF is compared long before path length.
+
+Two traps, both visible in that query. `nlri.prefix` holds no mask —
+`172.20.0.0`, not `172.20.0.0/16` — so it wants `prefix || '/' || prefix_length`.
+And `nlri`, `as_path` and `path_attributes` all join on `message_id`, so a plain
+three-way JOIN fans out into their cross product; the correlated subqueries
+above are the shape that works.
+
+Remember what a capture can and cannot settle: it holds what crossed the wire,
+not what the router did with it. Which path was installed is on the router.
+
+### “CPU is high and the RIB will not settle”
+
+This is the case the Dashboard answers most completely. Churn produces a row per
+flapping prefix, a row per AS_PATH change, and a withdraw-burst row:
+
+![An alert panel of route-flapping and AS_PATH-changed rows, ending in "Burst of withdrawn prefixes — 60 prefixes withdrawn within 10s"](manual/s10-churn-alerts.png)
+
+Then go to **Routes** and sort by **Flap** — click the column once for ascending,
+twice for worst-first — and click the worst prefix for its history.
+
+![The Routes screen sorted by flap count, with one prefix's history of alternating announce and withdraw, and an AS_PATH Analysis panel showing two distinct paths](manual/s10-churn-routes.png)
+
+The history is the diagnosis, and the **From** column is half of it. Announce and
+withdraw at a regular interval from one peer is an unstable link, or an interface
+flapping behind it. Announcements from the same peer that alternate between two
+AS_PATHs — the **AS_PATH Analysis** panel counts the variants — put the
+instability further upstream instead: your neighbour is not flapping, it is
+telling you about something that is.
+
+### “A peer is announcing routes it has no business announcing”
+
+Nothing is wrong at the session layer, so the Dashboard says "No issues
+detected" and means it. A leak is only found by someone looking for one.
+
+The **Routes** search box takes an AS number as well as a prefix. Type `AS15169`
+to list every prefix carrying that AS anywhere in its AS_PATH, then click one:
+
+![The Routes screen filtered to prefixes with AS15169 in their path, with 8.8.8.0/24 selected and an AS_PATH of AS65100 → AS65001 → AS15169](manual/s5-route-leak.png)
+
+A customer session carrying a path that transits somebody else's AS is the
+classic shape: `AS65100 AS65001 AS15169` on a session with the customer AS65100
+means they are re-announcing what they learned from another transit. The filter
+`asn = 15169` narrows the packet list the same way.
+
+There is no notion here of an expected path shape, so nothing will flag this for
+you. What the tool gives you is every path in the capture, quickly.
+
+### “A host in the fabric drops out in bursts”
+
+An EVPN MAC move is a withdrawal from one leaf and an advertisement from
+another, so the two halves have to be seen together. Filter on the MAC:
+
+```
+mac = 00:0c:29:aa:bb:cc
+```
+
+![The packet list filtered to one MAC: an announcement from 10.0.0.2, a withdrawal from 10.0.0.2, an announcement from 10.0.0.1, with the withdrawn route decoded to its RD and VNI](manual/s13-mac-move.png)
+
+`mac`, `vni`, `rd` and `evpn_type` all match announcements and withdrawals
+together, and the packet detail decodes the route to its RD, MAC, VNI and ESI.
+Two VTEPs advertising the same MAC in quick succession, repeatedly, is a move
+loop — usually a dual-homed host or a bridged loop rather than anything BGP is
+doing wrong.
+
+Routes lists the MAC as a route with its own history, and the Dashboard reports
+a move as *"Route flapping: [2] 00:0c:29:aa:bb:cc VNI 10100"*. Reading a move as
+a flap is a wording mismatch, not a wrong answer. MAC Mobility sequence numbers
+are decoded in the message detail but are not compared for you.
+
+### “After a reload, or after a soft clear”
+
+Both leave a capture that looks like something worse than it is.
+
+A **graceful restart** and a crash loop are indistinguishable to the Dashboard:
+both are reported as *"Session flapping detected"*. What separates them is in the
+Capability Diff — Graceful Restart with its restart time and the forwarding-state
+flag — and in the packet list, where the re-established session's **End-of-RIB**
+marker tells you when convergence finished. An UPDATE with nothing in it is
+labelled `End-of-RIB` rather than left looking empty, so it is easy to find.
+
+A **soft clear** shows up as a ROUTE-REFRESH followed by the re-advertisement.
+Both halves are visible as messages; comparing what came back against what was
+there before is yours to do, most easily by noting the frame number of the
+refresh and filtering the UPDATEs on either side of it (`frame < 240`,
+`frame >= 240`).
+
+### The capture may be lying to you
+
+A capture taken from one side of a SPAN, or with a `tcpdump` filter that caught
+one direction, is missing whatever the other end said — including the
+NOTIFICATION that ended the session. The Dashboard now raises *"Only one
+direction of this session is in the capture"* and the neighbour table marks the
+pair `⚠ Never up`, so you are told; what it cannot tell you is **which** of two
+very different causes it is. A one-legged mirror and a one-way reachability
+fault produce the same file, and only one of them is a capture problem.
+
+The checks below are how you decide, and they are worth doing before telling
+anyone their router is fine.
+
+**Messages → All Packets**, and read the Source column:
+
+![The packet list showing five frames, every one of them from 10.0.0.1, and a handshake with a SYN and an ACK but no SYN-ACK](manual/s12-one-direction.png)
+
+Two tells, both visible above: every frame has the same source address, and the
+handshake has a `[S]` and an `[A]` but no `[SA]` between them. A real session
+cannot look like this.
+
+The same question in SQL, which is faster on a large capture:
+
+```sql
+select src_ip, dst_ip, count(*) as frames
+from packets group by all order by frames desc
+```
+
+One row for a session means one direction. A healthy session gives you two rows
+of comparable size. (This table holds BGP-bearing packets only, so a session
+with no BGP in one direction is invisible to it — that is what the packet list
+above is for.)
+
 ## Filters
 
 The filter bar has two modes. **Simple** builds rules from dropdowns; **Advanced**
@@ -228,51 +548,19 @@ means the filter was not applied — not that everything matched. The most commo
 cause is a field name that does not exist: `med` and `local_pref`, for instance,
 are available in SQL but are not filter fields.
 
-## Common questions
-
-**The session will not come up.** Look at the Dashboard first. If there is no BGP
-in the capture at all, the alert will tell you what the TCP layer shows — SYNs
-answered by RST means something is refusing the connection (an ACL, an MD5
-mismatch, or BGP not running), and SYNs with no answer at all means the traffic
-is not getting there.
-
-If TCP *does* come up and nothing comes back, the Dashboard says so: *"TCP
-connects but 10.0.0.2 sends no BGP"*. That is worth reading for what it rules
-out. Something accepted the connection on port 179, so the port is open, no ACL
-is dropping the SYN, and MD5 agrees — a one-sided MD5 fails the handshake rather
-than surviving it. The fault is after TCP came up: the peer's BGP not willing to
-talk to your address, or the payload not surviving a path that carries the
-handshake fine — a TCP middlebox, a PMTU black hole, control-plane policing.
-
-**The session is up but a route is missing.** Search for the prefix on the Routes
-screen. If it is not there, it was never announced on this session. If it is,
-check the Capability Diff — routes for an address family that only one side
-advertised have nowhere to go.
-
-**The session keeps dropping.** The Dashboard groups the NOTIFICATIONs and counts
-the re-establishments. `Hold Timer Expired` means one side stopped hearing from
-the other; compare the timestamp of the NOTIFICATION with the last KEEPALIVE from
-the other side, and if the gap matches the negotiated hold time, the problem is
-one-way reachability rather than BGP. If there is no NOTIFICATION at all, switch
-the packet list to **All Packets** and look for a TCP reset.
-
-**Traffic is leaving by the wrong path.** The Routes screen shows AS_PATH and
-next hop per announcement. For the rest of the decision — LOCAL_PREF, MED,
-communities — use the SQL console; the query above puts every path for a prefix
-side by side.
-
-**A MAC keeps moving in my EVPN fabric.** Filter on `mac = ...`. A move is a
-withdrawal from one leaf and an advertisement from another, and the filter shows
-both halves. The Routes screen lists the MAC as a route with its own history.
-
 ## What BGPShark will not tell you
 
 Worth knowing, so you do not read absence as evidence:
 
 - **Which of two causes made a session one-sided.** It tells you one direction
   is missing; whether that is your capture or the network is yours to work out.
+  [How to tell them apart](#the-capture-may-be-lying-to-you).
 - **Why a session dropped without a NOTIFICATION.** The TCP reset is visible
   under **All Packets**, but nothing points you there.
+- **Whether a path is one it should be carrying.** There is no notion of an
+  expected AS_PATH, so a leak looks exactly like a legitimate announcement.
+- **Whether a restart was graceful.** A graceful restart and a crash loop are
+  both reported as a flapping session.
 - **What your router decided.** BGPShark reads what crossed the wire. Which path
   was selected, what policy did to it, and what ended up in the RIB are on the
   router, not in the capture.

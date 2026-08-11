@@ -19,6 +19,27 @@ interface Heading {
 }
 
 /**
+ * Heading text as a reader should see it: no tags, no entities.
+ *
+ * The text comes out of HTML, so anything Markdown escaped on the way in is
+ * still escaped — a heading containing `&` or a quotation mark would otherwise
+ * appear in the contents list as `&amp;`, since React renders this as text
+ * rather than as markup.
+ */
+function asPlainText(html: string): string {
+  const entities: Record<string, string> = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'",
+  }
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&(?:amp|lt|gt|quot|#39);/g, (entity) => entities[entity] ?? entity)
+}
+
+/**
  * The table of contents, read back out of the rendered HTML.
  *
  * Deriving it from the output rather than maintaining a list alongside the
@@ -33,7 +54,7 @@ function extractHeadings(html: string): Heading[] {
     headings.push({
       level: Number(match[1]) as 2 | 3,
       id: match[2],
-      text: match[3].replace(/<[^>]+>/g, ''),
+      text: asPlainText(match[3]),
     })
   }
   return headings
@@ -83,7 +104,10 @@ export function ManualPage() {
       <div className="mx-auto flex w-full max-w-6xl gap-10 px-6 py-8">
         <nav
           aria-label="Manual contents"
-          className="sticky top-6 hidden h-fit w-60 shrink-0 lg:block"
+          // The list grew past a screenful when the walkthroughs landed, and a
+          // sticky column taller than the viewport puts its last entries out of
+          // reach entirely.
+          className="sticky top-6 hidden h-fit max-h-[calc(100vh-3rem)] w-60 shrink-0 overflow-y-auto lg:block"
         >
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">
             Contents

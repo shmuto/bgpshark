@@ -776,4 +776,6 @@ async function main(): Promise<void> {
   }
 }
 
-await main()
+// Only when run as a script. `testlab/screenshots.ts` imports SCENARIOS to build
+// the same captures in memory, and importing this file should not write pcaps.
+if (import.meta.main) await main()

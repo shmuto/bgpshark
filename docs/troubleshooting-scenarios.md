@@ -11,6 +11,12 @@ last KEEPALIVE, that is a fact the dashboard can be held to. And the last column
 is an honest map of where the tool stops, written from actually driving it rather
 than from reading the code.
 
+The user-facing half of this document is the manual's **Investigating by
+symptom** section (`src/pages/manual/manual.md`), which walks most of these
+scenarios click by click and is illustrated from the same captures by
+`bun run screenshots`. This file is the assessment; that one is the instruction.
+When a verdict here changes, check whether a walkthrough there is now wrong.
+
 ## Building the captures
 
 ```bash
