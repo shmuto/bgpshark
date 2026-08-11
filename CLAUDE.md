@@ -25,67 +25,55 @@ bun run build      # tsc -b && vite build
 tool does and does not say about each, and is the fastest way to understand what
 this app is *for*.
 
-## Environment caveats
+## Running the browser tests
 
-These bite on a fresh container and neither is a bug in the repo. Both are
-per-container: a new session starts from the same state.
+`bun run test:e2e` fails out of the box in a container that cannot download
+browsers, with *"Looks like Playwright was just installed or updated"*. This one
+ships Chromium revision **1194** at `/opt/pw-browsers`, the pinned
+`@playwright/test` 1.61.1 wants revision **1228**, the directory layout changed
+between the two, and `bunx playwright install` cannot fix it because the CDN is
+blocked by the agent proxy (403 `host not permitted`).
 
-### DuckDB WASM cannot read JSON here
-
-The loader inserts via `read_json_auto` (`src/lib/db/loader.ts`), and that
-function traps in this container's Chromium — `RuntimeError: null function or
-function signature mismatch`. DuckDB itself is fine; `select 1` and `version()`
-return normally. Only the JSON reader is affected.
-
-What you will see, and should not go chasing:
-
-- a **"1 warning loading this capture"** banner on every capture,
-- **"This capture could not be loaded into DuckDB, so SQL is unavailable"** with
-  the SQL console's textarea disabled,
-- **15 of 83 e2e tests failing** — all of `sql-console.e2e.ts`, the "EVPN reaches
-  the database" block, `warnings.e2e.ts`, and two filter tests. 68 pass.
-
-The app degrades on purpose: filtering falls back to the in-memory evaluator, so
-every screen except the SQL console still works. CI does not have this problem.
-
-If you need the SQL console to verify something, patch `insertJsonData` in
-`src/lib/db/loader.ts` to emit `INSERT INTO … VALUES` batches instead of
-`read_json_auto`, and **revert it before committing** — it is a sandbox
-workaround, not an improvement.
-
-### Playwright cannot find its browser
-
-`bun run test:e2e` fails out of the box with *"Looks like Playwright was just
-installed or updated"*. The container ships Chromium revision **1194** at
-`/opt/pw-browsers`, the pinned `@playwright/test` 1.61.1 wants revision **1228**,
-and the directory layout changed between them. `bunx playwright install` does not
-help — the CDN is blocked by the agent proxy (403 `host not permitted`).
-
-Bridge the two with symlinks, once per container:
+Point `CHROMIUM_PATH` at the binary and the revision lookup is skipped:
 
 ```bash
-# headless shell: 1.61.1 expects chrome-headless-shell-linux64/chrome-headless-shell
-mkdir -p /opt/pw-browsers/chromium_headless_shell-1228/chrome-headless-shell-linux64
-for f in /opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/*; do
-  ln -sfn "$f" /opt/pw-browsers/chromium_headless_shell-1228/chrome-headless-shell-linux64/"$(basename "$f")"
-done
-ln -sfn /opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell \
-  /opt/pw-browsers/chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell
-touch /opt/pw-browsers/chromium_headless_shell-1228/{INSTALLATION_COMPLETE,DEPENDENCIES_VALIDATED}
-
-# full browser: expects chrome-linux64/chrome
-mkdir -p /opt/pw-browsers/chromium-1228/chrome-linux64
-for f in /opt/pw-browsers/chromium-1194/chrome-linux/*; do
-  ln -sfn "$f" /opt/pw-browsers/chromium-1228/chrome-linux64/"$(basename "$f")"
-done
-touch /opt/pw-browsers/chromium-1228/{INSTALLATION_COMPLETE,DEPENDENCIES_VALIDATED}
+CHROMIUM_PATH=/opt/pw-browsers/chromium bun run test:e2e
 ```
 
-For a one-off script rather than the suite, skip all of that and launch the
-version-agnostic symlink directly:
+Same for a one-off script:
 
 ```ts
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
+```
+
+Expect **86 passing**. If more than a couple fail, something is actually wrong.
+
+## What used to bite here, and does not any more
+
+Worth knowing because the symptoms are memorable and you may find them in older
+notes or a stale branch.
+
+Loading any capture used to raise *"1 warning loading this capture"* and
+*"This capture could not be loaded into DuckDB, so SQL is unavailable"*, with a
+wasm trap in the console. That was not an environment quirk: the loader inserted
+rows via `read_json_auto`, DuckDB's JSON reader is an **extension**, and DuckDB
+WASM downloads extensions from `extensions.duckdb.org` on first use. The
+production CSP is `connect-src 'self' blob: data:`, so the download could not
+succeed there either — **the SQL console was broken on the deployed site**, and
+this container merely surfaced it early by blocking the same request.
+
+The loader now inserts with literal `VALUES` (`insertRows` in
+`src/lib/db/loader.ts`) and touches no network at all.
+`tests/e2e/offline.e2e.ts` asserts that no request leaves the origin while a
+capture is loaded and queried, which is the assertion that generalises: it holds
+whether or not a CSP is there to catch the violation.
+
+**The e2e suite drives the dev server, which ships no CSP** (`vite.config.ts`
+injects it at build time only). That is the gap that let this ship. When
+touching anything that fetches, verify against the real thing:
+
+```bash
+bun run build && bun run preview     # http://localhost:4173/bgpshark/
 ```
 
 ## Driving the app from a script

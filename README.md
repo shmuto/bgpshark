@@ -77,6 +77,21 @@ bun run test:e2e --ui               # pick through them interactively
 bun run test:e2e layout             # one file
 ```
 
+Where `playwright install` cannot run — an offline machine, or one that ships a
+Chromium of its own — `CHROMIUM_PATH` skips the revision lookup entirely:
+
+```bash
+CHROMIUM_PATH=/usr/bin/chromium bun run test:e2e
+```
+
+The suite drives the **dev server**, which by design ships no Content Security
+Policy. Anything that fetches — a wasm module, a DuckDB extension — therefore
+needs checking against the built app too, where the policy is real:
+
+```bash
+bun run build && bun run preview
+```
+
 ### On Nix
 
 `flake.nix` provides a dev shell with Bun, Node and — on Linux — a Playwright
@@ -308,3 +323,10 @@ The app makes no third-party requests. Captures are parsed in the browser and st
 only in IndexedDB, and the DuckDB WASM runtime is self-hosted rather than loaded from
 a CDN. The production build ships a Content Security Policy restricting every fetch
 to the app's own origin.
+
+That constrains how the database may be used, not just how it is served: DuckDB
+fetches its **extensions** from `extensions.duckdb.org` on first use, so anything
+outside the core engine — the JSON reader among them — is unavailable by
+construction. The loader inserts with plain `VALUES` for exactly that reason.
+`tests/e2e/offline.e2e.ts` holds the line, asserting that loading and querying a
+capture sends nothing off-origin.

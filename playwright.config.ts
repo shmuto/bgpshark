@@ -11,6 +11,11 @@ import { defineConfig, devices } from '@playwright/test'
  *
  * On NixOS the browsers Playwright downloads will not run — see README. Set
  * PLAYWRIGHT_BROWSERS_PATH to the nixpkgs build instead.
+ *
+ * CHROMIUM_PATH is the blunter version of the same escape hatch, for an
+ * environment that ships a working Chromium but not the exact revision this
+ * Playwright expects, and cannot download the one it wants. Point it at the
+ * binary and the revision lookup is skipped entirely.
  */
 export default defineConfig({
   testDir: './tests/e2e',
@@ -36,7 +41,13 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1440, height: 900 },
+        ...(process.env.CHROMIUM_PATH
+          ? { launchOptions: { executablePath: process.env.CHROMIUM_PATH } }
+          : {}),
+      },
     },
   ],
   webServer: {
