@@ -295,7 +295,7 @@ The builder covers the cases the lab makes awkward — a peer that never answers
 specific NOTIFICATION subcode, a 576-byte MTU — while the lab produces the
 traffic no description would think to include.
 
-`testlab/scenarios.ts` sits between the two: thirteen fixed reproductions of real
+`testlab/scenarios.ts` sits between the two: fourteen fixed reproductions of real
 faults, built through the library rather than the lab, described in
 [docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md).
 
@@ -322,7 +322,7 @@ The script starts a dev server if one is not already listening, and honours
 
 - [docs/design.md](docs/design.md) — requirements and technical design
 - [docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md) —
-  thirteen BGP faults, what you want from a capture of each, and what BGPShark
+  fourteen BGP faults, what you want from a capture of each, and what BGPShark
   says about it today. `bun run testlab/scenarios.ts` builds all of them
 - [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — why DuckDB, and how
   the implementation diverged from the proposal; `design.md` describes what shipped

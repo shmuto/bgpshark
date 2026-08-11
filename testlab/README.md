@@ -3,7 +3,7 @@
 ContainerLab environment for testing BGP packet captures.
 
 For captures you want *now*, without Docker or four SR Linux images, see
-`scenarios.ts` in this directory: thirteen reproductions of specific faults,
+`scenarios.ts` in this directory: fourteen reproductions of specific faults,
 compiled through `src/lib/build` and described in
 [../docs/troubleshooting-scenarios.md](../docs/troubleshooting-scenarios.md).
 

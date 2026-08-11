@@ -27,12 +27,13 @@ block, and the rest of the file is still analysed — a warning is not a failure
 
 Two things worth knowing before you trust what you see:
 
-- **A capture with only one direction will look healthy.** If your mirror or
-  `tcpdump` filter caught only one side of the conversation, the messages that
-  explain a failure may simply be absent. BGPShark cannot currently tell you
-  this, so check that you have traffic in both directions —
+- **A capture with only one direction is flagged, but you decide which cause.**
+  The Dashboard says so as a critical alert. It cannot tell you *why*: either a
+  mirror or `tcpdump` filter caught one leg, or the peer's packets genuinely are
+  not arriving — a one-way link, an ACL applied in one direction. The second is
+  an outage rather than a capture problem, so check before you re-capture.
   [The capture may be lying to you](#the-capture-may-be-lying-to-you) is two
-  ways of checking in under a minute.
+  ways of telling them apart in under a minute.
 - **TCP-level frames are hidden by default.** The packet list shows BGP only
   until you switch it to **All Packets**. A session killed by a firewall shows
   up as a `[R]` frame there and nowhere else.
@@ -61,12 +62,15 @@ the **Alerts** panel. Alerts are sorted worst-first and are one row per
 row that says forty, not forty rows.
 
 Alerts cover NOTIFICATIONs, sessions that flapped, bursts of withdrawn prefixes,
-routes that flapped, and routes whose AS_PATH changed. **View →** takes you to
-the packet where the story starts, with a filter already applied.
+routes that flapped, routes whose AS_PATH changed, and two cases where the
+problem is something *missing*: a session with only one direction in the capture,
+and a TCP connection that was accepted and then answered with no BGP at all.
+**View →** takes you to the packet where the story starts, with a filter already
+applied.
 
-"No issues detected" means every session in the capture stayed up. It does not
-mean nothing is wrong — a route leak, for instance, is invisible to it, because
-nothing about the sessions carrying it is unhealthy.
+"No issues detected" means every session in the capture came up and stayed up. It
+does not mean nothing is wrong — a route leak, for instance, is invisible to it,
+because nothing about the sessions carrying it is unhealthy.
 
 ### Messages
 
@@ -190,8 +194,9 @@ Whatever the complaint, the first thirty seconds are the same.
 ![The Dashboard on a capture of a flapping session: counters, two alerts, the neighbour table and the timeline](manual/dashboard.png)
 
 "No issues detected — every session looks healthy" means every session in the
-capture stayed up. It does **not** mean nothing is wrong: a route leak, a
-best-path surprise and a half-captured session all produce that message.
+capture came up and stayed up. It does **not** mean nothing is wrong: a route
+leak and a best-path surprise both produce that message, because nothing about
+the sessions carrying them is unhealthy.
 
 ### “The session will not come up”
 
@@ -208,8 +213,14 @@ are computed from the TCP layer instead:
   firewall, a TCP-MD5/TCP-AO mismatch, or BGP simply not running on the peer.
 - **SYNs with no answer at all** — the packets are not arriving, or the replies
   are not coming back. This is a routing or filtering problem below BGP.
-- **SYN-ACK, then nothing** — TCP came up and the OPEN never followed. The peer
-  accepted the connection but is not talking BGP on it.
+- **SYN-ACK, then nothing** — TCP came up and the OPEN never followed. The
+  Dashboard says so directly: *"TCP connects but 10.0.0.2 sends no BGP"*. Read
+  it for what the successful handshake **rules out** — the port is open, no ACL
+  is dropping the SYN, and MD5 agrees, because a one-sided MD5 fails the
+  handshake rather than surviving it. What is left is the peer's BGP unwilling
+  to talk to your address, or the payload not surviving a path that carries the
+  handshake fine: a TCP middlebox that terminates the connection, a PMTU black
+  hole that passes small segments and drops full ones, control-plane policing.
 
 Switch the packet list to **All Packets** to count the retries and read the
 intervals; with the list on BGP Only there is nothing to see, because there is
@@ -441,13 +452,16 @@ refresh and filtering the UPDATEs on either side of it (`frame < 240`,
 
 ### The capture may be lying to you
 
-Worth doing before drawing any conclusion, and especially before telling someone
-their router is fine.
-
 A capture taken from one side of a SPAN, or with a `tcpdump` filter that caught
-one direction, will look **healthy** — the neighbour table marks the pair `✓ OK`,
-the Dashboard reports no issues, and the NOTIFICATION that ended the session is
-simply absent because the other end sent it.
+one direction, is missing whatever the other end said — including the
+NOTIFICATION that ended the session. The Dashboard now raises *"Only one
+direction of this session is in the capture"* and the neighbour table marks the
+pair `⚠ Never up`, so you are told; what it cannot tell you is **which** of two
+very different causes it is. A one-legged mirror and a one-way reachability
+fault produce the same file, and only one of them is a capture problem.
+
+The checks below are how you decide, and they are worth doing before telling
+anyone their router is fine.
 
 **Messages → All Packets**, and read the Source column:
 
@@ -538,8 +552,9 @@ are available in SQL but are not filter fields.
 
 Worth knowing, so you do not read absence as evidence:
 
-- **Whether your capture is complete.** A one-sided capture is reported as a
-  healthy session. [Check it yourself](#the-capture-may-be-lying-to-you).
+- **Which of two causes made a session one-sided.** It tells you one direction
+  is missing; whether that is your capture or the network is yours to work out.
+  [How to tell them apart](#the-capture-may-be-lying-to-you).
 - **Why a session dropped without a NOTIFICATION.** The TCP reset is visible
   under **All Packets**, but nothing points you there.
 - **Whether a path is one it should be carrying.** There is no notion of an

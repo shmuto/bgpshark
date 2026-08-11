@@ -1,6 +1,6 @@
 # Troubleshooting scenarios
 
-Thirteen faults an operator actually arrives with, each one compiled into a
+Fourteen faults an operator actually arrives with, each one compiled into a
 capture that shows that fault and nothing else. For every scenario: the
 complaint, what you would want to learn from a capture of it, and what BGPShark
 says about it today.
@@ -34,6 +34,26 @@ you, and the Build screen keeps a short curated list; these are fixed
 reproductions meant to be read. Two of them are not expressible as a preset at
 all — S4 merges two sessions into one capture, S12 deletes one direction from a
 capture that was complete.
+
+## Where the capture was taken
+
+Every scenario here is shaped like a capture taken **on one router**, because
+that is the only capture most people can get: the far end belongs to somebody
+else, or to a team that will not run tcpdump on a Friday.
+
+That constraint matters less than it sounds, and in one place more:
+
+- **One router still sees both directions.** Capturing on your own interface
+  records what you sent *and* what arrived from the peer. Thirteen of the
+  fourteen captures below have both directions in them, which is what a normal
+  single-router capture looks like — not a compromise.
+- **More than one session is normal too.** S4 has two, because a router with two
+  upstreams shows both in one file. Being able to compare them is the whole
+  reason that scenario is answerable at all.
+- **What you cannot see is whether your packets arrived.** The capture proves
+  what left the interface, never what the peer received. So a fault at the far
+  end shows up here only as *absence*. S12 and S14 are both that shape, and
+  both are now reported — see the two rules in `computeSessionSetupAlerts`.
 
 ## The scenarios
 
@@ -124,10 +144,11 @@ the NOTIFICATION's data field points at.
 
 **✔ / ◑** The NOTIFICATION reads `3/2 UPDATE Message Error / Unrecognized
 Well-known Attribute`, and the UPDATE before it shows `UNKNOWN(199) · Transitive
-· Unparsed` with the full message hex. What is missing is the last step: a
-NOTIFICATION's data field is rendered as an undifferentiated hex dump, though for
-error code 3 it is by definition the attribute that caused the error and could be
-decoded as one.
+· Unparsed` with the full message hex. What is missing is the last step: the
+NOTIFICATION carries the offending attribute back in its data field —
+`40 c7 04 de ad be ef`, the same seven bytes that were in the UPDATE — and that
+is rendered as an undifferentiated hex dump rather than decoded as the attribute
+RFC 4271 §6.3 says it is.
 
 ### S7 — `s7-segmented` · Only some advertised routes seem to arrive
 
@@ -163,26 +184,48 @@ differs from what was there before.
 Routes screen, a withdraw-burst alert, and AS_PATH-change rows — the fullest
 automatic answer of any scenario here.
 
-### S11 — `s11-tcp-reset` · It dropped, and no NOTIFICATION says why
+### S11 — `s11-silent-teardown` · It dropped, and no NOTIFICATION says why
 
-*Want from the capture:* whether a RST or FIN ended it, at what time, and how
+*Want from the capture:* whether a RST or a FIN ended it, at what time, and how
 long until the reconnect.
 
-**◑** The evidence is there — switch the packet list to **All Packets** and frame
-11 is `[AR] 179 → 51000` — but nothing routes you to it. The dashboard reports
-the flap and stays silent about the reset, because `computeTransportAlerts` only
-runs when the capture holds no BGP at all (`DashboardPage.tsx:117`). There is
-also no filter field for TCP flags.
+The capture holds both shapes, because they are the same fault with different
+manners and an implementation that only looked for RST would call the second one
+healthy: a bare RST five seconds after a KEEPALIVE, and later an ordinary FIN
+close. A BGP speaker that meant to go away would have sent Cease first, so a FIN
+on its own is the same missing explanation.
+
+**◑** The evidence is there — switch the packet list to **All Packets** and the
+`[AR]` and `[F]` frames are visible with their timestamps — but nothing routes
+you to it. The dashboard reports *"Session flapping detected"*, marks the pair
+`✓ OK`, and stays silent about both teardowns, because `computeTransportAlerts`
+only runs when the capture holds no BGP at all (`DashboardPage.tsx:117`). There
+is also no filter field for TCP flags.
+
+Note that `s3-holdtimer-flap` also contains RSTs — after its NOTIFICATIONs. Any
+alert added here has to stay quiet about those, or it will fire on every healthy
+teardown in the corpus.
 
 ### S12 — `s12-one-direction` · A capture that shows a session the router calls down
 
-*Want from the capture:* first and foremost, that it is half a capture.
+*Want from the capture:* first and foremost, that only one direction is in it.
 
-**✘** The dashboard reports *"No issues detected — every session looks healthy"*
-and the neighbor table marks the pair `✓ OK`. Only frames from 10.0.0.1 are
-present; the NOTIFICATION 6/2 that ended the session was sent by the other end
-and is simply absent. A one-legged SPAN is common enough, and confident enough in
-its wrongness, that this is the gap with the most cost attached.
+Two different things produce this file and nothing distinguishes them. It may be
+a broken mirror — a SPAN session or capture filter that caught one leg — or it
+may be a fault, with the peer's packets genuinely not arriving because of a
+unidirectional link, an ACL applied one way, or MD5 configured on one side. The
+second is an outage, not a capture problem, which is why the right message names
+both possibilities rather than telling the operator their capture is broken.
+
+**✔** The dashboard leads with *"Only one direction of this session is in the
+capture — every frame between 10.0.0.1 and 10.0.0.2 was sent by 10.0.0.1"*, and
+names both readings rather than picking one. The neighbor table marks the pair
+`⚠ Never up`.
+
+The row deliberately does not say "your capture is incomplete", because half the
+time that would be wrong: the peer's packets may not be arriving at all. What it
+does say is that anything read off this session is half a conversation until you
+know which.
 
 ### S13 — `s13-evpn-mac-move` · A host in the fabric unreachable in bursts
 
@@ -195,24 +238,63 @@ AS_PATH change from 65002 to 65001 — the two halves of a move. The `mac`, `vni
 carry it. Reading a move as a "flap" is a wording mismatch rather than a wrong
 answer, and MAC Mobility sequence numbers are not compared.
 
+### S14 — `s14-open-unanswered` · TCP connects and the peer never answers
+
+*Want from the capture:* that the connection established, that our OPEN went
+out, and that nothing came back — which is what narrows the search to the far
+end.
+
+This is the case a single-router capture is worst at explaining and an operator
+hits most often when the far end is somebody else's. It is not S1: the SYN is
+answered and TCP comes up. It is not S12: both directions are present, since the
+peer's stack completes the handshake. The peer simply contributes no BGP —
+identical from this end whether the neighbor statement is missing, the peer is
+passive and waiting for something it will not get, or MD5 is set on one side so
+the peer's stack discards the OPEN before BGP ever sees it.
+
+**✔** The dashboard reports *"TCP connects but 10.0.0.2 sends no BGP ×3"*, and
+the detail says what the successful handshake rules out: the port is open, no ACL
+is dropping the SYN, and MD5 agrees — a one-sided MD5 fails the handshake rather
+than surviving it. What is left is the peer's BGP unwilling to talk to this
+address, or the payload not surviving a path that carries the handshake fine (a
+TCP middlebox, a PMTU black hole, control-plane policing). The neighbor table
+marks the pair `⚠ Never up`.
+
+The rule requires a SYN-ACK, so S1 — where the SYN is refused — is left to the
+transport alert that already explains it, rather than getting a second and worse
+explanation of the same packets.
+
 ## What the scenarios say about the tool
 
 Session-layer faults — S1, S2, S3, S7, S10, S13 — are answered on screen, often
 in one row of the alert panel. That is the tool working as designed.
 
-Three gaps are worth naming, in the order the scenarios argue for them:
+The gaps have a shape in common. **Everything the tool reports well is something
+present in the capture; everything it misses is something absent from it.** An
+alert fires on a NOTIFICATION that arrived, a withdrawal that happened, an OPEN
+that disagreed. Nothing fires on a reply that never came, a direction that is not
+there, or a session that never reached Established — and from a capture taken on
+one router, absence is exactly how a fault at the far end appears.
 
-1. **A one-sided capture is reported as healthy** (S12). Detectable from the
-   structure alone — traffic in one direction only, or SYNs with no SYN-ACK — and
-   every conclusion drawn from such a file is unsafe until it is said out loud.
-2. **A post-establishment RST or FIN is never surfaced** (S11). The data is
+The first of those gaps is now closed. `computeSessionSetupAlerts` reports a
+session with one direction in it and a connection that was accepted and never
+answered, both as critical rows, and the neighbour table marks the pair
+`⚠ Never up` rather than `✓ OK`. Run against all fourteen captures plus the
+sample and the ContainerLab capture, the two rules fire on S12 and S14 and stay
+silent everywhere else.
+
+What remains:
+
+1. **A post-establishment RST or FIN is never surfaced** (S11). The data is
    already parsed into `GenericPacket.tcpFlags`; only the gate on
-   `computeTransportAlerts` keeps it off the dashboard.
-3. **Best-path attributes stop at AS_PATH and Next Hop** (S4). MED, LOCAL_PREF
+   `computeTransportAlerts` keeps it off the dashboard. Both teardown shapes are
+   in the capture, and `s3-holdtimer-flap` holds the RSTs any new rule must stay
+   quiet about.
+2. **Best-path attributes stop at AS_PATH and Next Hop** (S4). MED, LOCAL_PREF
    and communities reach DuckDB but not the route history or the filter
    language, which makes the most common "why this path" question SQL-only.
 
-Smaller ones: NOTIFICATION data is not decoded per error code (S6); `hold_time`
-exists as a column but not as a filter field; the SQL results grid renders
-`timestamp` as raw epoch milliseconds; and a graceful restart is indistinguishable
-from a flap (S8).
+Smaller ones: the NOTIFICATION data field is not decoded per error code even
+though S6 now carries the offending attribute in it; `hold_time` exists as a
+column but not as a filter field; the SQL results grid renders `timestamp` as raw
+epoch milliseconds; and a graceful restart is indistinguishable from a flap (S8).

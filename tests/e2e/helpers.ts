@@ -1,4 +1,6 @@
 import { expect, type Page } from '@playwright/test'
+import { buildScenario } from '../../src/lib/build'
+import { writePcap } from '../../src/lib/pcap/writer'
 
 /**
  * Loads the bundled sample capture through the button a user would press, and
@@ -191,4 +193,53 @@ export function corruptCapture(sample: Buffer): Buffer {
   }
 
   return bytes
+}
+
+/**
+ * A peer that accepts the connection and then says nothing.
+ *
+ * The TCP handshake completes, we send an OPEN, and no BGP ever comes back —
+ * the shape of a fault at the far end seen from a capture taken on one router.
+ * Built here rather than read from `testlab/scenarios/`, which is gitignored
+ * and therefore absent in CI; `testlab/scenarios.ts` is the same situation
+ * written for a human to open, this is the same situation written for a test.
+ */
+export function unansweredOpenCapture(): Buffer {
+  const built = buildScenario({
+    a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 },
+    b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 },
+    gap: 200,
+    steps: [
+      { kind: 'handshake' },
+      { kind: 'open', from: 'a' },
+      { kind: 'delay', gap: 90_000 },
+      { kind: 'reset', from: 'a' },
+    ],
+  })
+  return Buffer.from(built.bytes)
+}
+
+/**
+ * The same session with every frame the far end sent removed, which is what
+ * both a one-legged mirror and a one-way reachability fault do to the evidence.
+ */
+export function oneDirectionCapture(): Buffer {
+  const full = buildScenario({
+    a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 },
+    b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 },
+    gap: 200,
+    steps: [
+      { kind: 'handshake' },
+      { kind: 'open', from: 'a' },
+      { kind: 'open', from: 'b' },
+      { kind: 'keepalive', from: 'a' },
+      { kind: 'keepalive', from: 'b' },
+      { kind: 'send', from: 'b', messages: [{ type: 'NOTIFICATION', errorCode: 6, errorSubcode: 2 }] },
+    ],
+  })
+  // IPv4 source address: 14 bytes of Ethernet, then 12 into the IPv4 header.
+  const fromA = full.frames.filter((frame) =>
+    [10, 0, 0, 1].every((octet, i) => frame.frameBytes[26 + i] === octet)
+  )
+  return Buffer.from(writePcap(fromA, full.linkType))
 }

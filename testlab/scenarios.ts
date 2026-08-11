@@ -18,6 +18,11 @@
  * several of them — a capture merged from two sessions, a capture with one
  * direction deleted — are not describable as a single two-peer scenario at all.
  *
+ * They are all shaped like a capture taken on **one router**, because that is
+ * the capture people can actually get. That does not mean one direction: your
+ * own interface sees what you sent and what arrived. It means a fault at the
+ * far end appears only as something missing — see S12 and S14.
+ *
  *   bun run testlab/scenarios.ts          # write all of them
  *   bun run testlab/scenarios.ts s3 s11   # write only these
  *
@@ -337,11 +342,27 @@ const s5 = fromScenario(
 // S6 — an UPDATE the far end refuses.
 // ---------------------------------------------------------------------------
 
+/**
+ * The attribute B will not accept, written once.
+ *
+ * Flags 0x40 is transitive with the optional bit clear, which is what makes an
+ * unknown type code an error rather than something to pass along. Type code
+ * 199 is 0xc7, the length is 4, and the value is arbitrary.
+ *
+ * The same bytes go into the UPDATE and into the NOTIFICATION's data field,
+ * because that is what RFC 4271 §6.3 says the data field contains: the
+ * attribute that caused the error. A capture where the two disagreed would be
+ * one no speaker could have produced, and a decoder tested against it would be
+ * tested against a lie.
+ */
+const OFFENDING_ATTRIBUTE = new Uint8Array([0x40, 0xc7, 0x04, 0xde, 0xad, 0xbe, 0xef])
+
 const s6 = fromScenario(
   's6-malformed-update',
   'The session drops the moment routes are advertised',
   'An attribute with type code 199 and the optional bit clear — a well-known ' +
-    'attribute nobody recognises — answered with NOTIFICATION 3/2.',
+    'attribute nobody recognises — answered with NOTIFICATION 3/2 whose data ' +
+    'field carries that very attribute back.',
   () => ({
     name: 'Malformed UPDATE',
     a: A,
@@ -359,15 +380,24 @@ const s6 = fromScenario(
               { type: 'ORIGIN', value: 'IGP' },
               { type: 'AS_PATH', segments: [{ type: 'AS_SEQUENCE', asNumbers: [A.as] }] },
               { type: 'NEXT_HOP', address: A.ip },
-              // 0x40 is transitive with optional clear, which is what makes an
-              // unknown type code an error rather than something to pass on.
-              { type: 'RAW', flags: 0x40, typeCode: 199, value: new Uint8Array([0xde, 0xad, 0xbe, 0xef]) },
+              {
+                type: 'RAW',
+                flags: OFFENDING_ATTRIBUTE[0],
+                typeCode: OFFENDING_ATTRIBUTE[1],
+                value: OFFENDING_ATTRIBUTE.slice(3),
+              },
             ],
             nlri: ['10.5.0.0/24'],
           } satisfies BgpMessageSpec,
         ],
       },
-      { kind: 'send', from: 'b', messages: [{ type: 'NOTIFICATION', errorCode: 3, errorSubcode: 2 }] },
+      {
+        kind: 'send',
+        from: 'b',
+        messages: [
+          { type: 'NOTIFICATION', errorCode: 3, errorSubcode: 2, data: OFFENDING_ATTRIBUTE },
+        ],
+      },
       { kind: 'close', from: 'b', gap: 50 },
     ],
   })
@@ -534,12 +564,13 @@ const s10 = fromScenario(
 // ---------------------------------------------------------------------------
 
 const s11 = fromScenario(
-  's11-tcp-reset',
+  's11-silent-teardown',
   'The session dropped and there is no NOTIFICATION anywhere in the capture',
-  'A bare TCP RST 5s after the last KEEPALIVE, then a reconnect a minute ' +
-    'later. Nothing at the BGP layer records the teardown at all.',
+  'Two teardowns, neither announced at the BGP layer: a bare RST 5s after the ' +
+    'last KEEPALIVE, and later a FIN exchange. Both shapes are here because an ' +
+    'implementation that only looks for RST would call the second one healthy.',
   () => ({
-    name: 'TCP reset',
+    name: 'Silent teardown',
     a: A,
     b: B,
     gap: 200,
@@ -558,6 +589,19 @@ const s11 = fromScenario(
       // kills the TCP session. Neither speaker gets to say why.
       { kind: 'reset', from: 'b' },
       { kind: 'delay', gap: 60_000 },
+
+      ...establish(),
+      {
+        kind: 'send',
+        from: 'a',
+        messages: [announce(['10.1.0.0/24'], { nextHop: A.ip, asPath: [A.as] }), END_OF_RIB],
+      },
+      { kind: 'delay', gap: 20_000 },
+      // The same fault with better manners: the connection is closed rather
+      // than reset. A BGP speaker that meant to go away would have sent Cease
+      // first, so a FIN on its own is the same missing explanation.
+      { kind: 'close', from: 'b' },
+      { kind: 'delay', gap: 60_000 },
       ...establish(),
     ],
   })
@@ -568,19 +612,30 @@ const s11 = fromScenario(
 // ---------------------------------------------------------------------------
 
 /**
- * A SPAN session that only mirrored one direction.
+ * A capture with one direction in it, which has two possible causes and no way
+ * to tell them apart.
  *
- * Built by taking a complete capture and deleting every frame the far end
- * sent, which is exactly what a one-legged mirror does to the evidence. The
- * NOTIFICATION that explains the teardown was in the half that went missing,
- * so anything read off this file is being read off half a conversation.
+ * The obvious reading is a broken mirror: a SPAN session or a capture filter
+ * that only caught one leg, so the evidence is half missing. The other reading
+ * is a fault — the peer's packets genuinely are not arriving, because of a
+ * unidirectional link, an ACL applied in one direction, or MD5 configured on
+ * one side only. Both produce this file. Nothing in it distinguishes them.
+ *
+ * That ambiguity is the point rather than a weakness of the scenario. Whichever
+ * cause it is, every conclusion drawn from the file is unsafe until it is said
+ * out loud, and the second cause is a real outage rather than a capture
+ * problem — so "your capture looks incomplete" would be the wrong thing to say.
+ *
+ * Built by taking a complete capture and deleting every frame the far end sent,
+ * which is what both causes do to the evidence.
  */
 const s12: ScenarioCase = {
   id: 's12-one-direction',
   title: 'The capture shows a healthy session that the router says is down',
   expect:
-    'Only frames sourced by 10.0.0.1 survive. The NOTIFICATION 6/2 that ended ' +
-    'the session was sent by the other end and is simply absent.',
+    'Only frames sourced by 10.0.0.1 survive — including the TCP handshake, so ' +
+    'even the SYN-ACK is absent. The NOTIFICATION 6/2 that ended the session ' +
+    'was sent by the other end and is simply gone.',
   build: () => {
     const full = buildScenario({
       name: 'One direction only',
@@ -636,8 +691,65 @@ const s13: ScenarioCase = {
 }
 
 // ---------------------------------------------------------------------------
+// S14 — the peer accepts the connection and then says nothing.
+// ---------------------------------------------------------------------------
 
-export const SCENARIOS: ScenarioCase[] = [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13]
+/**
+ * The case a capture taken on one router is worst at explaining, and the one
+ * an operator hits most often when the far end is somebody else's.
+ *
+ * TCP comes up — so it is not S1, where the SYN is refused outright. Both
+ * directions are present — so it is not S12, where half the conversation is
+ * missing. The peer completes the handshake and then contributes no BGP at
+ * all: no OPEN, no NOTIFICATION, nothing.
+ *
+ * Note what that rules *out*. Something accepted the connection on port 179,
+ * so the port is open, an ACL is not dropping the SYN, and MD5 does not
+ * disagree — a one-sided MD5 configuration fails at the handshake, not after
+ * it. The fault is therefore somewhere after TCP came up, which is a much
+ * smaller set: the peer's BGP unwilling to talk to this address, or the
+ * payload not surviving a path that carries the handshake fine. A middlebox
+ * that terminates TCP on the peer's behalf, a PMTU black hole that passes
+ * small segments and drops full-sized ones, and control-plane policing all
+ * look like this.
+ *
+ * What the capture *can* say is precise and worth saying: the connection
+ * established, we sent an OPEN, and nothing came back before we gave up. That
+ * narrows the search to the far end, which is exactly the conclusion this
+ * capture should support.
+ */
+const s14 = fromScenario(
+  's14-open-unanswered',
+  'TCP connects, our OPEN goes out, and the peer never answers',
+  'Three attempts. Each one completes the handshake, sends an OPEN, waits out ' +
+    'the hold time in OpenSent and gives up. Exactly one BGP message per ' +
+    'attempt, all of it ours.',
+  () => {
+    const attempt = (): Scenario['steps'] => [
+      { kind: 'handshake' },
+      { kind: 'open', from: 'a' },
+      // Nothing from B. A waits its hold time in OpenSent and abandons the
+      // connection; a real speaker backs off and tries again.
+      { kind: 'delay', gap: 90_000 },
+      { kind: 'reset', from: 'a' },
+      { kind: 'delay', gap: 30_000 },
+    ]
+
+    return {
+      name: 'OPEN unanswered',
+      a: A,
+      b: B,
+      gap: 200,
+      steps: [...attempt(), ...attempt(), ...attempt()],
+    }
+  }
+)
+
+// ---------------------------------------------------------------------------
+
+export const SCENARIOS: ScenarioCase[] = [
+  s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11, s12, s13, s14,
+]
 
 async function main(): Promise<void> {
   const wanted = process.argv.slice(2)
