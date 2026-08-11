@@ -305,10 +305,8 @@ bun run testlab/scenarios.ts s3 s11   # just these
 - [docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md) —
   thirteen BGP faults, what you want from a capture of each, and what BGPShark
   says about it today. `bun run testlab/scenarios.ts` builds all of them
-- [docs/ui-design.md](docs/ui-design.md) — screen specifications
-- [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — the original DuckDB
-  WASM migration proposal, kept for context; `design.md` describes what shipped
-- [docs/todo.md](docs/todo.md) — log of fixed issues
+- [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — why DuckDB, and how
+  the implementation diverged from the proposal; `design.md` describes what shipped
 
 ## Deployment
 

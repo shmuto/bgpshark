@@ -1,8 +1,9 @@
 # BGP Packet Analyzer - Requirements & Design Document
 
-> This document describes the current design of the application. Related documents:
-> `ui-design.md` (screen specifications) and `design-duckdb-wasm.md` (the original
-> DuckDB WASM migration proposal — this document is authoritative where the two differ).
+> This document describes the current design of the application. `design-duckdb-wasm.md`
+> keeps the reasoning behind the DuckDB WASM migration; this document is authoritative
+> where the two differ. `troubleshooting-scenarios.md` is the counterpart from the
+> user's side: the faults this tool is pointed at, and which of them it answers.
 
 ## 1. Project Overview
 
@@ -184,7 +185,7 @@ verified in `tests/lib/build/checksums.test.ts`.
 
 The same thing is available as a library, which is the better route for fixtures in
 bulk — `testlab/scenarios.ts` uses it to build the thirteen captures behind
-`docs/troubleshooting-scenarios.md`. Screen layout is specified in `ui-design.md` §4.7.
+`docs/troubleshooting-scenarios.md`.
 
 ### 2.2 Future Features
 
@@ -206,8 +207,25 @@ Analysis its search term, selection, sort and match direction.
 ## 3. Non-Functional Requirements
 
 ### 3.1 Performance
-- Parse 1000-packet pcap within 3 seconds
-- Maintain 60fps UI
+
+Targets, in the sense of "if any of these stops holding, something regressed":
+
+| Measure | Target |
+|---------|--------|
+| DuckDB WASM ready | < 3s |
+| Parse a 1000-packet capture | < 2s |
+| Filter response | < 500ms |
+| SQL query response (ordinary query) | < 1s |
+| UI | 60fps |
+
+What buys them: the packet list is virtualized; each screen is a `React.lazy`
+chunk, so the upload screen loads only its own JS; DuckDB is a dynamic import and
+is not fetched until it is initialized; aggregations are `useMemo`d per capture and
+SQL filtering is debounced; and CIDR matching is answered from indexed bit-string
+columns (`prefix_bits` and friends) with `LIKE 'bits%'`.
+
+Parsing still runs on the main thread — moving it to a Web Worker is the obvious
+next lever and has not been needed.
 
 ### 3.2 Browser Support
 - Chrome/Edge (latest)
@@ -258,12 +276,48 @@ Pages cannot provide. Self-hosting adds roughly 74 MB to `dist/` (two `.wasm` fi
 a browser downloads only the one bundle it selects.
 
 ### 3.4 Accessibility
-- Keyboard navigation: the packet list is focusable and supports arrow-key selection,
-  scrolling the selection into view even when the row is outside the rendered window
-- Screen readers: the packet list is exposed as a grid, with `aria-rowcount` reporting
-  the total packet count rather than the virtualized slice, plus `aria-rowindex`,
+
+Implemented:
+
+- Keyboard: Tab moves focus; Enter presses a button, selects a row, or accepts an
+  autocomplete suggestion; arrow keys move through the packet list and the
+  suggestion list, scrolling a selection into view even when the row is outside the
+  rendered window; left/right nudge a pane divider that has focus
+- The packet list is exposed as a grid, with `aria-rowcount` reporting the total
+  packet count rather than the virtualized slice, plus `aria-rowindex`,
   `aria-selected` and `aria-activedescendant`
-- Not yet covered: the remaining screens have no dedicated ARIA work
+- Icon-only buttons (theme toggle, GitHub link) carry an `aria-label`, and the
+  timeline SVG has `role="img"` and a description
+- State is never carried by colour alone — the capability diff pairs every icon
+  with a text label
+
+Targets not yet met:
+
+- `aria-label` coverage on interactive elements outside the packet list
+- `scope` attributes on table headers
+- A live region for notifications
+- WCAG AA contrast: 4.5:1 for text, 3:1 for UI elements
+
+### 3.5 Error Handling
+
+Every failure has a place to appear and a way out. Nothing is allowed to fail
+silently, because a screen that shows an empty result for a broken reason is worse
+than one that shows an error.
+
+| Failure | Where it appears | Recovery |
+|---------|------------------|----------|
+| Unsupported file type or size | Message under the drop zone | Choose another file |
+| Partial parse failure | Warning banner under the header; parsing continues | What could be read is analysed |
+| DuckDB initialization failure | Notice on the SQL console, banner on load | Filtering falls back to in-memory; other screens unaffected |
+| SQL error | DuckDB's message in the results panel, not an empty result set | Fix the query |
+| Render exception | Error boundary screen | Reset, returning to the upload screen |
+
+Messages are written for the person reading them, not the code raising them:
+
+```
+✗ PCAP_MAGIC_MISMATCH: 0xd4c3b2a1 expected, got 0x00000000
+✓ This doesn't look like a valid pcap file. Please check the file format.
+```
 
 ---
 
@@ -295,10 +349,9 @@ bgpshark/
 ├── CLAUDE.md                    # Orientation for an agent starting a session
 ├── docs/
 │   ├── design.md                # This document
-│   ├── ui-design.md             # Screen specifications
 │   ├── troubleshooting-scenarios.md  # Thirteen BGP faults vs. what the tool says
-│   ├── design-duckdb-wasm.md    # Original DuckDB WASM migration proposal
-│   └── todo.md                  # Log of fixed issues
+│   ├── design-duckdb-wasm.md    # Why DuckDB, and how it diverged from the proposal
+│   └── images/
 ├── src/
 │   ├── App.tsx                  # Router and global drop overlay
 │   ├── main.tsx
@@ -570,8 +623,27 @@ interface BgpNotificationMessage {
 
 ## 5. UI Design
 
-Full screen specifications are in `ui-design.md`. This section only summarises the
-overall shape.
+The screens are the code's business; this section fixes only the shape they share
+and the vocabulary they are built from.
+
+### 5.0 Colour tokens
+
+Colours change between light and dark, so components never name a hex value —
+they name a role. Definitions live in `src/index.css` as CSS custom properties and
+are exposed under semantic Tailwind names in `tailwind.config.js`.
+
+| Role | Token | Tailwind |
+|------|-------|----------|
+| Furthest-back background | `--canvas` | `bg-canvas` |
+| Surface / sunken / raised | `--surface`, `--surface-sunken`, `--surface-raised` | `bg-surface` |
+| Rules | `--hair`, `--hair-strong` | `border-hair` |
+| Text, strongest to faintest | `--text-strong`, `--text-body`, `--text-muted`, `--text-dim` | `text-muted` |
+| Accent | `--accent`, `--accent-hover`, `--accent-fg`, `--accent-subtle` | `bg-accent` |
+| Severity | `--critical`, `--warning`, `--ok` (each with `-subtle`) | `text-critical` |
+| BGP message type | `--msg-open`, `--msg-update`, `--msg-notification`, `--msg-keepalive`, `--msg-route-refresh` | `text-bgp-open` |
+
+Light is the default, the OS preference switches to dark, and `data-theme` on
+`<html>` overrides both.
 
 ### 5.1 Layout
 
