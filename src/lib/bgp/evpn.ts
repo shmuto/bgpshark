@@ -266,6 +266,28 @@ export function formatEvpnRoute(route: EvpnRoute): string {
 }
 
 /**
+ * What identifies a MAC across the fabric rather than on one leaf.
+ *
+ * The Route Distinguisher is per-leaf, so keying a MAC/IP route by it makes a
+ * MAC that moved from one leaf to another two unrelated routes — which is
+ * exactly the event a route history exists to show as one. Dropping it is safe
+ * for type 2 only: the VNI is in the NLRI, so two bridge domains still tell
+ * apart. Every other route type keeps its RD, because for those the RD is the
+ * only thing naming the bridge domain or the VRF.
+ *
+ * The RD is not lost — it belongs on the event, where it says which leaf spoke.
+ */
+export function formatEvpnIdentity(route: EvpnRoute): string {
+  if (route.routeType !== EvpnRouteType.MAC_IP_ADVERTISEMENT) return formatEvpnRoute(route)
+
+  const parts: string[] = ['[2]']
+  if (route.macAddress) parts.push(route.macAddress)
+  if (route.ipAddress) parts.push(route.ipAddress)
+  if (route.label !== undefined) parts.push(`VNI ${route.label}`)
+  return parts.join(' ')
+}
+
+/**
  * The shortest thing that still identifies an EVPN route, for a table column.
  *
  * A MAC/IP route is remembered by its MAC and a multicast route by the VTEP it

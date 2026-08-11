@@ -262,3 +262,128 @@ describe('the rest of the row', () => {
     expect(aggregatePrefixStats([keepalive])).toEqual([])
   })
 })
+
+/**
+ * One EVPN MAC/IP route, as announced from `rd`. The MAC and VNI are what a
+ * fabric operator follows; the RD says which leaf is claiming it right now.
+ */
+function evpnMac(rd: string, mac = '00:0c:29:aa:bb:cc', vni = 10100): BgpPrefix {
+  return {
+    prefix: `[2] ${mac} RD ${rd} VNI ${vni}`,
+    length: 0,
+    evpn: {
+      routeType: 2,
+      routeTypeName: 'MAC/IP Advertisement',
+      rd,
+      macAddress: mac,
+      label: vni,
+    },
+  }
+}
+
+function evpnAnnounce(source: string, second: number, route: BgpPrefix): BgpPacket {
+  return update(source, second, {
+    pathAttributes: [
+      attribute({
+        type: 'MP_REACH_NLRI',
+        afi: 25,
+        afiName: 'L2VPN',
+        safi: 70,
+        safiName: 'EVPN',
+        nextHop: source,
+        nlri: [route],
+      }),
+    ],
+  })
+}
+
+function evpnWithdraw(source: string, second: number, route: BgpPrefix): BgpPacket {
+  return update(source, second, {
+    pathAttributes: [
+      attribute({
+        type: 'MP_UNREACH_NLRI',
+        afi: 25,
+        afiName: 'L2VPN',
+        safi: 70,
+        safiName: 'EVPN',
+        withdrawnRoutes: [route],
+      }),
+    ],
+  })
+}
+
+describe('EVPN routes on the route history', () => {
+  test('a MAC that moves between leaves is one route, not two', () => {
+    // The Route Distinguisher changes on a move and the MAC does not. Keying by
+    // the RD would file the withdrawal and the re-announcement as unrelated
+    // routes, which is the one event this screen exists to show as a sequence.
+    const stat = only(
+      aggregatePrefixStats([
+        evpnAnnounce('10.0.0.2', 1, evpnMac('10.0.0.2:100')),
+        evpnWithdraw('10.0.0.2', 60, evpnMac('10.0.0.2:100')),
+        evpnAnnounce('10.0.0.1', 62, evpnMac('10.0.0.1:100')),
+      ])
+    )
+
+    expect(stat.key).toBe('[2] 00:0c:29:aa:bb:cc VNI 10100')
+    expect(stat.announced).toBe(2)
+    expect(stat.withdrawn).toBe(1)
+    expect(stat.history).toHaveLength(3)
+  })
+
+  test('the RD is kept on each event, so the move is still readable', () => {
+    const stat = only(
+      aggregatePrefixStats([
+        evpnAnnounce('10.0.0.2', 1, evpnMac('10.0.0.2:100')),
+        evpnAnnounce('10.0.0.1', 62, evpnMac('10.0.0.1:100')),
+      ])
+    )
+
+    expect(stat.history.map((event) => event.rd)).toEqual(['10.0.0.2:100', '10.0.0.1:100'])
+  })
+
+  test('the same MAC in a different VNI is a different route', () => {
+    // Dropping the RD is only safe because the VNI stays in the key.
+    const stats = aggregatePrefixStats([
+      evpnAnnounce('10.0.0.2', 1, evpnMac('10.0.0.2:100', '00:0c:29:aa:bb:cc', 10100)),
+      evpnAnnounce('10.0.0.2', 2, evpnMac('10.0.0.2:200', '00:0c:29:aa:bb:cc', 10200)),
+    ])
+
+    expect(stats).toHaveLength(2)
+  })
+
+  test('a route type whose bridge domain is only in the RD keeps it', () => {
+    // Inclusive Multicast carries no VNI, so two bridge domains on one leaf are
+    // told apart by the RD alone — dropping it would merge them.
+    const imet = (rd: string): BgpPrefix => ({
+      prefix: `[3] IMET 10.0.0.2 RD ${rd}`,
+      length: 0,
+      evpn: {
+        routeType: 3,
+        routeTypeName: 'Inclusive Multicast Ethernet Tag',
+        rd,
+        originatingRouterIp: '10.0.0.2',
+        ethernetTag: 0,
+      },
+    })
+
+    const stats = aggregatePrefixStats([
+      evpnAnnounce('10.0.0.2', 1, imet('10.0.0.2:100')),
+      evpnAnnounce('10.0.0.2', 1, imet('10.0.0.2:200')),
+    ])
+
+    expect(stats).toHaveLength(2)
+  })
+
+  test('a move shows as a flap, because the route did go away', () => {
+    const stat = only(
+      aggregatePrefixStats([
+        evpnAnnounce('10.0.0.2', 1, evpnMac('10.0.0.2:100')),
+        evpnWithdraw('10.0.0.2', 60, evpnMac('10.0.0.2:100')),
+        evpnAnnounce('10.0.0.1', 62, evpnMac('10.0.0.1:100')),
+      ])
+    )
+
+    expect(stat.flap).toBe(1)
+  })
+})
