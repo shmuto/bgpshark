@@ -9,6 +9,7 @@ import type {
   BgpUpdateMessage,
   ParsedPathAttribute,
 } from '../../../src/lib/bgp/types'
+import type { GenericPacket } from '../../../src/lib/pcap/types'
 
 function at(second: number): Date {
   return new Date(Date.UTC(2024, 0, 1, 0, 0, second))
@@ -302,5 +303,142 @@ describe('route-level alerts', () => {
 
     expect(byId(alerts, 'route-flap-')).toHaveLength(1)
     expect(byId(alerts, 'route-aspath-')).toHaveLength(0)
+  })
+})
+
+/**
+ * The two rules that fire on something *missing* from a capture.
+ *
+ * Every other rule in this file reacts to a message that arrived. These react
+ * to one that never did, which is how a fault at the far end shows up when the
+ * capture was taken on one router — and is why a session that never came up
+ * used to be summarised as "every session looks healthy".
+ */
+describe('sessions that never got going', () => {
+  function tcp(
+    src: string,
+    dst: string,
+    second: number,
+    flags: Partial<{ syn: boolean; ack: boolean; rst: boolean; fin: boolean; psh: boolean; urg: boolean }> = {}
+  ): GenericPacket {
+    return {
+      frameIndex: second,
+      timestamp: at(second),
+      capturedLength: 60,
+      originalLength: 60,
+      frameBytes: new Uint8Array(),
+      srcIp: src,
+      dstIp: dst,
+      protocol: 'TCP',
+      protocolNumber: 6,
+      srcPort: src === '10.0.0.2' ? 179 : 51000,
+      dstPort: src === '10.0.0.2' ? 51000 : 179,
+      tcpFlags: {
+        syn: false, ack: false, rst: false, fin: false, psh: false, urg: false,
+        ...flags,
+      },
+      payloadLength: 0,
+    }
+  }
+
+  /** SYN, SYN-ACK, ACK between A and B. */
+  function handshake(second: number): GenericPacket[] {
+    return [
+      tcp('10.0.0.1', '10.0.0.2', second, { syn: true }),
+      tcp('10.0.0.2', '10.0.0.1', second, { syn: true, ack: true }),
+      tcp('10.0.0.1', '10.0.0.2', second, { ack: true }),
+    ]
+  }
+
+  const open: BgpMessage = { type: 'OPEN' } as BgpMessage
+
+  test('a connection that is accepted and then answered with nothing is reported', () => {
+    const alerts = computeAlerts(
+      [packet('10.0.0.1', '10.0.0.2', 1, [open])],
+      handshake(0)
+    )
+
+    const alert = byId(alerts, 'no-reply-')[0]
+    expect(alert).toBeDefined()
+    expect(alert.severity).toBe('critical')
+    expect(alert.title).toContain('10.0.0.2')
+    // The point of the row is what it rules out, so the detail has to say that
+    // the handshake succeeded rather than only that BGP is missing.
+    expect(alert.detail).toContain('port 179')
+  })
+
+  test('repeated attempts are one row that counts them', () => {
+    const alerts = computeAlerts(
+      [
+        packet('10.0.0.1', '10.0.0.2', 1, [open]),
+        packet('10.0.0.1', '10.0.0.2', 60, [open]),
+      ],
+      [...handshake(0), ...handshake(59)]
+    )
+
+    const rows = byId(alerts, 'no-reply-')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].count).toBe(2)
+  })
+
+  test('a healthy session where both ends speak stays quiet', () => {
+    const alerts = computeAlerts(
+      [
+        packet('10.0.0.1', '10.0.0.2', 1, [open]),
+        packet('10.0.0.2', '10.0.0.1', 2, [open]),
+      ],
+      handshake(0)
+    )
+
+    expect(byId(alerts, 'no-reply-')).toHaveLength(0)
+    expect(byId(alerts, 'one-direction-')).toHaveLength(0)
+  })
+
+  test('a refused connection is not reported as an unanswered one', () => {
+    // SYN answered by RST: nothing was ever accepted, so this is S1's case and
+    // computeTransportAlerts owns it. Firing here as well would be a second,
+    // worse explanation of the same packets.
+    const alerts = computeAlerts(
+      [],
+      [
+        tcp('10.0.0.1', '10.0.0.2', 0, { syn: true }),
+        tcp('10.0.0.2', '10.0.0.1', 0, { rst: true, ack: true }),
+      ]
+    )
+
+    expect(byId(alerts, 'no-reply-')).toHaveLength(0)
+  })
+
+  test('a capture with one direction in it says so, and says why it might be', () => {
+    const alerts = computeAlerts(
+      [packet('10.0.0.1', '10.0.0.2', 1, [open])],
+      [tcp('10.0.0.1', '10.0.0.2', 0, { syn: true })]
+    )
+
+    const alert = byId(alerts, 'one-direction-')[0]
+    expect(alert).toBeDefined()
+    expect(alert.severity).toBe('critical')
+    // Both readings, because the file cannot tell them apart and one of them
+    // is an outage rather than a capture problem.
+    expect(alert.detail).toContain('not arriving')
+  })
+
+  test('one direction suppresses the no-reply row rather than stacking with it', () => {
+    const alerts = computeAlerts(
+      [packet('10.0.0.1', '10.0.0.2', 1, [open])],
+      [tcp('10.0.0.1', '10.0.0.2', 0, { syn: true })]
+    )
+
+    expect(byId(alerts, 'one-direction-')).toHaveLength(1)
+    expect(byId(alerts, 'no-reply-')).toHaveLength(0)
+  })
+
+  test('without TCP-level packets neither rule can fire', () => {
+    // The dashboard passes allPackets, but every other caller in the tests
+    // passes BGP alone; that must stay silent rather than guess.
+    const alerts = computeAlerts([packet('10.0.0.1', '10.0.0.2', 1, [open])])
+
+    expect(byId(alerts, 'one-direction-')).toHaveLength(0)
+    expect(byId(alerts, 'no-reply-')).toHaveLength(0)
   })
 })

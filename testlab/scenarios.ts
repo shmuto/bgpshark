@@ -701,10 +701,17 @@ const s13: ScenarioCase = {
  * TCP comes up — so it is not S1, where the SYN is refused outright. Both
  * directions are present — so it is not S12, where half the conversation is
  * missing. The peer completes the handshake and then contributes no BGP at
- * all: no OPEN, no NOTIFICATION, nothing. From this end that looks identical
- * whether the neighbor statement is missing, the peer is passive and waiting
- * for something it will not get, or MD5 is set on one side so the peer's stack
- * discards the OPEN before BGP ever sees it.
+ * all: no OPEN, no NOTIFICATION, nothing.
+ *
+ * Note what that rules *out*. Something accepted the connection on port 179,
+ * so the port is open, an ACL is not dropping the SYN, and MD5 does not
+ * disagree — a one-sided MD5 configuration fails at the handshake, not after
+ * it. The fault is therefore somewhere after TCP came up, which is a much
+ * smaller set: the peer's BGP unwilling to talk to this address, or the
+ * payload not surviving a path that carries the handshake fine. A middlebox
+ * that terminates TCP on the peer's behalf, a PMTU black hole that passes
+ * small segments and drops full-sized ones, and control-plane policing all
+ * look like this.
  *
  * What the capture *can* say is precise and worth saying: the connection
  * established, we sent an OPEN, and nothing came back before we gave up. That

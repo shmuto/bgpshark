@@ -27,12 +27,11 @@ block, and the rest of the file is still analysed — a warning is not a failure
 
 Two things worth knowing before you trust what you see:
 
-- **A capture with only one direction will look healthy.** Check that you have
-  traffic both ways before trusting anything. Two very different things produce a
-  one-sided file: a mirror or `tcpdump` filter that caught one leg, or the peer's
-  packets genuinely not arriving — a one-way link, an ACL applied in one
-  direction, MD5 set on one side. The second is an outage, not a capture problem,
-  and BGPShark currently reports neither.
+- **A capture with only one direction is flagged, but you decide which cause.**
+  The Dashboard says so as a critical alert. It cannot tell you *why*: either a
+  mirror or `tcpdump` filter caught one leg, or the peer's packets genuinely are
+  not arriving — a one-way link, an ACL applied in one direction. The second is
+  an outage rather than a capture problem, so check before you re-capture.
 - **TCP-level frames are hidden by default.** The packet list shows BGP only
   until you switch it to **All Packets**. A session killed by a firewall shows
   up as a `[R]` frame there and nowhere else.
@@ -59,12 +58,15 @@ the **Alerts** panel. Alerts are sorted worst-first and are one row per
 row that says forty, not forty rows.
 
 Alerts cover NOTIFICATIONs, sessions that flapped, bursts of withdrawn prefixes,
-routes that flapped, and routes whose AS_PATH changed. **View →** takes you to
-the packet where the story starts, with a filter already applied.
+routes that flapped, routes whose AS_PATH changed, and two cases where the
+problem is something *missing*: a session with only one direction in the capture,
+and a TCP connection that was accepted and then answered with no BGP at all.
+**View →** takes you to the packet where the story starts, with a filter already
+applied.
 
-"No issues detected" means every session in the capture stayed up. It does not
-mean nothing is wrong — a route leak, for instance, is invisible to it, because
-nothing about the sessions carrying it is unhealthy.
+"No issues detected" means every session in the capture came up and stayed up. It
+does not mean nothing is wrong — a route leak, for instance, is invisible to it,
+because nothing about the sessions carrying it is unhealthy.
 
 ### Messages
 
@@ -234,10 +236,13 @@ answered by RST means something is refusing the connection (an ACL, an MD5
 mismatch, or BGP not running), and SYNs with no answer at all means the traffic
 is not getting there.
 
-If TCP *does* come up and you see your own OPEN but no reply, the fault is at the
-far end: a missing neighbor statement, a peer left passive, or MD5 set on one
-side so your OPEN is discarded before BGP sees it. Nothing on the Dashboard says
-this yet — check the Messages list for OPENs from one address only.
+If TCP *does* come up and nothing comes back, the Dashboard says so: *"TCP
+connects but 10.0.0.2 sends no BGP"*. That is worth reading for what it rules
+out. Something accepted the connection on port 179, so the port is open, no ACL
+is dropping the SYN, and MD5 agrees — a one-sided MD5 fails the handshake rather
+than surviving it. The fault is after TCP came up: the peer's BGP not willing to
+talk to your address, or the payload not surviving a path that carries the
+handshake fine — a TCP middlebox, a PMTU black hole, control-plane policing.
 
 **The session is up but a route is missing.** Search for the prefix on the Routes
 screen. If it is not there, it was never announced on this session. If it is,
@@ -264,8 +269,8 @@ both halves. The Routes screen lists the MAC as a route with its own history.
 
 Worth knowing, so you do not read absence as evidence:
 
-- **Whether your capture is complete.** A one-sided capture is reported as a
-  healthy session.
+- **Which of two causes made a session one-sided.** It tells you one direction
+  is missing; whether that is your capture or the network is yours to work out.
 - **Why a session dropped without a NOTIFICATION.** The TCP reset is visible
   under **All Packets**, but nothing points you there.
 - **What your router decided.** BGPShark reads what crossed the wire. Which path

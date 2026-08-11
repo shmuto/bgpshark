@@ -221,8 +221,156 @@ function computeRouteAlerts(stats: PrefixStats[]): DashboardAlert[] {
   return alerts
 }
 
-export function computeAlerts(packets: BgpPacket[]): DashboardAlert[] {
+/**
+ * What the two ends of one TCP peering contributed, which is all the
+ * establishment rules below need to know.
+ */
+interface PairFacts {
+  ipA: string
+  ipB: string
+  /** Distinct `src>dst` strings seen at the TCP layer. One means half a story. */
+  directions: Set<string>
+  /** SYN-ACKs, i.e. times the far end accepted a connection on port 179. */
+  accepted: number
+  /** Addresses that sent at least one BGP message. */
+  bgpSenders: Set<string>
+  /** Index into the BGP packet array, for the "View →" link. */
+  firstBgpIndex?: number
+  firstSeen: Date | null
+}
+
+function collectPairFacts(
+  packets: BgpPacket[],
+  allPackets: GenericPacket[]
+): Map<string, PairFacts> {
+  const pairs = new Map<string, PairFacts>()
+
+  const factsFor = (src: string, dst: string): PairFacts => {
+    const key = sortedPairKey(src, dst)
+    let facts = pairs.get(key)
+    if (!facts) {
+      const [ipA, ipB] = key.split('|')
+      facts = {
+        ipA,
+        ipB,
+        directions: new Set(),
+        accepted: 0,
+        bgpSenders: new Set(),
+        firstSeen: null,
+      }
+      pairs.set(key, facts)
+    }
+    return facts
+  }
+
+  for (const packet of allPackets) {
+    if (packet.protocol !== 'TCP') continue
+    if (packet.srcPort !== 179 && packet.dstPort !== 179) continue
+
+    const facts = factsFor(packet.srcIp, packet.dstIp)
+    facts.directions.add(`${packet.srcIp}>${packet.dstIp}`)
+    // A SYN-ACK is the far end saying "something is listening here". It is the
+    // fact that separates "nothing answers" from "answered, then said nothing".
+    if (packet.tcpFlags?.syn && packet.tcpFlags.ack) facts.accepted++
+    if (!facts.firstSeen || packet.timestamp < facts.firstSeen) facts.firstSeen = packet.timestamp
+  }
+
+  packets.forEach((packet, packetIndex) => {
+    if (packet.messages.length === 0) return
+    const facts = factsFor(packet.srcIp, packet.dstIp)
+    facts.bgpSenders.add(packet.srcIp)
+    if (facts.firstBgpIndex === undefined) facts.firstBgpIndex = packetIndex
+  })
+
+  return pairs
+}
+
+/**
+ * Sessions that never got going, which the rest of this file cannot see.
+ *
+ * Every other rule here fires on something *present* in the capture — a
+ * NOTIFICATION that arrived, a route that went away. These two fire on
+ * something absent, which is how a fault at the far end appears when the
+ * capture was taken on one router, and is why a capture of a session that
+ * never came up used to be summarised as "every session looks healthy".
+ */
+function computeSessionSetupAlerts(
+  packets: BgpPacket[],
+  allPackets: GenericPacket[]
+): DashboardAlert[] {
   const alerts: DashboardAlert[] = []
+
+  for (const facts of collectPairFacts(packets, allPackets).values()) {
+    const { ipA, ipB } = facts
+
+    // Only one direction. Either the capture caught one leg, or the peer's
+    // packets are not arriving — an outage, not a capture problem. Nothing in
+    // the file distinguishes them, so the row must not claim to.
+    if (facts.directions.size === 1) {
+      const [only] = facts.directions
+      const [from] = only.split('>')
+      alerts.push({
+        id: `one-direction-${sortedPairKey(ipA, ipB)}`,
+        severity: 'critical',
+        title: 'Only one direction of this session is in the capture',
+        detail:
+          `Every frame between ${ipA} and ${ipB} was sent by ${from}. Either the ` +
+          `capture caught one direction only, or traffic from the other end is ` +
+          `not arriving — a one-way link, a filter applied in one direction. ` +
+          `Anything read off this session is half a conversation until you know which.`,
+        timestamp: facts.firstSeen,
+        filter: sessionFilter(ipA, ipB),
+        pairKey: sortedPairKey(ipA, ipB),
+        packetIndex: facts.firstBgpIndex,
+      })
+      // The rule below would fire too, and would be the less useful of the
+      // two: with one direction missing, "the peer sent no BGP" is a
+      // restatement rather than a finding.
+      continue
+    }
+
+    // The connection came up and then one end said nothing. Worth stating
+    // because of what it rules out: something accepted on port 179, so the
+    // port is open, no ACL is dropping the SYN, and MD5 agrees — a one-sided
+    // MD5 fails the handshake rather than surviving it.
+    if (facts.accepted > 0 && facts.bgpSenders.size === 1) {
+      const [speaker] = facts.bgpSenders
+      const silent = speaker === ipA ? ipB : ipA
+      alerts.push({
+        id: `no-reply-${sortedPairKey(ipA, ipB)}`,
+        severity: 'critical',
+        title: `TCP connects but ${silent} sends no BGP`,
+        detail:
+          `${facts.accepted} connection(s) accepted on port 179 and ${speaker} sent ` +
+          `BGP, but ${silent} sent none — no OPEN, no NOTIFICATION. The port is ` +
+          `open and the handshake succeeded, so the fault is after TCP came up: ` +
+          `the peer's BGP not willing to talk to this address, or the payload not ` +
+          `surviving a path that carries the handshake (a TCP middlebox, a PMTU ` +
+          `black hole, control-plane policing).`,
+        timestamp: facts.firstSeen,
+        filter: sessionFilter(ipA, ipB),
+        pairKey: sortedPairKey(ipA, ipB),
+        packetIndex: facts.firstBgpIndex,
+        count: facts.accepted > 1 ? facts.accepted : undefined,
+      })
+    }
+  }
+
+  return alerts
+}
+
+/**
+ * `allPackets` is optional so the many tests that only care about BGP-level
+ * rules can keep passing packets alone; the establishment rules simply find
+ * nothing without it.
+ */
+export function computeAlerts(
+  packets: BgpPacket[],
+  allPackets: GenericPacket[] = []
+): DashboardAlert[] {
+  const alerts: DashboardAlert[] = []
+
+  alerts.push(...computeSessionSetupAlerts(packets, allPackets))
 
   // 1. NOTIFICATIONs, one row per repeated fault rather than per packet.
   alerts.push(...groupNotifications(packets))

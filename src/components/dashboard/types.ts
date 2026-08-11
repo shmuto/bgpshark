@@ -25,6 +25,12 @@ export interface DashboardAlert {
   count?: number
   /** First and last occurrence, set only when the row stands for more than one. */
   timeSpan?: { start: Date; end: Date }
+  /**
+   * The peer pair this row is about, as `sortedPairKey` writes it. Set only by
+   * the rules that judge a whole session rather than a message, so the
+   * neighbour table can mark the same pair without deriving the finding twice.
+   */
+  pairKey?: string
 }
 
 export interface NeighborRow {
@@ -36,6 +42,12 @@ export interface NeighborRow {
   total: number
   counts: MessageTypeCounts
   hasNotification: boolean
+  /**
+   * The session never got going — one direction only, or a connection accepted
+   * and never answered. Distinct from `hasNotification`, which is a session
+   * that came up and then failed.
+   */
+  neverEstablished?: boolean
   lastActivity: Date
 }
 

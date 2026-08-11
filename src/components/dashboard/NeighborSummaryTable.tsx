@@ -54,7 +54,9 @@ export function NeighborSummaryTable({ rows }: NeighborSummaryTableProps) {
                   <td className="px-4 py-2 text-right text-muted">{row.counts.UPDATE}</td>
                   <td className="px-4 py-2 text-right text-muted">{row.counts.NOTIFICATION}</td>
                   <td className="px-4 py-2">
-                    {row.hasNotification ? (
+                    {row.neverEstablished ? (
+                      <span className="text-critical">⚠ Never up</span>
+                    ) : row.hasNotification ? (
                       <span className="text-critical">⚠ Alert</span>
                     ) : (
                       <span className="text-ok">✓ OK</span>

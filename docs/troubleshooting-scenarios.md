@@ -46,9 +46,8 @@ That constraint matters less than it sounds, and in one place more:
   reason that scenario is answerable at all.
 - **What you cannot see is whether your packets arrived.** The capture proves
   what left the interface, never what the peer received. So a fault at the far
-  end shows up here only as *absence* — and absence is the thing this tool is
-  currently worst at reporting. S12 and S14 are both that shape, and both are
-  currently called healthy.
+  end shows up here only as *absence*. S12 and S14 are both that shape, and
+  both are now reported — see the two rules in `computeSessionSetupAlerts`.
 
 ## The scenarios
 
@@ -212,12 +211,15 @@ unidirectional link, an ACL applied one way, or MD5 configured on one side. The
 second is an outage, not a capture problem, which is why the right message names
 both possibilities rather than telling the operator their capture is broken.
 
-**✘** The dashboard reports *"No issues detected — every session looks healthy"*
-and the neighbor table marks the pair `✓ OK`. Only frames from 10.0.0.1 are
-present — even the SYN-ACK is missing — and the NOTIFICATION 6/2 that ended the
-session was sent by the other end. Every conclusion drawn from this file is
-unsafe until that is said out loud, which is what makes it the gap with the most
-cost attached.
+**✔** The dashboard leads with *"Only one direction of this session is in the
+capture — every frame between 10.0.0.1 and 10.0.0.2 was sent by 10.0.0.1"*, and
+names both readings rather than picking one. The neighbor table marks the pair
+`⚠ Never up`.
+
+The row deliberately does not say "your capture is incomplete", because half the
+time that would be wrong: the peer's packets may not be arriving at all. What it
+does say is that anything read off this session is half a conversation until you
+know which.
 
 ### S13 — `s13-evpn-mac-move` · A host in the fabric unreachable in bursts
 
@@ -244,15 +246,17 @@ identical from this end whether the neighbor statement is missing, the peer is
 passive and waiting for something it will not get, or MD5 is set on one side so
 the peer's stack discards the OPEN before BGP ever sees it.
 
-**✘** The dashboard reports *"No issues detected — every session looks healthy"*
-and marks the pair `✓ OK`, for a session that never reached Established at all.
-Three OPENs, no UPDATEs, no NOTIFICATIONs, three abandoned connections — and the
-summary says healthy. The flap rule does not fire either, since three OPENs is
-below its threshold of four; had it fired it would have reported roughly one
-establishment, which is also untrue.
+**✔** The dashboard reports *"TCP connects but 10.0.0.2 sends no BGP ×3"*, and
+the detail says what the successful handshake rules out: the port is open, no ACL
+is dropping the SYN, and MD5 agrees — a one-sided MD5 fails the handshake rather
+than surviving it. What is left is the peer's BGP unwilling to talk to this
+address, or the payload not surviving a path that carries the handshake fine (a
+TCP middlebox, a PMTU black hole, control-plane policing). The neighbor table
+marks the pair `⚠ Never up`.
 
-Everything needed is in the capture: OPENs from one side only, no OPEN in reply,
-and a connection abandoned after the hold time. Nothing reads it.
+The rule requires a SYN-ACK, so S1 — where the SYN is refused — is left to the
+transport alert that already explains it, rather than getting a second and worse
+explanation of the same packets.
 
 ## What the scenarios say about the tool
 
@@ -266,20 +270,21 @@ that disagreed. Nothing fires on a reply that never came, a direction that is no
 there, or a session that never reached Established — and from a capture taken on
 one router, absence is exactly how a fault at the far end appears.
 
-Three gaps, in the order the scenarios argue for them:
+The first of those gaps is now closed. `computeSessionSetupAlerts` reports a
+session with one direction in it and a connection that was accepted and never
+answered, both as critical rows, and the neighbour table marks the pair
+`⚠ Never up` rather than `✓ OK`. Run against all fourteen captures plus the
+sample and the ContainerLab capture, the two rules fire on S12 and S14 and stay
+silent everywhere else.
 
-1. **A session that never came up is reported as healthy** (S14, S12). Neither
-   capture contains a single thing that is wrong; both are missing something that
-   should be there. Detectable from structure alone — traffic in one direction
-   only, OPENs with no reply, a handshake with no SYN-ACK — and the message has
-   to name both readings, since "your capture is incomplete" and "your peer is
-   not answering" look identical here and only one of them is a capture problem.
-2. **A post-establishment RST or FIN is never surfaced** (S11). The data is
+What remains:
+
+1. **A post-establishment RST or FIN is never surfaced** (S11). The data is
    already parsed into `GenericPacket.tcpFlags`; only the gate on
    `computeTransportAlerts` keeps it off the dashboard. Both teardown shapes are
    in the capture, and `s3-holdtimer-flap` holds the RSTs any new rule must stay
    quiet about.
-3. **Best-path attributes stop at AS_PATH and Next Hop** (S4). MED, LOCAL_PREF
+2. **Best-path attributes stop at AS_PATH and Next Hop** (S4). MED, LOCAL_PREF
    and communities reach DuckDB but not the route history or the filter
    language, which makes the most common "why this path" question SQL-only.
 

@@ -749,14 +749,16 @@ analysis layout, though files can be dropped anywhere in the app at any time.
 - EVPN route decoding, and the filter fields that address it
 - Exporting the filtered packet list back to pcap
 - Capture Builder, and `testlab/scenarios.ts` on the same library
+- Establishment alerts: a session with one direction in the capture, and a TCP
+  connection accepted and then answered with no BGP — the first rules that fire
+  on something absent rather than something present
 
 ### Next
 
 - Multiple captures loaded side by side
-- The gaps in `docs/troubleshooting-scenarios.md`: a one-sided capture reported as
-  healthy, a post-establishment TCP reset that never reaches the dashboard, and
-  best-path attributes (MED, LOCAL_PREF, communities) missing from the route history
-  and the filter language
+- The gaps in `docs/troubleshooting-scenarios.md`: a post-establishment TCP reset
+  or FIN that never reaches the dashboard, and best-path attributes (MED,
+  LOCAL_PREF, communities) missing from the route history and the filter language
 
 ---
 

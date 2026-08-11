@@ -114,10 +114,19 @@ export function DashboardPage() {
   const summary = useMemo(() => computeSummary(packets), [packets])
   const alerts = useMemo(
     () =>
-      packets.length > 0 ? computeAlerts(packets) : computeTransportAlerts(allPackets),
+      packets.length > 0 ? computeAlerts(packets, allPackets) : computeTransportAlerts(allPackets),
     [packets, allPackets]
   )
-  const neighborRows = useMemo(() => computeNeighborRows(packets), [packets])
+  const neighborRows = useMemo(() => {
+    const rows = computeNeighborRows(packets)
+    // A session that never came up must not be listed as OK next to a critical
+    // alert saying it never came up. The alerts already decided this; reading
+    // their pair keys keeps one judgement rather than two that can disagree.
+    const troubled = new Set(alerts.map((alert) => alert.pairKey).filter(Boolean))
+    return rows.map((row) =>
+      troubled.has(row.pairKey) ? { ...row, neverEstablished: true } : row
+    )
+  }, [packets, alerts])
   const timeline = useMemo(() => computeTimeline(packets), [packets])
 
   const handleSummarySelect = (filter: string | null) => {
