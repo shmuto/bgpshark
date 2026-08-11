@@ -141,6 +141,11 @@ looking for pcaps to download.
   both, and the e2e suite only covers the SQL path when DuckDB is up.
 - **`tsconfig.json` includes `src`, `tests` and `testlab`**, so `bun run build`
   typechecks scripts too.
+- **Dashboard alert rules are specified, not just implemented.** `design.md`
+  §2.1.14 lists every rule with what it fires on *and* what it must stay quiet
+  about. Adding a rule means adding a row and naming the capture that would
+  make it a false positive — the corpus in `testlab/scenarios.ts` usually
+  already holds one.
 - **Prose ships as Markdown, converted at build time.** The user manual is
   `src/pages/manual/manual.md`; `markdownPlugin` in `vite.config.ts` turns an
   imported `.md` into a string of HTML, so `marked` is a devDependency and no

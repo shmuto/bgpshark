@@ -115,9 +115,9 @@ NLRI and withdrawn routes are expanded per prefix, including IPv6 prefixes carri
 in MP_REACH_NLRI / MP_UNREACH_NLRI.
 
 #### 2.1.8 Analysis Views
-- **Dashboard** (`/dashboard`): summary counts, severity-sorted alerts, neighbor table
-  and a message timeline. Aggregations are computed in memory, so the screen works
-  even when DuckDB failed to initialize
+- **Dashboard** (`/dashboard`): summary counts, severity-sorted alerts (§2.1.14),
+  neighbor table and a message timeline. Aggregations are computed in memory, so the
+  screen works even when DuckDB failed to initialize
 - **Message Explorer** (`/messages`): packet list, detail view, hex dump, filtering
 - **Neighbor Analysis** (`/neighbors`): sessions grouped by Router ID, capability and
   session-event summaries, plus the capability diff (§2.1.10)
@@ -204,6 +204,71 @@ Markdown parser is shipped. The plugin also gives every `h2`/`h3` an id, which i
 what lets the page build its table of contents by reading its own output back —
 a section cannot be added to the prose and forgotten in the contents — and what
 makes `/manual#filters` land on the right section.
+
+#### 2.1.14 Dashboard alert rules
+
+The alert panel is the first thing read on a capture, so what fires and what
+stays quiet is a specification rather than an implementation detail. All of it
+lives in `src/components/dashboard/alerts.ts` and is unit-tested in
+`tests/lib/dashboard/alerts.test.ts`.
+
+**One row per problem, not per packet.** A peer that retried a rejected OPEN
+forty times is one row saying forty. Rows are sorted by severity, then by the
+number of occurrences they stand for, then by recency — counting before recency
+so a peer that failed forty times outranks one that failed once a second later.
+
+**Two kinds of rule.** Most fire on something *present* in the capture: a
+message that arrived, a route that went away. Two fire on something *absent*,
+which is how a fault at the far end appears when the capture was taken on one
+router (see `troubleshooting-scenarios.md`, "Where the capture was taken") and
+is why captures of outright broken sessions were once summarised as healthy.
+
+| Rule | Severity | Fires when | Must stay quiet about |
+|------|----------|-----------|-----------------------|
+| NOTIFICATION | critical | Any NOTIFICATION; grouped per sender → receiver, code and subcode | — |
+| Session flapping | warning | ≥ 4 OPENs between one pair | A single establishment, and a re-establishment after a clean Cease |
+| Withdrawn burst | warning | ≥ 10 prefixes withdrawn inside 10s | Steady-state withdrawals spread over a long capture |
+| Route flapping | warning | A prefix withdrawn at least once, per announcing peer; worst 5 plus a summary row | A widely announced route that never went away |
+| AS_PATH changed | warning | More than one distinct AS_PATH for a prefix; worst 5 plus a summary row | Prepends that never varied |
+| One direction | critical | A peering with TCP frames in only one direction | Anything with both directions present |
+| Accepted, no BGP | critical | A SYN-ACK was seen and only one end sent BGP | A refused connection — `computeTransportAlerts` owns that, and a second explanation of the same packets is a worse one |
+| *(planned)* Silent teardown | critical | A connection that carried BGP ends in RST or FIN with no NOTIFICATION on it | Every teardown that a NOTIFICATION already explains |
+
+`computeTransportAlerts` is separate and runs only when a capture holds no BGP
+at all: with nothing above TCP to report, the interesting question is what
+answers the SYN.
+
+##### The planned rule, in detail
+
+S11 in `troubleshooting-scenarios.md` is a session that drops twice with nothing
+at the BGP layer recording it. The evidence is in the capture — an `[AR]` and a
+`[F]` under **All Packets** — but the dashboard says only "Session flapping
+detected" and marks the pair `✓ OK`.
+
+Three decisions the implementation has to get right, each of which the corpus
+already argues for:
+
+1. **Both shapes count.** A firewall that times out a session closes it with FIN
+   as often as it resets it. A BGP speaker that meant to go away would have sent
+   Cease first, so a FIN on its own is the same missing explanation as an RST.
+   `s11-silent-teardown` holds one of each precisely so a rule that only looked
+   for RST fails a test rather than shipping.
+2. **Scope is a connection, not a peer pair.** Every other rule here keys on the
+   pair, which cannot work: one pair holds several connections that ended
+   differently. `s11-silent-teardown` is `SYN RST · SYN FIN FIN · SYN`, and
+   `s3-holdtimer-flap` is three connections that each ended in RST *after* a
+   NOTIFICATION explained it.
+3. **Connections are delimited by SYN, not by the four-tuple.** Both captures
+   above hold three connections and exactly one four-tuple, because the scenario
+   builder reuses the ephemeral port — and so do real captures, over a long
+   enough window. A new SYN starts a new connection; the teardown that ends a
+   segment belongs to that segment.
+
+Put together: split each peering's TCP frames at every SYN, and for each segment
+that carried BGP, fire when it ends in RST or FIN and no NOTIFICATION appears
+within it. `s3-holdtimer-flap` is the false positive to check against — it must
+stay silent — and `s11-silent-teardown` must produce two rows, or one row
+counting two.
 
 ### 2.2 Future Features
 
