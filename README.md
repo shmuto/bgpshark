@@ -347,3 +347,20 @@ outside the core engine — the JSON reader among them — is unavailable by
 construction. The loader inserts with plain `VALUES` for exactly that reason.
 `tests/e2e/offline.e2e.ts` holds the line, asserting that loading and querying a
 capture sends nothing off-origin.
+
+## Third-party licenses
+
+Making no third-party requests has a consequence that is easy to miss: the
+typefaces and the libraries are copied into the build and served from this
+origin, so the app *redistributes* them rather than linking to them. The SIL
+Open Font License and the MIT License both ask that the copyright notice and the
+licence text accompany a redistributed copy.
+
+They do. `src/pages/licenses/licenses.md` holds the notices and the full licence
+texts, and the app serves it at `/licenses` — linked from the start screen and
+from the foot of the manual. It is the same Markdown-at-build-time pipeline the
+manual uses, so the page ships in the bundle and reads with the network
+unplugged. `src/assets/fonts/NOTICE.md` points back at it for anyone who finds
+the WOFF2 files by browsing the source.
+
+Adding a bundled font or a runtime dependency means adding it to that page.

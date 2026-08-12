@@ -72,6 +72,18 @@ export function FileUploadPage() {
                   100% client-side - your data never leaves your browser
                 </FeatureItem>
               </ul>
+
+              {/* The one place every visitor passes through, which makes it the
+                  place attribution belongs. Nothing here is fetched from a CDN,
+                  so the fonts and libraries are redistributed by this app and
+                  their notices travel with it. */}
+              <p className="mt-8 text-xs text-dim">
+                Built on open source fonts and libraries —{' '}
+                <Link to="/licenses" className="underline underline-offset-2 hover:text-muted">
+                  licenses
+                </Link>
+                .
+              </p>
             </div>
           </div>
         </>

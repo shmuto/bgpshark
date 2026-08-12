@@ -1,0 +1,195 @@
+# Licenses
+
+BGPShark makes no third-party requests, and that promise is the reason this page
+exists. Nothing is pulled from a CDN at runtime: the typefaces and the libraries
+are copied into the build and served from this app's own origin, which means the
+app *redistributes* them rather than merely linking to them. Redistribution is
+what carries an obligation — the SIL Open Font License and the MIT License both
+require the copyright notice and the licence text to travel with the copy. This
+page is where they travel.
+
+It is part of the same bundle as the software it describes, so it stays readable
+offline, with the network unplugged, and under the production Content Security
+Policy — the same conditions the rest of the app is built for.
+
+## Fonts
+
+Four WOFF2 files ship with the app: two weights of each family, subset to Latin
+because everything this instrument displays is IP addresses, ASNs and protocol
+field names. The files are therefore conversions and subsets of the originals
+rather than the originals themselves.
+
+Both families are licensed under the SIL Open Font License, Version 1.1,
+reproduced in full below.
+
+### IBM Plex Sans
+
+Used for interface text. Weights 400 and 600.
+
+`Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"`
+
+Source: [github.com/IBM/plex](https://github.com/IBM/plex)
+
+### JetBrains Mono
+
+Used for addresses, prefixes, hex dumps and everything else that has to line up
+in a column. Weights 400 and 500.
+
+`Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)`
+
+Source:
+[github.com/JetBrains/JetBrainsMono](https://github.com/JetBrains/JetBrainsMono)
+
+### SIL Open Font License, Version 1.1
+
+```
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+```
+
+## Libraries
+
+The runtime dependencies are compiled into the JavaScript and WebAssembly the
+browser downloads, so they are redistributed the same way the fonts are. All
+three are under the MIT License, whose text follows the notices.
+
+### React and React DOM
+
+The user interface. Includes `scheduler`, which React depends on and which
+carries the same notice.
+
+`Copyright (c) Facebook, Inc. and its affiliates.`
+
+Source: [github.com/facebook/react](https://github.com/facebook/react)
+
+### React Router
+
+Routing between screens.
+
+`Copyright (c) React Training LLC 2015-2019`
+`Copyright (c) Remix Software Inc. 2020-2021`
+`Copyright (c) Shopify Inc. 2022-2023`
+
+Source: [github.com/remix-run/react-router](https://github.com/remix-run/react-router)
+
+### DuckDB-Wasm
+
+The database behind the SQL console. Its `.wasm` module and its worker are
+served from this origin rather than from a CDN, which is what lets the SQL
+console work offline.
+
+`Copyright 2018-2025 Stichting DuckDB Foundation`
+
+Source:
+[github.com/duckdb/duckdb-wasm](https://github.com/duckdb/duckdb-wasm)
+
+### The MIT License
+
+```
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## BGPShark itself
+
+The application's own source is at
+[github.com/shmuto/bgpshark](https://github.com/shmuto/bgpshark).

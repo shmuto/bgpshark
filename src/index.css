@@ -11,6 +11,12 @@
 
    IBM Plex Sans for interface chrome, JetBrains Mono for data. Both were drawn
    for technical contexts, which is what this instrument displays.
+
+   Both are under the SIL Open Font License 1.1, which asks that the copyright
+   notice and licence travel with a redistributed copy — and serving them from
+   this origin is redistribution. The notices are in assets/fonts/NOTICE.md for
+   anyone reading the source, and the app serves them at /licenses for everyone
+   else. Adding a font here means adding it there.
 --------------------------------------------------------------------------- */
 
 @font-face {

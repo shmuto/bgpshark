@@ -9,7 +9,7 @@
  * who has just arrived, has nothing loaded, and wants to know what this is.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import manualHtml from './manual/manual.md'
 
 interface Heading {
@@ -133,13 +133,27 @@ export function ManualPage() {
           </ul>
         </nav>
 
-        <article
-          ref={contentRef}
-          className="manual-prose min-w-0 flex-1"
-          // The HTML is this repository's own Markdown, converted at build time.
-          // See the note on `markdownPlugin` in vite.config.ts.
-          dangerouslySetInnerHTML={{ __html: manualHtml }}
-        />
+        <div className="min-w-0 flex-1">
+          <article
+            ref={contentRef}
+            className="manual-prose"
+            // The HTML is this repository's own Markdown, converted at build time.
+            // See the note on `markdownPlugin` in vite.config.ts.
+            dangerouslySetInnerHTML={{ __html: manualHtml }}
+          />
+
+          {/* The typefaces and libraries are redistributed with the app, so
+              their notices have to be reachable. Rendered here rather than
+              written into the Markdown because a cross-route link inside the
+              injected HTML would reload the whole app instead of routing. */}
+          <footer className="mt-12 border-t border-hair pt-4 text-sm text-muted">
+            BGPShark ships fonts and libraries written by other people.{' '}
+            <Link to="/licenses" className="text-accent underline underline-offset-2">
+              Their licenses
+            </Link>
+            .
+          </footer>
+        </div>
       </div>
     </div>
   )
