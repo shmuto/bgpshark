@@ -27,6 +27,23 @@ export async function loadCapture(page: Page, name: string, bytes: Buffer) {
   })
 }
 
+/**
+ * Clicks through to the Dashboard and waits until it has actually rendered.
+ *
+ * Clicking a header link and reading `innerText` on the next line is a race:
+ * the assertion can run against the screen you just left. It fails loudly on a
+ * positive assertion and — much worse — passes silently on a negative one, so
+ * "the dashboard does not say X" would be satisfied by a dashboard that had not
+ * appeared yet. The Alerts panel is unconditional on this screen, including
+ * when it has nothing to report, so waiting for its heading is the cheapest
+ * proof that the render happened.
+ */
+export async function goToDashboard(page: Page) {
+  await page.getByRole('link', { name: 'Dashboard', exact: true }).click()
+  await page.waitForURL('**/dashboard')
+  await expect(page.getByRole('heading', { name: /^Alerts/ })).toBeVisible()
+}
+
 /** The "Showing N of M packets" counter, as a number. */
 export async function shownCount(page: Page): Promise<number> {
   const text = await page.getByText(/Showing \d+ of \d+ packets/).first().textContent()
