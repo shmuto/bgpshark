@@ -133,13 +133,30 @@ export function ManualPage() {
           </ul>
         </nav>
 
-        <article
-          ref={contentRef}
-          className="manual-prose min-w-0 flex-1"
-          // The HTML is this repository's own Markdown, converted at build time.
-          // See the note on `markdownPlugin` in vite.config.ts.
-          dangerouslySetInnerHTML={{ __html: manualHtml }}
-        />
+        <div className="min-w-0 flex-1">
+          <article
+            ref={contentRef}
+            className="manual-prose"
+            // The HTML is this repository's own Markdown, converted at build time.
+            // See the note on `markdownPlugin` in vite.config.ts.
+            dangerouslySetInnerHTML={{ __html: manualHtml }}
+          />
+
+          {/* The typefaces and libraries are redistributed with the app, so
+              their notices have to be reachable. The file is in public/ rather
+              than a screen of its own, and the base path comes from Vite so the
+              link survives the app being served from somewhere else. */}
+          <footer className="mt-12 border-t border-hair pt-4 text-sm text-muted">
+            BGPShark ships fonts and libraries written by other people.{' '}
+            <a
+              href={`${import.meta.env.BASE_URL}THIRD-PARTY-LICENSES.txt`}
+              className="text-accent underline underline-offset-2"
+            >
+              Their licenses
+            </a>
+            .
+          </footer>
+        </div>
       </div>
     </div>
   )
