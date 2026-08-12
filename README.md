@@ -349,3 +349,20 @@ outside the core engine — the JSON reader among them — is unavailable by
 construction. The loader inserts with plain `VALUES` for exactly that reason.
 `tests/e2e/offline.e2e.ts` holds the line, asserting that loading and querying a
 capture sends nothing off-origin.
+
+## Third-party licenses
+
+Making no third-party requests has a consequence that is easy to miss: the
+typefaces and the libraries are copied into the build and served from this
+origin, so the app *redistributes* them rather than linking to them. The SIL
+Open Font License and the MIT License both ask that the copyright notice and the
+licence text accompany a redistributed copy.
+
+They do. `public/THIRD-PARTY-LICENSES.txt` holds the notices and the full licence
+texts. It is in `public/` rather than at the repository root on purpose: that
+directory is copied verbatim into the build, so one file covers both audiences —
+anyone reading the source, and anyone whose browser has just downloaded the
+fonts from the deployed site, where a root-level file would never be served. The
+start screen and the foot of the manual link to it.
+
+Adding a bundled font or a runtime dependency means adding it to that file.
