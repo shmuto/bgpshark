@@ -204,7 +204,9 @@ is also no filter field for TCP flags.
 
 Note that `s3-holdtimer-flap` also contains RSTs — after its NOTIFICATIONs. Any
 alert added here has to stay quiet about those, or it will fire on every healthy
-teardown in the corpus.
+teardown in the corpus. `design.md` §2.1.14 specifies the rule this scenario is
+waiting for, including why it has to be scoped to a connection rather than a
+peer, and why connections have to be delimited by SYN.
 
 ### S12 — `s12-one-direction` · A capture that shows a session the router calls down
 
