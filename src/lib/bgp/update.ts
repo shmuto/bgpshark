@@ -178,10 +178,20 @@ function formatIpv4Prefix(octets: Uint8Array, _prefixLength: number): string {
   return `${fullOctets[0]}.${fullOctets[1]}.${fullOctets[2]}.${fullOctets[3]}`
 }
 
-function parsePathAttribute(
+/**
+ * Exported because a NOTIFICATION's data field can be an attribute too: RFC
+ * 4271 §6.3 says an UPDATE Message Error carries the one that caused it, and
+ * decoding that by any other reader would be a second implementation of this.
+ *
+ * `decoding` defaults because a NOTIFICATION's copy of an attribute arrives
+ * without the session context an UPDATE has — and the attributes that context
+ * governs, AS_PATH width and ADD-PATH identifiers, are not what a bad-attribute
+ * error is usually about.
+ */
+export function parsePathAttribute(
   reader: BinaryReader,
   warnings: string[],
-  decoding: UpdateDecoding
+  decoding: UpdateDecoding = DEFAULT_DECODING
 ): BgpPathAttribute {
   const flagsByte = reader.readUint8()
   const flags = {

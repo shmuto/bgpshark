@@ -1,6 +1,7 @@
 export { parseBgpFromPackets } from './parser'
 export { parseOpenMessage } from './open'
 export { parseNotificationMessage } from './notification'
+export { decodeNotificationData, type NotificationData } from './notification-data'
 export { parseUpdateMessage } from './update'
 export { getErrorInfo, BGP_ERROR_CODES } from './errors'
 export {
