@@ -35,9 +35,6 @@ const BuilderPage = lazy(() =>
 const ManualPage = lazy(() =>
   import('./pages/ManualPage').then((m) => ({ default: m.ManualPage }))
 )
-const LicensesPage = lazy(() =>
-  import('./pages/LicensesPage').then((m) => ({ default: m.LicensesPage }))
-)
 
 /**
  * Gate for the screens that need a capture.
@@ -110,10 +107,6 @@ function AppContent() {
           {/* Outside RequireCapture on purpose: the reader most likely to want
               it is the one who has not loaded anything yet. */}
           <Route path="/manual" element={<ManualPage />} />
-          {/* Attribution for the bundled fonts and libraries. Outside
-              RequireCapture too: a licence notice you can only reach by loading
-              a capture first is not a notice. */}
-          <Route path="/licenses" element={<LicensesPage />} />
 
           {/* Protected routes - wait for the restore, then redirect if there is no file */}
           <Route

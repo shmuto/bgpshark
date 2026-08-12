@@ -79,9 +79,12 @@ export function FileUploadPage() {
                   their notices travel with it. */}
               <p className="mt-8 text-xs text-dim">
                 Built on open source fonts and libraries —{' '}
-                <Link to="/licenses" className="underline underline-offset-2 hover:text-muted">
+                <a
+                  href={`${import.meta.env.BASE_URL}THIRD-PARTY-LICENSES.txt`}
+                  className="underline underline-offset-2 hover:text-muted"
+                >
                   licenses
-                </Link>
+                </a>
                 .
               </p>
             </div>

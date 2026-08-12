@@ -1,48 +1,42 @@
-# Licenses
+BGPShark - third-party licenses
+===============================
 
-BGPShark makes no third-party requests, and that promise is the reason this page
-exists. Nothing is pulled from a CDN at runtime: the typefaces and the libraries
-are copied into the build and served from this app's own origin, which means the
-app *redistributes* them rather than merely linking to them. Redistribution is
-what carries an obligation — the SIL Open Font License and the MIT License both
-require the copyright notice and the licence text to travel with the copy. This
-page is where they travel.
+BGPShark makes no third-party requests. Nothing is pulled from a CDN at
+runtime: the typefaces and the libraries are copied into the build and served
+from the app's own origin, which means the app redistributes them rather than
+merely linking to them. Redistribution is what carries an obligation - the SIL
+Open Font License and the MIT License both require the copyright notice and the
+license text to travel with the copy.
 
-It is part of the same bundle as the software it describes, so it stays readable
-offline, with the network unplugged, and under the production Content Security
-Policy — the same conditions the rest of the app is built for.
+This file is that copy. It lives in public/, so it is a plain file in the
+repository and is also served with the built site at
+/bgpshark/THIRD-PARTY-LICENSES.txt.
 
-## Fonts
+Adding a bundled font or a runtime dependency means adding it here.
+
+
+FONTS
+=====
 
 Four WOFF2 files ship with the app: two weights of each family, subset to Latin
 because everything this instrument displays is IP addresses, ASNs and protocol
 field names. The files are therefore conversions and subsets of the originals
-rather than the originals themselves.
+rather than the originals themselves. Both families are licensed under the SIL
+Open Font License, Version 1.1, reproduced in full below.
 
-Both families are licensed under the SIL Open Font License, Version 1.1,
-reproduced in full below.
+IBM Plex Sans - interface text, weights 400 and 600.
+https://github.com/IBM/plex
 
-### IBM Plex Sans
+    Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
 
-Used for interface text. Weights 400 and 600.
+JetBrains Mono - addresses, prefixes, hex dumps and anything else that has to
+line up in a column. Weights 400 and 500.
+https://github.com/JetBrains/JetBrainsMono
 
-`Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"`
+    Copyright 2020 The JetBrains Mono Project Authors
+    (https://github.com/JetBrains/JetBrainsMono)
 
-Source: [github.com/IBM/plex](https://github.com/IBM/plex)
 
-### JetBrains Mono
-
-Used for addresses, prefixes, hex dumps and everything else that has to line up
-in a column. Weights 400 and 500.
-
-`Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)`
-
-Source:
-[github.com/JetBrains/JetBrainsMono](https://github.com/JetBrains/JetBrainsMono)
-
-### SIL Open Font License, Version 1.1
-
-```
 -----------------------------------------------------------
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
 -----------------------------------------------------------
@@ -129,47 +123,40 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
-```
 
-## Libraries
+
+LIBRARIES
+=========
 
 The runtime dependencies are compiled into the JavaScript and WebAssembly the
 browser downloads, so they are redistributed the same way the fonts are. All
 three are under the MIT License, whose text follows the notices.
 
-### React and React DOM
+React and React DOM - the user interface. Includes "scheduler", which React
+depends on and which carries the same notice.
+https://github.com/facebook/react
 
-The user interface. Includes `scheduler`, which React depends on and which
-carries the same notice.
+    Copyright (c) Facebook, Inc. and its affiliates.
 
-`Copyright (c) Facebook, Inc. and its affiliates.`
+React Router - routing between screens.
+https://github.com/remix-run/react-router
 
-Source: [github.com/facebook/react](https://github.com/facebook/react)
+    Copyright (c) React Training LLC 2015-2019
+    Copyright (c) Remix Software Inc. 2020-2021
+    Copyright (c) Shopify Inc. 2022-2023
 
-### React Router
+DuckDB-Wasm - the database behind the SQL console. Its .wasm module and its
+worker are served from this origin rather than from a CDN, which is what lets
+the SQL console work offline.
+https://github.com/duckdb/duckdb-wasm
 
-Routing between screens.
+    Copyright 2018-2025 Stichting DuckDB Foundation
 
-`Copyright (c) React Training LLC 2015-2019`
-`Copyright (c) Remix Software Inc. 2020-2021`
-`Copyright (c) Shopify Inc. 2022-2023`
 
-Source: [github.com/remix-run/react-router](https://github.com/remix-run/react-router)
+-----------------------------------------------------------
+The MIT License
+-----------------------------------------------------------
 
-### DuckDB-Wasm
-
-The database behind the SQL console. Its `.wasm` module and its worker are
-served from this origin rather than from a CDN, which is what lets the SQL
-console work offline.
-
-`Copyright 2018-2025 Stichting DuckDB Foundation`
-
-Source:
-[github.com/duckdb/duckdb-wasm](https://github.com/duckdb/duckdb-wasm)
-
-### The MIT License
-
-```
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -187,9 +174,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
 
-## BGPShark itself
 
-The application's own source is at
-[github.com/shmuto/bgpshark](https://github.com/shmuto/bgpshark).
+BGPShark itself
+===============
+
+https://github.com/shmuto/bgpshark

@@ -356,11 +356,11 @@ origin, so the app *redistributes* them rather than linking to them. The SIL
 Open Font License and the MIT License both ask that the copyright notice and the
 licence text accompany a redistributed copy.
 
-They do. `src/pages/licenses/licenses.md` holds the notices and the full licence
-texts, and the app serves it at `/licenses` — linked from the start screen and
-from the foot of the manual. It is the same Markdown-at-build-time pipeline the
-manual uses, so the page ships in the bundle and reads with the network
-unplugged. `src/assets/fonts/NOTICE.md` points back at it for anyone who finds
-the WOFF2 files by browsing the source.
+They do. `public/THIRD-PARTY-LICENSES.txt` holds the notices and the full licence
+texts. It is in `public/` rather than at the repository root on purpose: that
+directory is copied verbatim into the build, so one file covers both audiences —
+anyone reading the source, and anyone whose browser has just downloaded the
+fonts from the deployed site, where a root-level file would never be served. The
+start screen and the foot of the manual link to it.
 
-Adding a bundled font or a runtime dependency means adding it to that page.
+Adding a bundled font or a runtime dependency means adding it to that file.

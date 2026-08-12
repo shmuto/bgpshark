@@ -14,9 +14,9 @@
 
    Both are under the SIL Open Font License 1.1, which asks that the copyright
    notice and licence travel with a redistributed copy — and serving them from
-   this origin is redistribution. The notices are in assets/fonts/NOTICE.md for
-   anyone reading the source, and the app serves them at /licenses for everyone
-   else. Adding a font here means adding it there.
+   this origin is redistribution. The notices and the licence text are in
+   public/THIRD-PARTY-LICENSES.txt, which is a file in the repository and is
+   also copied into the build. Adding a font here means adding it there.
 --------------------------------------------------------------------------- */
 
 @font-face {

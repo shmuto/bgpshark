@@ -9,7 +9,7 @@
  * who has just arrived, has nothing loaded, and wants to know what this is.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import manualHtml from './manual/manual.md'
 
 interface Heading {
@@ -143,14 +143,17 @@ export function ManualPage() {
           />
 
           {/* The typefaces and libraries are redistributed with the app, so
-              their notices have to be reachable. Rendered here rather than
-              written into the Markdown because a cross-route link inside the
-              injected HTML would reload the whole app instead of routing. */}
+              their notices have to be reachable. The file is in public/ rather
+              than a screen of its own, and the base path comes from Vite so the
+              link survives the app being served from somewhere else. */}
           <footer className="mt-12 border-t border-hair pt-4 text-sm text-muted">
             BGPShark ships fonts and libraries written by other people.{' '}
-            <Link to="/licenses" className="text-accent underline underline-offset-2">
+            <a
+              href={`${import.meta.env.BASE_URL}THIRD-PARTY-LICENSES.txt`}
+              className="text-accent underline underline-offset-2"
+            >
               Their licenses
-            </Link>
+            </a>
             .
           </footer>
         </div>
