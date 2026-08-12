@@ -142,13 +142,20 @@ path shape, so a leak is only found by someone already looking for one.
 *Want from the capture:* the offending UPDATE's attributes and flags, and what
 the NOTIFICATION's data field points at.
 
-**✔ / ◑** The NOTIFICATION reads `3/2 UPDATE Message Error / Unrecognized
-Well-known Attribute`, and the UPDATE before it shows `UNKNOWN(199) · Transitive
-· Unparsed` with the full message hex. What is missing is the last step: the
-NOTIFICATION carries the offending attribute back in its data field —
-`40 c7 04 de ad be ef`, the same seven bytes that were in the UPDATE — and that
-is rendered as an undifferentiated hex dump rather than decoded as the attribute
-RFC 4271 §6.3 says it is.
+**✔** The NOTIFICATION reads `3/2 UPDATE Message Error / Unrecognized
+Well-known Attribute`, the UPDATE before it shows `UNKNOWN(199) · Transitive ·
+Unparsed`, and the NOTIFICATION's data field is decoded as what RFC 4271 §6.3
+says it is — the offending attribute, handed straight back:
+
+```
+OFFENDING ATTRIBUTE
+UNKNOWN(199)   type 199   4 bytes   Well-known   Transitive
+```
+
+`Well-known` is the optional bit being clear, which is the fault itself and the
+word the subcode uses for it. The seven raw bytes stay underneath, because a
+NOTIFICATION is the message people most want to check an interpretation
+against.
 
 ### S7 — `s7-segmented` · Only some advertised routes seem to arrive
 
@@ -296,7 +303,6 @@ What remains:
    and communities reach DuckDB but not the route history or the filter
    language, which makes the most common "why this path" question SQL-only.
 
-Smaller ones: the NOTIFICATION data field is not decoded per error code even
-though S6 now carries the offending attribute in it; `hold_time` exists as a
-column but not as a filter field; the SQL results grid renders `timestamp` as raw
-epoch milliseconds; and a graceful restart is indistinguishable from a flap (S8).
+Smaller ones: `hold_time` exists as a column but not as a filter field; the SQL
+results grid renders `timestamp` as raw epoch milliseconds; and a graceful
+restart is indistinguishable from a flap (S8).

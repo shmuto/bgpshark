@@ -46,7 +46,7 @@ Same for a one-off script:
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
 ```
 
-Expect **96 passing**. If more than a couple fail, something is actually wrong.
+Expect **98 passing**. If more than a couple fail, something is actually wrong.
 
 One test is flaky *in this container* and nowhere else:
 `navigation.e2e.ts:21` ("reloading keeps the screen you were on") waits on an
