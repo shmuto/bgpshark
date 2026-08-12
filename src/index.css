@@ -9,30 +9,40 @@
    production CSP (font-src 'self'). Latin subsets only; the content here is IP
    addresses, ASNs and protocol field names.
 
-   IBM Plex Sans for interface chrome, JetBrains Mono for data. Both were drawn
-   for technical contexts, which is what this instrument displays.
+   Inter for interface chrome, JetBrains Mono for data. Both were drawn for
+   screens carrying dense technical text, which is what this instrument
+   displays.
 
    Both are under the SIL Open Font License 1.1, which asks that the copyright
    notice and licence travel with a redistributed copy — and serving them from
    this origin is redistribution. The notices and the licence text are in
    public/THIRD-PARTY-LICENSES.txt, which is a file in the repository and is
    also copied into the build. Adding a font here means adding it there.
+
+   Neither declares a Reserved Font Name, and that is the reason both are here
+   rather than something else. The OFL counts a *format change* as a Modified
+   Version — converting a .ttf to .woff2 is enough — and clause 3 forbids a
+   Modified Version from using a reserved name. Every self-hosted webfont is
+   therefore a Modified Version, so a family with a reserved name (IBM Plex,
+   which this replaced, reserves "Plex") can only be shipped here under a
+   reading of clause 3 rather than plainly. Picking families that reserve
+   nothing removes the question instead of answering it.
 --------------------------------------------------------------------------- */
 
 @font-face {
-  font-family: 'IBM Plex Sans';
+  font-family: 'Inter';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url('./assets/fonts/ibm-plex-sans-400.woff2') format('woff2');
+  src: url('./assets/fonts/inter-400.woff2') format('woff2');
 }
 
 @font-face {
-  font-family: 'IBM Plex Sans';
+  font-family: 'Inter';
   font-style: normal;
   font-weight: 600;
   font-display: swap;
-  src: url('./assets/fonts/ibm-plex-sans-600.woff2') format('woff2');
+  src: url('./assets/fonts/inter-600.woff2') format('woff2');
 }
 
 @font-face {
@@ -191,7 +201,7 @@
 
   body {
     @apply bg-canvas text-body;
-    font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 

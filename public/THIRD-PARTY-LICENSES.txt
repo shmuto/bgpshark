@@ -24,10 +24,16 @@ field names. The files are therefore conversions and subsets of the originals
 rather than the originals themselves. Both families are licensed under the SIL
 Open Font License, Version 1.1, reproduced in full below.
 
-IBM Plex Sans - interface text, weights 400 and 600.
-https://github.com/IBM/plex
+Neither family declares a Reserved Font Name. That is deliberate: the OFL
+counts a change of format as a Modified Version, so any self-hosted webfont is
+one, and clause 3 forbids a Modified Version from using a reserved name. Both
+of these reserve nothing, so shipping them here needs no interpretation.
 
-    Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
+Inter - interface text, weights 400 and 600.
+https://github.com/rsms/inter
+
+    Copyright 2016 The Inter Project Authors
+    (https://github.com/rsms/inter)
 
 JetBrains Mono - addresses, prefixes, hex dumps and anything else that has to
 line up in a column. Weights 400 and 500.
