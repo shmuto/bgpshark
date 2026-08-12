@@ -245,6 +245,53 @@ export function oneDirectionCapture(): Buffer {
 }
 
 /**
+ * An UPDATE the far end refuses, and the NOTIFICATION that hands the offending
+ * attribute back.
+ *
+ * The same seven bytes go into the UPDATE and into the NOTIFICATION's data
+ * field, which is what RFC 4271 §6.3 says happens — flags 0x40 is transitive
+ * with the optional bit clear, so type code 199 is an unrecognised *well-known*
+ * attribute, which is exactly error 3/2.
+ */
+export function malformedUpdateCapture(): Buffer {
+  const offending = new Uint8Array([0x40, 0xc7, 0x04, 0xde, 0xad, 0xbe, 0xef])
+  const built = buildScenario({
+    a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 },
+    b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 },
+    gap: 200,
+    steps: [
+      { kind: 'handshake' },
+      { kind: 'open', from: 'a' },
+      { kind: 'open', from: 'b' },
+      { kind: 'keepalive', from: 'a' },
+      { kind: 'keepalive', from: 'b' },
+      {
+        kind: 'send',
+        from: 'a',
+        messages: [
+          {
+            type: 'UPDATE',
+            pathAttributes: [
+              { type: 'ORIGIN', value: 'IGP' },
+              { type: 'AS_PATH', segments: [{ type: 'AS_SEQUENCE', asNumbers: [65001] }] },
+              { type: 'NEXT_HOP', address: '10.0.0.1' },
+              { type: 'RAW', flags: offending[0], typeCode: offending[1], value: offending.slice(3) },
+            ],
+            nlri: ['10.5.0.0/24'],
+          },
+        ],
+      },
+      {
+        kind: 'send',
+        from: 'b',
+        messages: [{ type: 'NOTIFICATION', errorCode: 3, errorSubcode: 2, data: offending }],
+      },
+    ],
+  })
+  return Buffer.from(built.bytes)
+}
+
+/**
  * A hold timer expiry where the two candidate measurements differ a lot.
  *
  * 10.0.0.1 goes quiet first; 10.0.0.2 keeps sending for another 30 seconds and

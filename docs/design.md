@@ -72,9 +72,22 @@ listed as an unknown capability rather than dropped.
 |-------|---------|
 | Error Code | Code value + name |
 | Error Subcode | Subcode value + name |
-| Data | Hex dump of relevant bytes |
+| Data | Decoded per error code where RFC 4271 §6 defines one, over a hex dump |
 | Hint | Common causes & troubleshooting tips |
 | Silence before the teardown | Hold Timer Expired only — see below |
+
+**The data field is where the answer usually is**, and RFC 4271 §6 says what it
+holds per error. `lib/bgp/notification-data.ts` decodes the defined cases: the
+rejected message length or type (code 1), the highest version the peer supports,
+the AS number that did not match, the capabilities it refused (code 2), the
+attribute that caused an UPDATE error complete with its flags (code 3), and the
+RFC 9003 shutdown communication a Cease may carry in words (code 6).
+
+Anything else keeps its hex dump, and so does a field that does not read as what
+it should be — an attribute whose length runs past the data, a Bad Peer AS field
+that is neither two nor four bytes wide. The decode is always shown *over* the
+bytes rather than instead of them, since a NOTIFICATION is the message people
+most want to check an interpretation against.
 
 **Silence before a Hold Timer Expired** (`src/lib/bgp/hold-timer.ts`)
 

@@ -315,7 +315,7 @@ session down. The NOTIFICATION names what it objected to.
 
 **Messages → click the NOTIFICATION.**
 
-![A NOTIFICATION detail: error code 3 UPDATE Message Error, subcode 2 Unrecognized Well-known Attribute, with a troubleshooting hint and the raw bytes](manual/s6-notification.png)
+![A NOTIFICATION detail: error code 3 UPDATE Message Error, subcode 2 Unrecognized Well-known Attribute, a troubleshooting hint, the data field decoded as UNKNOWN(199) marked Well-known and Transitive, and the raw bytes below it](manual/s6-notification.png)
 
 Error code **3** is an UPDATE the peer refused, and the subcode says why —
 `Unrecognized Well-known Attribute`, `Invalid NEXT_HOP`, `Malformed AS_PATH`.
@@ -326,9 +326,18 @@ about. An attribute the parser could not identify is shown as
 `UNKNOWN(199) · Transitive · Unparsed` with its bytes, which is usually enough to
 recognise the feature the far end does not implement.
 
-The NOTIFICATION's own data field is shown as a hex dump and nothing more. For
-error code 3 those bytes *are* the offending attribute, but you have to decode
-them yourself.
+The NOTIFICATION's own data field is decoded rather than left as bytes. For
+error code 3 it *is* the offending attribute, handed straight back — shown with
+its type and its flags, because the flags are frequently the fault: an attribute
+marked **Well-known** that nobody recognises is precisely what subcode 2 is
+about. The raw bytes stay underneath so you can check the reading.
+
+Other codes decode their own fields: the AS number that did not match a
+`Bad Peer AS`, the capabilities behind an `Unsupported Capability`, and — worth
+knowing about — the sentence a peer may attach to an administrative shutdown or
+reset (RFC 9003). That last one is the only place in BGP where the far end can
+tell you *why* in words, and it is usually a maintenance window or a ticket
+number.
 
 ### “A prefix is missing”
 

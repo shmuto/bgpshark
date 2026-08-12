@@ -1,3 +1,4 @@
+import type { NotificationData } from './notification-data'
 import type { EvpnRoute } from './evpn'
 import type { ExtendedCommunity } from './extended-communities'
 
@@ -225,6 +226,12 @@ export interface BgpNotificationMessage {
   errorCodeName: string
   errorSubcodeName: string
   data: Uint8Array
+  /**
+   * What `data` means, when the error says. Absent for the errors RFC 4271
+   * leaves undefined and for a field that does not read as what it should be —
+   * the hex dump stands on its own in both cases.
+   */
+  decodedData?: NotificationData
   hint: string
 }
 

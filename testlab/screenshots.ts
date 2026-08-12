@@ -159,7 +159,8 @@ const SHOTS: Shot[] = [
     },
   },
   {
-    // The NOTIFICATION selected, so the hint and the raw bytes are both in shot.
+    // The NOTIFICATION selected, so the decoded attribute, the hint and the raw
+    // bytes are all in shot — the decode is only trustworthy next to the bytes.
     file: 's6-notification',
     scenario: 's6',
     take: async (page) => {

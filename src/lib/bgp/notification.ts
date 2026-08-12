@@ -1,6 +1,7 @@
 import { BinaryReader } from '../pcap/reader'
 import type { BgpNotificationMessage } from './types'
 import { getErrorInfo } from './errors'
+import { decodeNotificationData } from './notification-data'
 
 /**
  * Parse BGP NOTIFICATION message
@@ -22,6 +23,7 @@ export function parseNotificationMessage(reader: BinaryReader): BgpNotificationM
     errorCodeName: errorInfo.codeName,
     errorSubcodeName: errorInfo.subcodeName,
     data,
+    decodedData: decodeNotificationData(errorCode, errorSubcode, data),
     hint: errorInfo.hint,
   }
 }
