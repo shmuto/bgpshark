@@ -232,7 +232,7 @@ is why captures of outright broken sessions were once summarised as healthy.
 | AS_PATH changed | warning | More than one distinct AS_PATH for a prefix; worst 5 plus a summary row | Prepends that never varied |
 | One direction | critical | A peering with TCP frames in only one direction | Anything with both directions present |
 | Accepted, no BGP | critical | A SYN-ACK was seen and only one end sent BGP | A refused connection — `computeTransportAlerts` owns that, and a second explanation of the same packets is a worse one |
-| *(planned)* Silent teardown | critical | A connection that carried BGP ends in RST or FIN with no NOTIFICATION on it | Every teardown that a NOTIFICATION already explains |
+| *(planned)* Silent teardown | critical | A connection that carried BGP ends in RST or FIN with no NOTIFICATION on it; grouped per peering and teardown kind | Every teardown that a NOTIFICATION already explains |
 
 `computeTransportAlerts` is separate and runs only when a capture holds no BGP
 at all: with nothing above TCP to report, the interesting question is what
@@ -267,8 +267,51 @@ already argues for:
 Put together: split each peering's TCP frames at every SYN, and for each segment
 that carried BGP, fire when it ends in RST or FIN and no NOTIFICATION appears
 within it. `s3-holdtimer-flap` is the false positive to check against — it must
-stay silent — and `s11-silent-teardown` must produce two rows, or one row
-counting two.
+stay silent.
+
+##### Grouping: one row per peering and teardown kind
+
+`s11-silent-teardown` drops twice, once by RST and once by FIN, and gets **two
+rows** — not one row counting two, and not one row per teardown.
+
+The key is (peering, kind), counted within it. That is the same shape the
+NOTIFICATION rule already uses, which groups per sender → receiver, error code
+and subcode: split by the *kind* of failure, count within the kind. It holds up
+on the capture that decides it, a session dying every ten minutes for six hours:
+at most two rows, each carrying its own count, rather than thirty-six rows.
+
+Splitting by kind is worth the second row because the two shapes point
+somewhere different. An RST is something actively rejecting the connection — a
+middlebox, a stack with no socket left. A FIN is something deciding the session
+was finished and closing it politely, which is what an idle timeout looks like.
+The next thing to check differs, so merging them into "dropped twice" would cost
+the reader the more useful half.
+
+##### It will sit next to "Session flapping detected", and that is fine
+
+On `s11-silent-teardown` the panel will show a critical teardown row above the
+existing flapping warning. They are not duplicates: flapping counts how many
+times the session came *up*, the teardown row says how it went *down* and that
+nothing explained it. Symptom and cause, in that order once sorted.
+
+Suppressing one from the other was considered and rejected. Rules that silence
+each other are the kind of thing that later produces "why is this alert not
+firing" with no answer short of reading both.
+
+##### `View →` has to reach the frame it is talking about
+
+The packet list shows BGP only until it is switched to **All Packets**, and
+`showAllPackets` is component state that no URL can set — while `filter` and
+`selected` are both in the query string. So an alert that says "there was an
+RST" would today land the reader on a list that cannot contain it.
+
+The implementation therefore also puts that toggle in the URL as `?all=1`, and
+this rule's rows set it. Without that the alert names evidence it then refuses
+to show, which is half of the S11 gap left in place — the complaint there was
+never that the reset is unfindable, only that nothing points at it.
+
+The same parameter is worth having for the existing transport alerts, which
+have the same problem for the same reason.
 
 ### 2.2 Future Features
 
