@@ -13,7 +13,9 @@ uploaded to a server.
   802.1Q / QinQ tags stripped
 - **Full BGP decode** — OPEN capabilities, UPDATE path attributes (AS_PATH,
   communities, large communities, MP_REACH/MP_UNREACH including IPv6 NLRI, …),
-  NOTIFICATION error codes with troubleshooting hints
+  NOTIFICATION error codes with troubleshooting hints, and — on a Hold Timer
+  Expired — how long the peer had actually been quiet, against the hold time the
+  two OPENs negotiated
 - **EVPN** — MAC/IP Advertisement and Inclusive Multicast routes decoded to
   their RD, MAC, VNI and ESI; the other route types identified
 - **Dashboard** — message counts, severity-sorted alerts, neighbor table and a

@@ -145,17 +145,16 @@ const SHOTS: Shot[] = [
     },
   },
   {
+    // The NOTIFICATION selected, so the measured silence sits next to the error
+    // code it explains. Viewport rather than the panel alone: half the point is
+    // that this needs no SQL and no navigation beyond clicking the message.
     file: 's3-holdtimer-gap',
     scenario: 's3',
     take: async (page) => {
-      await go(page, 'SQL')
-      await query(
-        page,
-        `select m.type, p.src_ip, p.timestamp,
-       epoch(p.timestamp - lag(p.timestamp) over (order by p.timestamp)) as gap_s
-from packets p join messages m using(frame_index)
-order by p.frame_index`
-      )
+      await go(page, 'Messages')
+      await page.getByText('Hold Timer Expired/Unspecific').first().click()
+      await page.waitForTimeout(600)
+      await page.getByText('Silence before the teardown').first().waitFor()
       return null
     },
   },

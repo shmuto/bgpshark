@@ -74,6 +74,26 @@ listed as an unknown capability rather than dropped.
 | Error Subcode | Subcode value + name |
 | Data | Hex dump of relevant bytes |
 | Hint | Common causes & troubleshooting tips |
+| Silence before the teardown | Hold Timer Expired only — see below |
+
+**Silence before a Hold Timer Expired** (`src/lib/bgp/hold-timer.ts`)
+
+Error code 4 says a speaker stopped hearing from the other end, and the number
+that decides what to do about it is the one the message does not carry: how long
+the silence was, against the hold time in force. Both are already in the capture,
+so the detail panel does the subtraction rather than leaving it to SQL.
+
+| Rule | Behaviour |
+|------|-----------|
+| Whose silence | Measured from the last message whose source is the **NOTIFICATION's destination** — the end that went quiet. Not the previous packet in the capture; on a healthy session that is usually the sender's own KEEPALIVE, and is a different number. |
+| Hold time | The **lower of the two OPENs** (RFC 4271 §4.2), taken from the last OPEN each end sent *before* this teardown. A later session's OPENs, on a flapping capture, describe a different timer and are not consulted. |
+| Silence ≥ hold time | Stated as the session timing out as specified; points at one-way reachability rather than BGP. |
+| Silence < hold time | Flagged as the timer firing early — a capture missing packets, or a hold time not matching the OPENs on record. |
+| OPENs not in capture | Silence still reported; the comparison is declined rather than guessed. |
+| Nothing from the peer at all | Reported as nothing, not as a zero-second silence. |
+
+Indexed against the unfiltered packet list, so an active filter cannot change
+the answer.
 
 **Supported Error Codes**
 | Code | Name | Example Subcodes |

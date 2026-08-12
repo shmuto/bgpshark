@@ -85,21 +85,33 @@ depth: the diff only appears once a *session* is selected, not a router.
 re-established, and — the part that decides the diagnosis — how long after the
 last KEEPALIVE the teardown came.
 
-**✔ / ◑** The dashboard groups the repeats into one row, *"NOTIFICATION: Hold
-Timer Expired / Unspecific ×3"*, alongside *"Session flapping detected — 6 OPEN
-messages (~3 establishments)"*, and the NOTIFICATION detail carries a
-troubleshooting hint. The interval is **◑**: it takes SQL.
+**✔** The dashboard groups the repeats into one row, *"NOTIFICATION: Hold Timer
+Expired / Unspecific ×3"*, alongside *"Session flapping detected — 6 OPEN
+messages (~3 establishments)"*. Selecting the NOTIFICATION shows the interval
+under **Silence before the teardown**:
+
+> **90.4s** since the last KEEPALIVE from 10.0.0.1 at 00:01:01.802, against a
+> negotiated hold time of **90s**.
+
+Which is what makes this one-way reachability rather than a BGP fault, and the
+panel says so. The measurement is deliberately one-sided: the hold timer counts
+silence *from the peer*, so it is the gap to 10.0.0.1's last message, not the gap
+to the previous packet in the capture. Those differ by the offset between the two
+ends' keepalive clocks — here the naive reading is 90.2s, from 10.0.0.2's own
+KEEPALIVE, which the timer never looked at.
+
+The same number in SQL, for a capture with more than one session in it. The
+window has to skip the local end's own packets — a plain `lag(p.timestamp)`
+walks across both directions and answers 90.2s:
 
 ```sql
 select m.type, p.src_ip, p.timestamp,
-       epoch(p.timestamp - lag(p.timestamp) over (order by p.timestamp)) as gap_s
+       epoch(p.timestamp - max(case when p.src_ip = '10.0.0.1' then p.timestamp end)
+             over (order by p.frame_index rows between unbounded preceding and 1 preceding))
+         as since_peer_s
 from packets p join messages m using(frame_index)
 order by p.frame_index
 ```
-
-90.2s between A's last KEEPALIVE and B's NOTIFICATION, against a negotiated hold
-time of 90 — which is what makes this one-way reachability rather than a BGP
-fault.
 
 ### S4 — `s4-bestpath` · Traffic leaves by the wrong upstream
 
