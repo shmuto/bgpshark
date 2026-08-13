@@ -375,3 +375,114 @@ describe('EVPN routes on the route history', () => {
     expect(stats).toHaveLength(2)
   })
 })
+
+/**
+ * The attributes a best-path argument is actually settled with.
+ *
+ * S4 in `troubleshooting-scenarios.md` is "traffic for this prefix leaves by the
+ * wrong upstream", and AS_PATH plus NEXT_HOP answer it only when the paths
+ * differ in length — which is the easy case and not the one anyone opens a
+ * capture for. The rest of the tie-breakers travel with each announcement so
+ * two peers offering the same route can be read side by side.
+ */
+describe('best-path attributes on the route history', () => {
+  function announceWith(
+    source: string,
+    second: number,
+    text: string,
+    attrs: ParsedPathAttribute[]
+  ): BgpPacket {
+    return update(source, second, {
+      nlri: [prefix(text)],
+      pathAttributes: [
+        attribute({ type: 'AS_PATH', segments: [{ type: 'AS_SEQUENCE', asNumbers: [65001] }] }),
+        attribute({ type: 'NEXT_HOP', address: source }),
+        ...attrs.map(attribute),
+      ],
+    })
+  }
+
+  test('MED, LOCAL_PREF, ORIGIN and communities all reach the event', () => {
+    const stats = aggregatePrefixStats([
+      announceWith('192.0.2.1', 0, '172.20.0.0/16', [
+        { type: 'MULTI_EXIT_DISC', value: 300 },
+        { type: 'LOCAL_PREF', value: 200 },
+        { type: 'ORIGIN', value: 'IGP' },
+        { type: 'COMMUNITIES', communities: ['65000:80'] },
+      ]),
+    ])
+
+    const event = only(stats).history[0]
+    expect(event.med).toBe(300)
+    expect(event.localPref).toBe(200)
+    expect(event.origin).toBe('IGP')
+    expect(event.communities).toEqual(['65000:80'])
+  })
+
+  test('an attribute that was not sent is absent, not zero', () => {
+    // The distinction the whole column rests on. A route with no MED and a
+    // route with MED 0 are different answers to "why did this one win", and a
+    // table showing `0` for both would be lying about one of them.
+    const stats = aggregatePrefixStats([announceWith('192.0.2.1', 0, '172.20.0.0/16', [])])
+
+    const event = only(stats).history[0]
+    expect(event.med).toBeUndefined()
+    expect(event.localPref).toBeUndefined()
+    expect(event.communities).toBeUndefined()
+  })
+
+  test('a MED of zero is kept as zero', () => {
+    const stats = aggregatePrefixStats([
+      announceWith('192.0.2.1', 0, '172.20.0.0/16', [{ type: 'MULTI_EXIT_DISC', value: 0 }]),
+    ])
+
+    expect(only(stats).history[0].med).toBe(0)
+  })
+
+  test('large communities join the standard ones in one list', () => {
+    // A reader thinks of them as tags on the route, not as two encodings.
+    const stats = aggregatePrefixStats([
+      announceWith('192.0.2.1', 0, '172.20.0.0/16', [
+        { type: 'COMMUNITIES', communities: ['65000:80'] },
+        {
+          type: 'LARGE_COMMUNITIES',
+          communities: [{ globalAdmin: 65000, localData1: 1, localData2: 2 }],
+        },
+      ]),
+    ])
+
+    expect(only(stats).history[0].communities).toEqual(['65000:80', '65000:1:2'])
+  })
+
+  test('two peers announcing one prefix keep their own attributes', () => {
+    // The comparison S4 is about: same route, two sources, and the reason one
+    // of them won sitting in a column rather than in a SQL console.
+    const stats = aggregatePrefixStats([
+      announceWith('192.0.2.1', 0, '172.20.0.0/16', [
+        { type: 'MULTI_EXIT_DISC', value: 300 },
+      ]),
+      announceWith('198.51.100.1', 5, '172.20.0.0/16', [
+        { type: 'MULTI_EXIT_DISC', value: 10 },
+        { type: 'LOCAL_PREF', value: 200 },
+      ]),
+    ])
+
+    const history = only(stats).history
+    expect(history).toHaveLength(2)
+    expect(history[0].source).toBe('192.0.2.1')
+    expect(history[0].med).toBe(300)
+    expect(history[0].localPref).toBeUndefined()
+    expect(history[1].source).toBe('198.51.100.1')
+    expect(history[1].med).toBe(10)
+    expect(history[1].localPref).toBe(200)
+  })
+
+  test('a withdrawal carries none of them, having none to carry', () => {
+    const stats = aggregatePrefixStats([
+      announceWith('192.0.2.1', 0, '172.20.0.0/16', [{ type: 'MULTI_EXIT_DISC', value: 300 }]),
+      withdraw('192.0.2.1', 5, '172.20.0.0/16'),
+    ])
+
+    expect(only(stats).history[1].med).toBeUndefined()
+  })
+})

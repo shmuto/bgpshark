@@ -11,6 +11,7 @@ import type {
   BgpPacket,
   BgpOpenMessage,
   BgpUpdateMessage,
+  ParsedPathAttribute,
 } from '../../../src/lib/bgp/types'
 
 /**
@@ -229,6 +230,8 @@ describe('SQL compilation', () => {
       src_as: '65001',
       asn: '65001',
       origin: 'IGP',
+      med: '100',
+      local_pref: '200',
       next_hop: '10.0.0.1',
       prefix: '10.0.0.0/8',
       withdrawn: '10.0.0.0/8',
@@ -704,5 +707,113 @@ describe('EVPN filters compile to SQL that asks the same question', () => {
     expect(expressionToSql(parseQuery('evpn_type <= 3').expression)).toContain(
       'evpn_route_type <= 3'
     )
+  })
+})
+
+/**
+ * `med` and `local_pref`, in both backends.
+ *
+ * A filter expression is evaluated in memory or compiled to SQL depending on
+ * whether DuckDB came up, so a field that exists in one and not the other is a
+ * field whose answer depends on the weather. These tests pin the in-memory
+ * semantics and check the SQL side compiles to something that can select rows;
+ * `tests/e2e` runs the SQL path against the real database.
+ */
+describe('best-path attribute fields', () => {
+  function routeWith(attrs: ParsedPathAttribute[]): BgpPacket {
+    const update = {
+      type: 'UPDATE',
+      withdrawnRoutesLength: 0,
+      withdrawnRoutes: [],
+      totalPathAttrLength: 0,
+      pathAttributes: [
+        {
+          flags: { optional: false, transitive: true, partial: false, extendedLength: false },
+          typeCode: 2,
+          typeName: 'AS_PATH',
+          length: 0,
+          rawValue: new Uint8Array(),
+          parsed: {
+            type: 'AS_PATH' as const,
+            segments: [{ type: 'AS_SEQUENCE' as const, asNumbers: [65001] }],
+          },
+        },
+        ...attrs.map((parsed) => ({
+          flags: { optional: true, transitive: false, partial: false, extendedLength: false },
+          typeCode: 0,
+          typeName: parsed.type,
+          length: 0,
+          rawValue: new Uint8Array(),
+          parsed,
+        })),
+      ],
+      nlri: [{ prefix: '172.20.0.0', length: 16 }],
+    } as unknown as BgpUpdateMessage
+
+    return {
+      frameIndex: 1,
+      timestamp: new Date(Date.UTC(2024, 0, 1)),
+      srcIp: '192.0.2.1',
+      dstIp: '10.0.0.1',
+      srcPort: 179,
+      dstPort: 50000,
+      messages: [update],
+      rawData: new Uint8Array(),
+      parseWarnings: [],
+    } as BgpPacket
+  }
+
+  const matches = (packet: BgpPacket, expr: string) => {
+    const query = parseQuery(expr)
+    expect(query.errors).toHaveLength(0)
+    return matchPacket(packet, query)
+  }
+
+  const withMed = routeWith([{ type: 'MULTI_EXIT_DISC', value: 100 }])
+  const withLocalPref = routeWith([{ type: 'LOCAL_PREF', value: 200 }])
+  const withNeither = routeWith([])
+  const withZeroMed = routeWith([{ type: 'MULTI_EXIT_DISC', value: 0 }])
+
+  test('equality matches the value that was sent', () => {
+    expect(matches(withMed, 'med = 100')).toBe(true)
+    expect(matches(withMed, 'med = 101')).toBe(false)
+    expect(matches(withLocalPref, 'local_pref = 200')).toBe(true)
+  })
+
+  test('ranges work, which is how a MED question is usually asked', () => {
+    expect(matches(withMed, 'med > 50')).toBe(true)
+    expect(matches(withMed, 'med > 100')).toBe(false)
+    expect(matches(withMed, 'med >= 100')).toBe(true)
+    expect(matches(withMed, 'med < 200')).toBe(true)
+    expect(matches(withLocalPref, 'local_pref >= 200')).toBe(true)
+  })
+
+  test('an UPDATE carrying no MED matches no MED comparison at all', () => {
+    // The trap: treating absent as zero would make `med < 100` sweep in every
+    // eBGP route in the capture, which is most of them.
+    expect(matches(withNeither, 'med = 0')).toBe(false)
+    expect(matches(withNeither, 'med < 100')).toBe(false)
+    expect(matches(withNeither, 'med > 100')).toBe(false)
+    expect(matches(withNeither, 'local_pref > 0')).toBe(false)
+  })
+
+  test('a MED of zero is a value and matches as one', () => {
+    expect(matches(withZeroMed, 'med = 0')).toBe(true)
+    expect(matches(withZeroMed, 'med < 100')).toBe(true)
+  })
+
+  test('both fields compile to SQL that can select rows', () => {
+    for (const expr of ['med = 100', 'med > 100', 'local_pref = 200', 'local_pref >= 200']) {
+      const sql = expressionToSql(parseQuery(expr).expression)
+      expect(sql).not.toBe('1=0')
+      expect(sql).toContain('path_attributes')
+    }
+  })
+
+  test('the SQL side reads the columns the loader writes', () => {
+    // Named explicitly because a typo here compiles fine and returns nothing,
+    // which reads as "no routes matched" rather than as a broken filter.
+    expect(expressionToSql(parseQuery('med = 100').expression)).toContain('med_value')
+    expect(expressionToSql(parseQuery('local_pref = 200').expression)).toContain('local_pref')
   })
 })

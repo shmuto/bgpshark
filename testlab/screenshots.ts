@@ -57,6 +57,16 @@ interface Shot {
   scenario: string
   /** Drives the app; returns the element to capture, or null for the viewport. */
   take: (page: Page) => Promise<Locator | null>
+  /**
+   * A wider window for this shot alone.
+   *
+   * The default is chosen so a viewport-sized picture stays readable at the
+   * width of a paragraph, which is the right trade for most screens. A table
+   * that has outgrown it is the exception: the panel scrolls horizontally in
+   * the app, and photographing the part that happened to fit would show the
+   * reader less than their own screen does.
+   */
+  viewport?: { width: number; height: number }
 }
 
 // --- Driving the app --------------------------------------------------------
@@ -90,16 +100,6 @@ async function filter(page: Page, expression: string): Promise<void> {
   await input.fill(expression)
   await page.keyboard.press('Escape')
   await page.waitForTimeout(1400)
-}
-
-/** Runs a query on the SQL screen and waits for the results grid. */
-async function query(page: Page, sql: string): Promise<void> {
-  const editor = page.locator('textarea').first()
-  await editor.click()
-  await editor.fill(sql)
-  await page.keyboard.press('Control+Enter')
-  await page.waitForSelector('text=/Results \\(|Error:/')
-  await page.waitForTimeout(700)
 }
 
 // --- The shots --------------------------------------------------------------
@@ -217,27 +217,25 @@ const SHOTS: Shot[] = [
     },
   },
   {
-    // The query as well as its answer: this one is worth copying, not just reading.
+    // Two announcements of one prefix with their attributes side by side, which
+    // is the shape the best-path decision was made in.
     //
-    // This is also the one shot that re-diffs on every run without anything
-    // having changed: the SQL console prints how long the query took, and that
-    // is a wall clock. If `git status` offers you this file and nothing else,
-    // compare the two before committing — it is usually 75ms against 89ms.
+    // The *table* rather than the card around it: with MED, LOCAL_PREF and the
+    // communities added there are nine columns, and at this viewport the card
+    // clips the last of them behind a scrollbar. An element screenshot of the
+    // table captures its natural width, so the picture shows the comparison the
+    // manual is pointing at rather than the part of it that happened to fit.
     file: 's4-bestpath',
     scenario: 's4',
+    // Nine columns once MED, LOCAL_PREF and the communities are there, which
+    // the default width clips. The app scrolls; a picture cannot.
+    viewport: { width: 1800, height: 820 },
     take: async (page) => {
-      await go(page, 'SQL')
-      await query(
-        page,
-        `select n.prefix || '/' || n.prefix_length as route, p.src_ip,
-       (select string_agg(a.asn, ' ' order by a.as_index)
-          from as_path a where a.message_id = m.id) as as_path,
-       (select max(med_value)  from path_attributes where message_id = m.id) as med,
-       (select max(local_pref) from path_attributes where message_id = m.id) as local_pref
-from nlri n join messages m on m.id = n.message_id join packets p using(frame_index)
-order by route, p.src_ip`
-      )
-      return null
+      await go(page, 'Routes')
+      await page.getByText('172.20.0.0/16').first().click()
+      await page.waitForTimeout(700)
+      await page.getByText('LOCAL_PREF').first().waitFor()
+      return card(page, 'Route History').locator('table')
     },
   },
   {
@@ -315,7 +313,7 @@ async function captureFor(id: string): Promise<{ name: string; bytes: Buffer }> 
  * void. Clipping to the intersection with the viewport gives a picture that is
  * honestly cut short instead, which is what a reader sees on their own screen.
  */
-async function panelShot(page: Page, target: Locator): Promise<Buffer> {
+async function panelShot(page: Page, target: Locator, height: number): Promise<Buffer> {
   const box = await target.boundingBox()
   if (!box) throw new Error('The panel to photograph is not visible')
 
@@ -323,7 +321,7 @@ async function panelShot(page: Page, target: Locator): Promise<Buffer> {
     x: box.x,
     y: Math.max(box.y, 0),
     width: box.width,
-    height: Math.min(box.height, VIEWPORT.height - Math.max(box.y, 0)),
+    height: Math.min(box.height, height - Math.max(box.y, 0)),
   }
   return page.screenshot({ animations: 'disabled', clip })
 }
@@ -336,7 +334,8 @@ async function panelShot(page: Page, target: Locator): Promise<Buffer> {
  * one would photograph the wrong file without failing.
  */
 async function run(browser: Browser, shot: Shot): Promise<void> {
-  const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1.5 })
+  const viewport = shot.viewport ?? VIEWPORT
+  const context = await browser.newContext({ viewport, deviceScaleFactor: 1.5 })
   const page = await context.newPage()
 
   try {
@@ -356,7 +355,9 @@ async function run(browser: Browser, shot: Shot): Promise<void> {
 
     const target = await shot.take(page)
     const path = join(OUT_DIR, `${shot.file}.png`)
-    const png = target ? await panelShot(page, target) : await page.screenshot({ animations: 'disabled' })
+    const png = target
+      ? await panelShot(page, target, viewport.height)
+      : await page.screenshot({ animations: 'disabled' })
     writeFileSync(path, png)
     console.log(`${shot.file.padEnd(22)} ${String(png.length / 1024 | 0).padStart(5)} KB`)
   } finally {

@@ -277,6 +277,36 @@ export function RoutesPage() {
    */
   const showRdColumn = selectedPrefixStats?.history.some((event) => event.rd) ?? false
 
+  /**
+   * The best-path attributes, each shown only when the selected route actually
+   * carries it.
+   *
+   * Four more columns on every route would be four columns of `-` on most of
+   * them: LOCAL_PREF is iBGP-only, MED is optional, and plenty of captures have
+   * neither. Showing a column only when it has something to say keeps the
+   * comparison — two peers announcing the same prefix, side by side — narrow
+   * enough to read across.
+   */
+  const showMedColumn =
+    selectedPrefixStats?.history.some((event) => event.med !== undefined) ?? false
+  const showLocalPrefColumn =
+    selectedPrefixStats?.history.some((event) => event.localPref !== undefined) ?? false
+  /**
+   * ORIGIN earns a column only when it *varies*. It is IGP on almost every route
+   * in practice, and a column of identical values costs width that MED,
+   * LOCAL_PREF and the communities need — those are what decide a best path
+   * argument. When it does differ between two announcements it is suddenly the
+   * interesting column, and then it appears.
+   */
+  const showOriginColumn =
+    new Set(
+      selectedPrefixStats?.history
+        .filter((event) => event.origin !== undefined)
+        .map((event) => event.origin)
+    ).size > 1
+  const showCommunitiesColumn =
+    selectedPrefixStats?.history.some((event) => (event.communities?.length ?? 0) > 0) ?? false
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-canvas">
       {/* Search Bar */}
@@ -472,20 +502,44 @@ export function RoutesPage() {
               <table className="w-full text-sm">
                 <thead className="bg-surface-sunken sticky top-0">
                   <tr className="text-left text-muted">
-                    <th className="px-4 py-2 font-medium">Time</th>
-                    <th className="px-4 py-2 font-medium" title="Time since the previous event">Δ</th>
-                    <th className="px-4 py-2 font-medium">Action</th>
-                    <th className="px-4 py-2 font-medium">AS_PATH</th>
+                    <th className="px-3 py-2 font-medium">Time</th>
+                    <th className="px-3 py-2 font-medium" title="Time since the previous event">Δ</th>
+                    <th className="px-3 py-2 font-medium">Action</th>
+                    <th className="px-3 py-2 font-medium">AS_PATH</th>
                     {showRdColumn && (
                       <th
-                        className="px-4 py-2 font-medium"
+                        className="px-3 py-2 font-medium"
                         title="Route Distinguisher — which leaf advertised this route"
                       >
                         RD
                       </th>
                     )}
-                    <th className="px-4 py-2 font-medium" title="The peer this event arrived from">From</th>
-                    <th className="px-4 py-2 font-medium">Next Hop</th>
+                    <th className="px-3 py-2 font-medium" title="The peer this event arrived from">From</th>
+                    <th className="px-3 py-2 font-medium">Next Hop</th>
+                    {showMedColumn && (
+                      <th
+                        className="px-3 py-2 font-medium"
+                        title="MULTI_EXIT_DISC — lower wins, and only between paths from the same neighbouring AS"
+                      >
+                        MED
+                      </th>
+                    )}
+                    {showLocalPrefColumn && (
+                      <th
+                        className="px-3 py-2 font-medium"
+                        title="LOCAL_PREF — higher wins, and outranks AS_PATH length"
+                      >
+                        LOCAL_PREF
+                      </th>
+                    )}
+                    {showOriginColumn && (
+                      <th className="px-3 py-2 font-medium" title="ORIGIN — IGP beats EGP beats INCOMPLETE">
+                        Origin
+                      </th>
+                    )}
+                    {showCommunitiesColumn && (
+                      <th className="px-3 py-2 font-medium">Communities</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-hair">
@@ -497,31 +551,51 @@ export function RoutesPage() {
                       onClick={() => handleHistoryClick(event)}
                       className="cursor-pointer hover:bg-surface-sunken"
                     >
-                      <td className="px-4 py-2 font-mono text-muted">
+                      <td className="px-3 py-2 font-mono text-muted">
                         {formatTimeOfDayUtc(event.timestamp)}
                       </td>
-                      <td className="px-4 py-2 font-mono text-dim whitespace-nowrap">
+                      <td className="px-3 py-2 font-mono text-dim whitespace-nowrap">
                         {idx < rows.length - 1
                           ? formatDelta(event.timestamp.getTime() - rows[idx + 1].timestamp.getTime())
                           : '-'}
                       </td>
-                      <td className="px-4 py-2">
+                      <td className="px-3 py-2">
                         {event.action === 'announce' ? (
                           <span className="text-ok">🟢 Announce</span>
                         ) : (
                           <span className="text-critical">🔴 Withdraw</span>
                         )}
                       </td>
-                      <td className="px-4 py-2 font-mono text-muted">
+                      <td className="px-3 py-2 font-mono text-muted">
                         {event.asPath ? formatAsPath(event.asPath) : '-'}
                       </td>
                       {showRdColumn && (
-                        <td className="px-4 py-2 font-mono text-muted">{event.rd ?? '-'}</td>
+                        <td className="px-3 py-2 font-mono text-muted">{event.rd ?? '-'}</td>
                       )}
-                      <td className="px-4 py-2 font-mono text-muted">{event.source}</td>
-                      <td className="px-4 py-2 font-mono text-muted">
+                      <td className="px-3 py-2 font-mono text-muted">{event.source}</td>
+                      <td className="px-3 py-2 font-mono text-muted">
                         {event.nextHop || '-'}
                       </td>
+                      {/* `-` means the attribute was not on the UPDATE, which is
+                          not the same as a value of zero — hence `?? '-'` rather
+                          than a falsy check. */}
+                      {showMedColumn && (
+                        <td className="px-3 py-2 font-mono text-muted">{event.med ?? '-'}</td>
+                      )}
+                      {showLocalPrefColumn && (
+                        <td className="px-3 py-2 font-mono text-muted">{event.localPref ?? '-'}</td>
+                      )}
+                      {showOriginColumn && (
+                        <td className="px-3 py-2 font-mono text-muted">{event.origin ?? '-'}</td>
+                      )}
+                      {showCommunitiesColumn && (
+                        <td
+                          className="px-3 py-2 font-mono text-muted"
+                          title={event.communities?.join(' ')}
+                        >
+                          {event.communities?.join(' ') || '-'}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

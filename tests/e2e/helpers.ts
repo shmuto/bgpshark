@@ -276,6 +276,87 @@ export function silentTeardownCapture(): Buffer {
 }
 
 /**
+ * One prefix offered by two peers, where the shorter AS_PATH is not the winner.
+ *
+ * The same shape as `s4-bestpath`: 192.0.2.1 offers `65010 65200` with MED 300
+ * and no LOCAL_PREF, 198.51.100.1 offers the longer `65020 65300 65200` with
+ * MED 10 and LOCAL_PREF 200. LOCAL_PREF outranks path length, so the long path
+ * wins and nothing but the attributes says why — which is the whole of S4.
+ */
+export function bestPathCapture(): Buffer {
+  const local = { as: 65000, routerId: '100.100.100.100', holdTime: 90 }
+  const establish = [
+    { kind: 'handshake' as const },
+    { kind: 'open' as const, from: 'a' as const },
+    { kind: 'open' as const, from: 'b' as const },
+    { kind: 'keepalive' as const, from: 'a' as const },
+    { kind: 'keepalive' as const, from: 'b' as const },
+  ]
+
+  const short = buildScenario({
+    a: { ip: '192.0.2.1', as: 65010, routerId: '10.10.10.10', holdTime: 90 },
+    b: { ...local, ip: '192.0.2.100' },
+    gap: 200,
+    startTime: new Date('2026-01-01T00:00:00Z'),
+    steps: [
+      ...establish,
+      {
+        kind: 'send',
+        from: 'a',
+        messages: [
+          {
+            type: 'UPDATE',
+            pathAttributes: [
+              { type: 'ORIGIN', value: 'IGP' },
+              { type: 'AS_PATH', segments: [{ type: 'AS_SEQUENCE', asNumbers: [65010, 65200] }] },
+              { type: 'NEXT_HOP', address: '192.0.2.1' },
+              { type: 'MULTI_EXIT_DISC', value: 300 },
+              { type: 'COMMUNITIES', communities: ['65000:80'] },
+            ],
+            nlri: ['172.20.0.0/16'],
+          },
+        ],
+      },
+    ],
+  })
+
+  const long = buildScenario({
+    a: { ip: '198.51.100.1', as: 65020, routerId: '20.20.20.20', holdTime: 90 },
+    b: { ...local, ip: '198.51.100.100' },
+    gap: 200,
+    startTime: new Date('2026-01-01T00:00:05Z'),
+    steps: [
+      ...establish,
+      {
+        kind: 'send',
+        from: 'a',
+        messages: [
+          {
+            type: 'UPDATE',
+            pathAttributes: [
+              { type: 'ORIGIN', value: 'IGP' },
+              {
+                type: 'AS_PATH',
+                segments: [{ type: 'AS_SEQUENCE', asNumbers: [65020, 65300, 65200] }],
+              },
+              { type: 'NEXT_HOP', address: '198.51.100.1' },
+              { type: 'MULTI_EXIT_DISC', value: 10 },
+              { type: 'LOCAL_PREF', value: 200 },
+              { type: 'COMMUNITIES', communities: ['65000:200'] },
+            ],
+            nlri: ['172.20.0.0/16'],
+          },
+        ],
+      },
+    ],
+  })
+
+  // Two separate sessions in one file, which is what a capture on the router
+  // receiving both upstreams actually looks like.
+  return Buffer.from(writePcap([...short.frames, ...long.frames], short.linkType))
+}
+
+/**
  * A router that reloaded, with both ends having agreed how to survive it.
  *
  * The same shape as `s8-graceful-restart`: A drops the connection without a
