@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test'
-import { buildScenario } from '../../src/lib/build'
+import { buildScenario, END_OF_RIB } from '../../src/lib/build'
 import { writePcap } from '../../src/lib/pcap/writer'
 
 /**
@@ -270,6 +270,72 @@ export function silentTeardownCapture(): Buffer {
       { kind: 'close', from: 'b' },
       { kind: 'delay', gap: 60_000 },
       ...establish,
+    ],
+  })
+  return Buffer.from(built.bytes)
+}
+
+/**
+ * A router that reloaded, with both ends having agreed how to survive it.
+ *
+ * The same shape as `s8-graceful-restart`: A drops the connection without a
+ * NOTIFICATION, comes back, and reaches End-of-RIB three seconds later. What
+ * makes it a restart rather than a crash loop is entirely in the OPENs — the
+ * Graceful Restart capability on both, A's saying it kept forwarding — so a
+ * test capture without them would prove nothing about the rule.
+ *
+ * `forwarding` is a parameter because the flag is what decides whether the
+ * restart was harmless or a hole in the dataplane, and both readings need a
+ * capture.
+ */
+export function gracefulRestartCapture(options: { forwarding?: boolean } = {}): Buffer {
+  const capabilities = (asNumber: number, restartTime: number, forwarding: boolean) => [
+    { type: 'MULTIPROTOCOL' as const, afi: 1, safi: 1 },
+    { type: 'FOUR_OCTET_AS' as const, asNumber },
+    {
+      type: 'GRACEFUL_RESTART' as const,
+      restartTime,
+      // 0x80 is the forwarding-state-preserved flag, the whole point of GR.
+      addressFamilies: [{ afi: 1, safi: 1, flags: forwarding ? 0x80 : 0 }],
+    },
+  ]
+  const preserved = options.forwarding ?? true
+
+  const a = {
+    ip: '10.0.0.1',
+    as: 65001,
+    routerId: '1.1.1.1',
+    holdTime: 90,
+    capabilities: capabilities(65001, 120, preserved),
+  }
+  const b = {
+    ip: '10.0.0.2',
+    as: 65002,
+    routerId: '2.2.2.2',
+    holdTime: 90,
+    capabilities: capabilities(65002, 300, false),
+  }
+  const establish = [
+    { kind: 'handshake' as const },
+    { kind: 'open' as const, from: 'a' as const },
+    { kind: 'open' as const, from: 'b' as const },
+    { kind: 'keepalive' as const, from: 'a' as const },
+    { kind: 'keepalive' as const, from: 'b' as const },
+  ]
+
+  const built = buildScenario({
+    a,
+    b,
+    gap: 200,
+    steps: [
+      ...establish,
+      { kind: 'send', from: 'a', messages: [END_OF_RIB] },
+      { kind: 'delay', gap: 20_000 },
+      { kind: 'reset', from: 'a' },
+      { kind: 'delay', gap: 25_000 },
+      ...establish,
+      { kind: 'delay', gap: 3000 },
+      { kind: 'send', from: 'a', messages: [END_OF_RIB] },
     ],
   })
   return Buffer.from(built.bytes)

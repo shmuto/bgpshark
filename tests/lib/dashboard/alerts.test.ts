@@ -629,3 +629,232 @@ describe('teardowns nothing explained', () => {
     expect(byId(alertsFor(connection(0, 'none')), 'silent-teardown-')).toHaveLength(0)
   })
 })
+
+/**
+ * A restart both ends had agreed to ride out, told apart from a crash loop.
+ *
+ * The two mean opposite things operationally — one kept forwarding while the
+ * control plane came back, the other did not — and the dashboard used to call
+ * both of them "Session flapping detected". What separates them is entirely in
+ * the capture: the Graceful Restart capability on both OPENs, and the gap
+ * between the session coming back and the End-of-RIB that says the routes are.
+ */
+describe('a restart rather than a flap', () => {
+  function tcp(
+    frameIndex: number,
+    src: string,
+    dst: string,
+    flags: Partial<{ syn: boolean; ack: boolean; rst: boolean; fin: boolean; psh: boolean }> = {}
+  ): GenericPacket {
+    return {
+      frameIndex,
+      timestamp: at(frameIndex),
+      capturedLength: 60,
+      originalLength: 60,
+      frameBytes: new Uint8Array(),
+      srcIp: src,
+      dstIp: dst,
+      protocol: 'TCP',
+      protocolNumber: 6,
+      srcPort: src === '10.0.0.2' ? 179 : 51000,
+      dstPort: src === '10.0.0.2' ? 51000 : 179,
+      tcpFlags: { syn: false, ack: false, rst: false, fin: false, psh: false, urg: false, ...flags },
+      payloadLength: 0,
+    }
+  }
+
+  /** An OPEN carrying — or deliberately not carrying — the GR capability. */
+  function openWith(
+    gr: { restartTime: number; forwarding: boolean } | null
+  ): BgpMessage {
+    const capabilities = gr
+      ? [
+          {
+            code: 64,
+            name: 'Graceful Restart',
+            length: 6,
+            rawValue: new Uint8Array(),
+            parsed: {
+              type: 'GRACEFUL_RESTART' as const,
+              restartFlags: 0,
+              restartTime: gr.restartTime,
+              addressFamilies: [
+                {
+                  afi: 1,
+                  afiName: 'IPv4',
+                  safi: 1,
+                  safiName: 'Unicast',
+                  flags: gr.forwarding ? 0x80 : 0x00,
+                },
+              ],
+            },
+          },
+        ]
+      : []
+    return { type: 'OPEN', capabilities } as unknown as BgpMessage
+  }
+
+  /** An UPDATE with nothing in it, which is RFC 4724's End-of-RIB. */
+  const endOfRib: BgpMessage = {
+    type: 'UPDATE',
+    withdrawnRoutes: [],
+    nlri: [],
+    pathAttributes: [],
+  } as unknown as BgpMessage
+
+  /**
+   * One session: handshake, an OPEN from each end, optionally an End-of-RIB
+   * some seconds later, and optionally a reset that ends it.
+   */
+  function session(
+    start: number,
+    options: {
+      gr?: { restartTime: number; forwarding: boolean } | null
+      endOfRibAfter?: number
+      endsInReset?: boolean
+      resetBy?: string
+    } = {}
+  ): { frames: GenericPacket[]; bgp: BgpPacket[] } {
+    const gr = options.gr === undefined ? { restartTime: 120, forwarding: true } : options.gr
+    const frames = [
+      tcp(start, '10.0.0.1', '10.0.0.2', { syn: true }),
+      tcp(start + 1, '10.0.0.2', '10.0.0.1', { syn: true, ack: true }),
+      tcp(start + 2, '10.0.0.1', '10.0.0.2', { ack: true }),
+      tcp(start + 3, '10.0.0.1', '10.0.0.2', { ack: true, psh: true }),
+      tcp(start + 4, '10.0.0.2', '10.0.0.1', { ack: true, psh: true }),
+    ]
+    const bgp = [
+      packet('10.0.0.1', '10.0.0.2', start + 3, [openWith(gr)]),
+      packet('10.0.0.2', '10.0.0.1', start + 4, [openWith(gr)]),
+    ]
+
+    if (options.endOfRibAfter !== undefined) {
+      const when = start + 4 + options.endOfRibAfter
+      frames.push(tcp(when, '10.0.0.1', '10.0.0.2', { ack: true, psh: true }))
+      bgp.push(packet('10.0.0.1', '10.0.0.2', when, [endOfRib]))
+    }
+    if (options.endsInReset) {
+      const by = options.resetBy ?? '10.0.0.1'
+      const to = by === '10.0.0.1' ? '10.0.0.2' : '10.0.0.1'
+      frames.push(tcp(start + 20, by, to, { ack: true, rst: true }))
+    }
+
+    return { frames, bgp }
+  }
+
+  function alertsFor(...parts: { frames: GenericPacket[]; bgp: BgpPacket[] }[]) {
+    return computeAlerts(
+      parts.flatMap((part) => part.bgp),
+      parts.flatMap((part) => part.frames)
+    )
+  }
+
+  test('is reported as a restart, with the numbers that make it one', () => {
+    const alerts = alertsFor(
+      session(0, { endsInReset: true }),
+      session(40, { endOfRibAfter: 4 })
+    )
+
+    const row = byId(alerts, 'graceful-restart-')[0]
+    expect(row).toBeDefined()
+    // The restarting end is the one that dropped the connection.
+    expect(row.title).toContain('10.0.0.1 restarted gracefully')
+    // Both numbers the operator came for: what it promised, and what happened.
+    expect(row.detail).toContain('120s')
+    expect(row.detail).toContain('4s')
+    expect(row.detail).toContain('kept forwarding state')
+  })
+
+  test('replaces the flapping row rather than sitting beside it', () => {
+    // The whole complaint in S8: a graceful restart and a crash loop were the
+    // same sentence. The restart row carries its own count, so a router that
+    // restarts repeatedly is still visible as repeated.
+    const alerts = alertsFor(
+      session(0, { endsInReset: true }),
+      session(40, { endOfRibAfter: 4 })
+    )
+
+    expect(byId(alerts, 'flap-')).toHaveLength(0)
+    expect(byId(alerts, 'graceful-restart-')).toHaveLength(1)
+  })
+
+  test('takes the teardown row with it, since the restart explains the reset', () => {
+    // Otherwise the same reset carries two rows that disagree: one pointing at
+    // firewalls, one saying the router came back with forwarding intact.
+    const alerts = alertsFor(
+      session(0, { endsInReset: true }),
+      session(40, { endOfRibAfter: 4 })
+    )
+
+    expect(byId(alerts, 'silent-teardown-')).toHaveLength(0)
+  })
+
+  test('a peer that never advertised the capability is still a flap', () => {
+    // Nobody agreed to hold the routes, so nothing about it was graceful.
+    const alerts = alertsFor(
+      session(0, { gr: null, endsInReset: true }),
+      session(40, { gr: null, endOfRibAfter: 4 })
+    )
+
+    expect(byId(alerts, 'graceful-restart-')).toHaveLength(0)
+    expect(byId(alerts, 'flap-')).toHaveLength(1)
+    expect(byId(alerts, 'silent-teardown-')).toHaveLength(1)
+  })
+
+  test('a teardown a NOTIFICATION explained is a shutdown, not a restart', () => {
+    // A speaker that sent a Cease was leaving, not restarting, and the routes
+    // are gone whatever its capability said.
+    const first = session(0, { endsInReset: true })
+    first.frames.push(tcp(15, '10.0.0.2', '10.0.0.1', { ack: true, psh: true }))
+    first.bgp.push(notification('10.0.0.2', '10.0.0.1', 15))
+
+    expect(byId(alertsFor(first, session(40, { endOfRibAfter: 4 })), 'graceful-restart-')).toHaveLength(0)
+  })
+
+  test('convergence past the Restart Time is critical, not reassuring', () => {
+    // The peer holds the routes for the advertised Restart Time and no longer.
+    // Coming back after it means they were withdrawn in the meantime, which is
+    // the outage a graceful restart exists to avoid.
+    const alerts = alertsFor(
+      session(0, { gr: { restartTime: 2, forwarding: true }, endsInReset: true }),
+      session(40, { gr: { restartTime: 2, forwarding: true }, endOfRibAfter: 9 })
+    )
+
+    const row = byId(alerts, 'graceful-restart-')[0]
+    expect(row.severity).toBe('critical')
+    expect(row.detail).toContain('given up holding the routes')
+  })
+
+  test('a restart that did not preserve forwarding is critical too', () => {
+    const alerts = alertsFor(
+      session(0, { gr: { restartTime: 120, forwarding: false }, endsInReset: true }),
+      session(40, { gr: { restartTime: 120, forwarding: false }, endOfRibAfter: 4 })
+    )
+
+    const row = byId(alerts, 'graceful-restart-')[0]
+    expect(row.severity).toBe('critical')
+    expect(row.detail).toContain('did not advertise preserved forwarding')
+  })
+
+  test('no End-of-RIB means the convergence time is declined, not guessed', () => {
+    const alerts = alertsFor(session(0, { endsInReset: true }), session(40))
+
+    const row = byId(alerts, 'graceful-restart-')[0]
+    expect(row).toBeDefined()
+    expect(row.detail).toContain('cannot be measured')
+  })
+
+  test('repeated restarts are one row that counts them', () => {
+    const alerts = alertsFor(
+      session(0, { endsInReset: true }),
+      session(40, { endOfRibAfter: 4, endsInReset: true }),
+      session(80, { endOfRibAfter: 4, endsInReset: true }),
+      session(120, { endOfRibAfter: 4 })
+    )
+
+    const rows = byId(alerts, 'graceful-restart-')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].count).toBe(3)
+    expect(rows[0].timeSpan).toBeDefined()
+  })
+})

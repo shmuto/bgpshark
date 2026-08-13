@@ -171,6 +171,16 @@ const SHOTS: Shot[] = [
     },
   },
   {
+    // The restart row in place of the flapping one, with the three numbers the
+    // manual promises: Restart Time, forwarding state, measured convergence.
+    file: 's8-graceful-restart',
+    scenario: 's8',
+    take: async (page) => {
+      await go(page, 'Dashboard')
+      return card(page, 'Alerts')
+    },
+  },
+  {
     // Both teardown rows next to the flapping warning they do not replace —
     // the manual's point is that these are symptom and cause, not duplicates.
     file: 's11-teardown-alerts',

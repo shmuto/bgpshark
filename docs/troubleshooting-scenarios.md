@@ -183,10 +183,24 @@ screen.
 and the forwarding-state flag, and how long the re-established session took to
 reach End-of-RIB.
 
-**◑** The capability is in the Capability Diff and End-of-RIB is labelled as such
-in the packet list, but the dashboard reports only *"Session flapping detected"* —
-a graceful restart and a crash-loop read identically. Assembling "GR was
-negotiated, forwarding state was preserved, convergence took 3s" is manual.
+**✔** The dashboard reports *"10.0.0.1 restarted gracefully"* and assembles the
+three numbers the question needs: the Restart Time the speaker asked for, whether
+it advertised preserved forwarding state, and the measured gap between the
+session coming back and its End-of-RIB — 3.8s here, against the 120s it asked
+for.
+
+It replaces the *"Session flapping detected"* row rather than joining it. A
+reload and a crash loop reading identically was the whole of S8, so leaving the
+old headline in place would have left the confusion in place. The restart row
+carries its own count, so a router restarting repeatedly still shows as
+repeatedly. It also takes the *"was reset with no NOTIFICATION"* row with it,
+since a restart is exactly the explanation that row exists to report the absence
+of.
+
+Warning rather than critical when the restart kept both of its promises, and
+critical when it did not: forwarding state not preserved, or convergence running
+past the Restart Time — after which the peer has stopped holding the routes and
+withdrawn them, which is the outage the mechanism exists to prevent.
 
 ### S9 — `s9-route-refresh` · A soft clear did not produce the expected routes
 
@@ -312,9 +326,9 @@ fire on S12 and S14 and stay silent everywhere else.
 
 `computeSilentTeardownAlerts` closes the second: a connection that carried BGP
 both ways and then ended in RST or FIN with no NOTIFICATION on it. Across the
-corpus it fires on S11, as two rows for the two shapes, and on S8 — where a
-graceful restart genuinely is a teardown nobody announced, and telling that
-apart from a crash is S8's own question rather than this rule's.
+corpus it fires on S11, as two rows for the two shapes. S8 is the exception it
+stands down for: a graceful restart is a teardown nobody announced, but the
+restart rule accounts for it and says something more useful about it.
 
 What remains:
 
@@ -322,6 +336,5 @@ What remains:
    and communities reach DuckDB but not the route history or the filter
    language, which makes the most common "why this path" question SQL-only.
 
-Smaller ones: `hold_time` exists as a column but not as a filter field; the SQL
-results grid renders `timestamp` as raw epoch milliseconds; and a graceful
-restart is indistinguishable from a flap (S8).
+Smaller ones: `hold_time` exists as a column but not as a filter field, and the
+SQL results grid renders `timestamp` as raw epoch milliseconds.
