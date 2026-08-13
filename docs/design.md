@@ -118,6 +118,32 @@ the answer.
 | 5 | FSM Error | - |
 | 6 | Cease | Admin Shutdown, Peer De-configured, etc. |
 
+#### 2.1.4b ROUTE-REFRESH: what the re-advertisement changed
+
+(`src/lib/bgp/route-refresh.ts`)
+
+A refresh is only ever sent after a policy change, and the question that follows
+is whether the routes that came back are the ones expected. Both halves are in
+the capture, so selecting the ROUTE-REFRESH shows the difference between them.
+
+Selecting the message is also how a capture holding several refreshes picks the
+interval: each one compares its own.
+
+| Rule | Behaviour |
+|------|-----------|
+| Whose table | The refresh's **destination** — the end being asked to re-advertise. The request travels one way and the answer the other, and reading it backwards compares the sender's own announcements and finds nothing on every capture. |
+| The window | From the refresh to the peer's End-of-RIB, or to the next refresh, or to the end of the capture, whichever comes first. |
+| Added | In the re-advertisement, not in the table before it. |
+| No longer advertised | In the table before, absent from the re-advertisement. **Not** read from withdrawals: after a refresh the peer re-sends its whole table, and a route it no longer has is simply not in it. This is the "my soft clear lost routes" case, and a rule watching for withdrawals would find nothing wrong. |
+| Attributes changed | In both, with a different AS_PATH, MED, LOCAL_PREF, next hop or community set. |
+| Unchanged | Counted, not listed. |
+| Capture began mid-session | Said: the "before" side is only what the capture caught, so a removal may be a route announced before recording started. |
+| No End-of-RIB | Said: anything not re-sent by the end of the capture is listed as removed whether or not it was on its way. |
+
+Indexed against the unfiltered packet list, for the same reason the hold timer
+is: what the peer had advertised is a property of the capture, not of what the
+reader is filtering for.
+
 #### 2.1.5 Packet List View
 - Timestamp
 - Source/Destination IP

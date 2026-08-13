@@ -108,11 +108,27 @@ test.describe('the user manual', () => {
     // own hash handling has nothing to scroll to when it runs. The page has to
     // do it itself, and this is the assertion that says so.
     await page.goto('./manual#filters', { waitUntil: 'networkidle' })
-    await page.waitForTimeout(800)
 
-    const offset = await page.evaluate(
-      () => document.getElementById('filters')?.getBoundingClientRect().top ?? -9999
-    )
+    // Polled rather than measured after a fixed wait: the page scrolls itself
+    // once the HTML is in, and images above the anchor settle into their
+    // reserved space around the same time. A sleep long enough on an idle
+    // machine is not long enough on a loaded one, and the failure looks like a
+    // broken anchor rather than a slow one.
+    const offsetOf = () =>
+      page.evaluate(() => {
+        const top = document.getElementById('filters')?.getBoundingClientRect().top
+        return top === undefined ? -9999 : Math.round(top)
+      })
+
+    await expect
+      .poll(async () => {
+        const top = await offsetOf()
+        return top > -50 && top < 200
+      }, { timeout: 5_000 })
+      .toBe(true)
+
+    // Read once more so a later regression reports the number it landed on.
+    const offset = await offsetOf()
     expect(offset).toBeGreaterThan(-50)
     expect(offset).toBeLessThan(200)
   })

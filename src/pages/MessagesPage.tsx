@@ -7,6 +7,7 @@ import { useIsCompact } from '../hooks/useMediaQuery'
 import { useSplitPane } from '../hooks/useSplitPane'
 import { PacketDetail } from '../components/message/PacketDetail'
 import { holdTimerContext } from '../lib/bgp/hold-timer'
+import { routeRefreshDiff } from '../lib/bgp/route-refresh'
 import type {
   BgpPacket,
   BgpUpdateMessage,
@@ -279,6 +280,34 @@ export function MessagesPage() {
     const index = packets.indexOf(selectedBgpPacket)
     return index >= 0 ? holdTimerContext(packets, index) : null
   }, [selectedBgpPacket, packets])
+
+  /**
+   * The diff either side of the selected ROUTE-REFRESH.
+   *
+   * Indexed against the unfiltered list for the same reason the hold timer is:
+   * the routes the peer had before the request are a property of the capture,
+   * not of what the reader is currently filtering for. Selecting the refresh is
+   * also how a capture with several of them picks which interval to compare —
+   * the message is the divider.
+   */
+  const refreshDiff = useMemo(() => {
+    if (!selectedBgpPacket) return null
+    const index = packets.indexOf(selectedBgpPacket)
+    return index >= 0 ? routeRefreshDiff(packets, index) : null
+  }, [selectedBgpPacket, packets])
+
+  /** Opens a packet named by a diff row, by its index in the unfiltered list. */
+  const selectByPacketIndex = useCallback(
+    (packetIndex: number) => {
+      const target = packets[packetIndex]
+      if (!target) return
+      const displayIdx = displayPackets.findIndex((p) => p.packet.frameIndex === target.frameIndex)
+      if (displayIdx < 0) return
+      selectPacket(displayIdx)
+      setHighlightedIndex(displayIdx)
+    },
+    [packets, displayPackets, selectPacket]
+  )
 
   // Extract all dynamic values from packets for filter dropdowns
   const dynamicValues = useMemo(() => {
@@ -778,7 +807,12 @@ export function MessagesPage() {
           </div>
           <div className="flex-1 overflow-auto">
             {selectedBgpPacket ? (
-              <PacketDetail packet={selectedBgpPacket} holdTimer={holdTimer} />
+              <PacketDetail
+                packet={selectedBgpPacket}
+                holdTimer={holdTimer}
+                refreshDiff={refreshDiff}
+                onSelectPacket={selectByPacketIndex}
+              />
             ) : selectedGenericPacket ? (
               <GenericPacketDetail packet={selectedGenericPacket} />
             ) : (

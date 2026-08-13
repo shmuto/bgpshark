@@ -6,6 +6,7 @@ import { UpdateMessageView } from './UpdateMessageView'
 import { RouteRefreshMessageView } from './RouteRefreshMessageView'
 import { HexDump } from '../common/HexDump'
 import type { HoldTimerContext } from '../../lib/bgp/hold-timer'
+import type { RouteRefreshDiff } from '../../lib/bgp/route-refresh'
 
 interface PacketDetailProps {
   packet: BgpPacket
@@ -15,9 +16,16 @@ interface PacketDetailProps {
    * this one, which is the one thing a detail view cannot see for itself.
    */
   holdTimer?: HoldTimerContext | null
+  refreshDiff?: RouteRefreshDiff | null
+  onSelectPacket?: (packetIndex: number) => void
 }
 
-export function PacketDetail({ packet, holdTimer }: PacketDetailProps) {
+export function PacketDetail({
+  packet,
+  holdTimer,
+  refreshDiff,
+  onSelectPacket,
+}: PacketDetailProps) {
   const { messages, rawData, parseWarnings } = packet
 
   return (
@@ -75,6 +83,8 @@ export function PacketDetail({ packet, holdTimer }: PacketDetailProps) {
           index={index}
           total={messages.length}
           holdTimer={holdTimer}
+          refreshDiff={refreshDiff}
+          onSelectPacket={onSelectPacket}
         />
       ))}
 
@@ -94,11 +104,15 @@ function MessageSection({
   index,
   total,
   holdTimer,
+  refreshDiff,
+  onSelectPacket,
 }: {
   message: BgpMessage
   index: number
   total: number
   holdTimer?: HoldTimerContext | null
+  refreshDiff?: RouteRefreshDiff | null
+  onSelectPacket?: (packetIndex: number) => void
 }) {
   const title = total > 1 ? `BGP ${message.type} Message (${index + 1}/${total})` : `BGP ${message.type} Message`
 
@@ -113,7 +127,13 @@ function MessageSection({
       )}
       {message.type === 'KEEPALIVE' && <KeepaliveMessageView />}
       {message.type === 'UPDATE' && <UpdateMessageView message={message} />}
-      {message.type === 'ROUTE_REFRESH' && <RouteRefreshMessageView message={message} />}
+      {message.type === 'ROUTE_REFRESH' && (
+        <RouteRefreshMessageView
+          message={message}
+          diff={refreshDiff}
+          onSelectPacket={onSelectPacket}
+        />
+      )}
     </section>
   )
 }

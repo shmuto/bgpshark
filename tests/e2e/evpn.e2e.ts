@@ -95,6 +95,12 @@ test.describe('EVPN on the route history', () => {
     await expect(row).toBeVisible()
     await row.click()
 
+    // The panel renders after the click, and reading `innerText` on the next
+    // line is a race the assertions below lose by finding "Select a prefix to
+    // view history". The heading carries the selected route, so waiting for it
+    // is the cheapest proof the history is actually on screen.
+    await expect(page.getByText('Route History: [2] 00:0c:29:aa:bb:cc VNI 10100')).toBeVisible()
+
     const body = await page.locator('body').innerText()
     // The RD column is what says the move happened: same MAC, different leaf.
     expect(body).toContain('10.0.0.2:100')
