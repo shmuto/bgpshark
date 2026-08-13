@@ -6,6 +6,7 @@ import { BackToList, PacketList, PaneDivider, QueryInput, type DisplayPacket } f
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { useSplitPane } from '../hooks/useSplitPane'
 import { PacketDetail } from '../components/message/PacketDetail'
+import { holdTimerContext } from '../lib/bgp/hold-timer'
 import type {
   BgpPacket,
   BgpUpdateMessage,
@@ -219,6 +220,21 @@ export function MessagesPage() {
   const selectedDisplayPacket = selectedPacketIndex !== null ? displayPackets[selectedPacketIndex] : null
   const selectedBgpPacket = selectedDisplayPacket?.kind === 'bgp' ? selectedDisplayPacket.packet : null
   const selectedGenericPacket = selectedDisplayPacket?.kind === 'generic' ? selectedDisplayPacket.packet : null
+
+  /**
+   * A Hold Timer Expired NOTIFICATION is about what did *not* arrive before it,
+   * so the detail view cannot work it out from the packet it was handed.
+   *
+   * Indexed against the unfiltered `packets` rather than what the list is
+   * showing: the KEEPALIVE that ended the silence is exactly the kind of packet
+   * a filter aimed at the NOTIFICATION would have hidden, and the answer must
+   * not change with the filter.
+   */
+  const holdTimer = useMemo(() => {
+    if (!selectedBgpPacket) return null
+    const index = packets.indexOf(selectedBgpPacket)
+    return index >= 0 ? holdTimerContext(packets, index) : null
+  }, [selectedBgpPacket, packets])
 
   // Extract all dynamic values from packets for filter dropdowns
   const dynamicValues = useMemo(() => {
@@ -718,7 +734,7 @@ export function MessagesPage() {
           </div>
           <div className="flex-1 overflow-auto">
             {selectedBgpPacket ? (
-              <PacketDetail packet={selectedBgpPacket} />
+              <PacketDetail packet={selectedBgpPacket} holdTimer={holdTimer} />
             ) : selectedGenericPacket ? (
               <GenericPacketDetail packet={selectedGenericPacket} />
             ) : (

@@ -257,26 +257,34 @@ one for the re-establishments.
 
 `Hold Timer Expired` means one side stopped hearing from the other. That is a
 statement about reachability, not about BGP — and the number that decides it is
-how long *before* the teardown the last KEEPALIVE arrived. The Dashboard does not
-compute that interval; the SQL console will:
+how long *before* the teardown the last message from the peer arrived.
 
-```sql
-select m.type, p.src_ip, p.timestamp,
-       epoch(p.timestamp - lag(p.timestamp) over (order by p.timestamp)) as gap_s
-from packets p join messages m using(frame_index)
-order by p.frame_index
-```
+**Messages → click the NOTIFICATION.** The detail measures it for you, under
+**Silence before the teardown**.
 
-![The query and its result: a 90.2 second gap between the last KEEPALIVE and the NOTIFICATION](manual/s3-holdtimer-gap.png)
+![The NOTIFICATION detail: 90.4 seconds since the last KEEPALIVE from 10.0.0.1, against a negotiated hold time of 90 seconds](manual/s3-holdtimer-gap.png)
 
-A gap that matches the negotiated hold time — 90.2 seconds against a hold time
-of 90 — means KEEPALIVEs stopped arriving one way while the session was
-otherwise healthy. Look at the path between the routers, not at the routers.
-A gap much *shorter* than the hold time means something else killed it, and the
-NOTIFICATION is only reporting what it saw.
+A silence that ran the whole hold time — 90.4 seconds against a hold time of
+90 — means KEEPALIVEs stopped arriving one way while the session was otherwise
+healthy. Look at the path between the routers, not at the routers. A silence
+much *shorter* than the hold time is flagged as such: either the capture is
+missing packets that did arrive, or the hold time actually in force was not the
+one these OPENs agreed.
 
-(The results grid renders `timestamp` as raw epoch milliseconds. Read the `gap_s`
-column, not the absolute times.)
+Two things the panel is careful about, and you should be too if you go
+measuring this by hand:
+
+- It counts from the **peer's** last message, not from the previous packet in
+  the list. On a healthy session both ends are talking, so the previous packet
+  is usually the complaining router's own KEEPALIVE — a different number, and
+  not the one the timer was counting. Here that mistake reads 90.2 seconds.
+- The hold time it compares against is the **lower of the two OPENs**, taken
+  from the OPENs that preceded *this* teardown. On a flapping capture the
+  session that came back may have negotiated something else.
+
+If the capture starts mid-session and holds no OPENs, the silence is still
+measured — the panel just says the hold time is unknown and leaves the
+comparison to you.
 
 ### “It dropped, and nothing says why”
 

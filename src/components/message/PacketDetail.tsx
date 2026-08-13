@@ -5,12 +5,19 @@ import { KeepaliveMessageView } from './KeepaliveMessageView'
 import { UpdateMessageView } from './UpdateMessageView'
 import { RouteRefreshMessageView } from './RouteRefreshMessageView'
 import { HexDump } from '../common/HexDump'
+import type { HoldTimerContext } from '../../lib/bgp/hold-timer'
 
 interface PacketDetailProps {
   packet: BgpPacket
+  /**
+   * How long the peer had been quiet, for a Hold Timer Expired NOTIFICATION.
+   * Computed by the caller because it is a fact about the packets *around*
+   * this one, which is the one thing a detail view cannot see for itself.
+   */
+  holdTimer?: HoldTimerContext | null
 }
 
-export function PacketDetail({ packet }: PacketDetailProps) {
+export function PacketDetail({ packet, holdTimer }: PacketDetailProps) {
   const { messages, rawData, parseWarnings } = packet
 
   return (
@@ -62,7 +69,13 @@ export function PacketDetail({ packet }: PacketDetailProps) {
 
       {/* Message Content - render all messages */}
       {messages.map((message, index) => (
-        <MessageSection key={index} message={message} index={index} total={messages.length} />
+        <MessageSection
+          key={index}
+          message={message}
+          index={index}
+          total={messages.length}
+          holdTimer={holdTimer}
+        />
       ))}
 
       {/* Hex Dump */}
@@ -76,7 +89,17 @@ export function PacketDetail({ packet }: PacketDetailProps) {
   )
 }
 
-function MessageSection({ message, index, total }: { message: BgpMessage; index: number; total: number }) {
+function MessageSection({
+  message,
+  index,
+  total,
+  holdTimer,
+}: {
+  message: BgpMessage
+  index: number
+  total: number
+  holdTimer?: HoldTimerContext | null
+}) {
   const title = total > 1 ? `BGP ${message.type} Message (${index + 1}/${total})` : `BGP ${message.type} Message`
 
   return (
@@ -85,7 +108,9 @@ function MessageSection({ message, index, total }: { message: BgpMessage; index:
         {title}
       </h3>
       {message.type === 'OPEN' && <OpenMessageView message={message} />}
-      {message.type === 'NOTIFICATION' && <NotificationMessageView message={message} />}
+      {message.type === 'NOTIFICATION' && (
+        <NotificationMessageView message={message} holdTimer={holdTimer} />
+      )}
       {message.type === 'KEEPALIVE' && <KeepaliveMessageView />}
       {message.type === 'UPDATE' && <UpdateMessageView message={message} />}
       {message.type === 'ROUTE_REFRESH' && <RouteRefreshMessageView message={message} />}

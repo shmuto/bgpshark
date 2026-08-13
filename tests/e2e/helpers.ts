@@ -307,3 +307,32 @@ export function malformedUpdateCapture(): Buffer {
   })
   return Buffer.from(built.bytes)
 }
+
+/**
+ * A hold timer expiry where the two candidate measurements differ a lot.
+ *
+ * 10.0.0.1 goes quiet first; 10.0.0.2 keeps sending for another 30 seconds and
+ * then gives up. So the gap to the *previous packet in the capture* is about
+ * 60 seconds and the gap to the last thing heard *from the peer* is about 90 —
+ * and only the second is the number the hold timer was counting. The two are
+ * far enough apart here that a test can tell which one is on screen.
+ */
+export function holdTimerExpiryCapture(): Buffer {
+  const built = buildScenario({
+    a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 },
+    b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 180 },
+    gap: 200,
+    steps: [
+      { kind: 'handshake' },
+      { kind: 'open', from: 'a' },
+      { kind: 'open', from: 'b' },
+      { kind: 'keepalive', from: 'a' },
+      { kind: 'delay', gap: 30_000 },
+      { kind: 'keepalive', from: 'b' },
+      { kind: 'delay', gap: 60_000 },
+      { kind: 'send', from: 'b', messages: [{ type: 'NOTIFICATION', errorCode: 4, errorSubcode: 0 }] },
+      { kind: 'close', from: 'b', gap: 50 },
+    ],
+  })
+  return Buffer.from(built.bytes)
+}

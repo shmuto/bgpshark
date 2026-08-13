@@ -145,17 +145,16 @@ const SHOTS: Shot[] = [
     },
   },
   {
+    // The NOTIFICATION selected, so the measured silence sits next to the error
+    // code it explains. Viewport rather than the panel alone: half the point is
+    // that this needs no SQL and no navigation beyond clicking the message.
     file: 's3-holdtimer-gap',
     scenario: 's3',
     take: async (page) => {
-      await go(page, 'SQL')
-      await query(
-        page,
-        `select m.type, p.src_ip, p.timestamp,
-       epoch(p.timestamp - lag(p.timestamp) over (order by p.timestamp)) as gap_s
-from packets p join messages m using(frame_index)
-order by p.frame_index`
-      )
+      await go(page, 'Messages')
+      await page.getByText('Hold Timer Expired/Unspecific').first().click()
+      await page.waitForTimeout(600)
+      await page.getByText('Silence before the teardown').first().waitFor()
       return null
     },
   },
@@ -199,6 +198,11 @@ order by p.frame_index`
   },
   {
     // The query as well as its answer: this one is worth copying, not just reading.
+    //
+    // This is also the one shot that re-diffs on every run without anything
+    // having changed: the SQL console prints how long the query took, and that
+    // is a wall clock. If `git status` offers you this file and nothing else,
+    // compare the two before committing — it is usually 75ms against 89ms.
     file: 's4-bestpath',
     scenario: 's4',
     take: async (page) => {
