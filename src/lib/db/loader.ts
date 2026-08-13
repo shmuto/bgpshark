@@ -78,9 +78,39 @@ let largeCommunityIdCounter = 0
 let extCommunityIdCounter = 0
 
 /**
- * Load packets into DuckDB
+ * The tail of the load queue, so that two loads never overlap.
+ *
+ * A load is not an insert into an empty database: it drops every table and
+ * recreates it, resets the id counters, and only then inserts. All of that is
+ * global state shared through one connection, so a second load starting while
+ * the first is mid-flight is not merely slower — it drops the tables the first
+ * one is still writing into ("Catalog Error: Table with name withdrawn does not
+ * exist") or replays ids the first one already used ("Duplicate key
+ * frame_index: 1 violates primary key constraint").
+ *
+ * That is not hypothetical: `useBgpAnalyzer` has two callers by design — the
+ * capture being parsed calls it, and so does the backfill for a capture that
+ * was dropped while the database was still starting. React's development
+ * double-invoked effects make it two of the latter. They used to race.
+ */
+let loadQueue: Promise<unknown> = Promise.resolve()
+
+/**
+ * Load packets into DuckDB.
+ *
+ * Calls are serialised rather than rejected or coalesced: each one is a
+ * complete "make the database hold exactly this capture", so the last caller
+ * still describes the state the app wants when the queue drains.
  */
 export async function loadPackets(packets: BgpPacket[]): Promise<void> {
+  // A failed load must not poison the queue for the next caller, hence the
+  // swallow on the tail — the error still reaches this call's own awaiter.
+  const run = loadQueue.catch(() => {}).then(() => runLoad(packets))
+  loadQueue = run.catch(() => {})
+  return run
+}
+
+async function runLoad(packets: BgpPacket[]): Promise<void> {
   // Until the load below completes, the tables must be treated as absent —
   // a partial or failed load left as "loaded" is exactly the state that made
   // every filter silently return zero packets.

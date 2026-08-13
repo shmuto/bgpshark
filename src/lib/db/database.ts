@@ -69,15 +69,29 @@ export async function initDatabase(): Promise<void> {
       throw new Error('DuckDB initialization abandoned after timeout')
     }
 
+    // The schema is part of "usable", so it is built on the connection before
+    // that connection is published rather than after. Publishing first opened a
+    // window — one round trip per CREATE TABLE, widening with load — in which
+    // `isInitialized()` answered true while none of the tables existed yet.
+    //
+    // The capture loader no longer falls into it, because it recreates every
+    // table itself and is now serialised. What is left is everything else that
+    // takes `isInitialized()` at its word: the SQL console asks for a
+    // connection, not for the loader, and a query issued inside the window gets
+    // "Table with name packets does not exist" from a database that has just
+    // said it was ready. Closing the window is cheaper than auditing callers.
+    await createSchema(connection)
+
     // The module-level handles are only set once the database is actually
     // usable. A timed-out attempt that limps to completion later must not
     // flip `isInitialized()` to true behind the app's back — the capture was
     // loaded without DuckDB, so its tables would be empty (see useFilter).
+    if (attempt.cancelled) {
+      throw new Error('DuckDB initialization abandoned after timeout')
+    }
+
     db = database
     conn = connection
-
-    // Create schema
-    await createSchema()
   })()
 
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -103,16 +117,17 @@ export async function initDatabase(): Promise<void> {
 }
 
 /**
- * Create database schema
+ * Create database schema.
+ *
+ * Takes the connection rather than reading the module-level `conn`, because the
+ * first caller runs before `conn` is set — that ordering is the point (see
+ * `initDatabase`), and reading the global here would reintroduce the window it
+ * exists to close.
  */
-async function createSchema(): Promise<void> {
-  if (!conn) {
-    throw new Error('Database not initialized')
-  }
-
+async function createSchema(connection: duckdb.AsyncDuckDBConnection): Promise<void> {
   const statements = splitSqlStatements(SCHEMA_SQL)
   for (const stmt of statements) {
-    await conn.query(stmt)
+    await connection.query(stmt)
   }
 }
 
@@ -149,7 +164,7 @@ export async function resetDatabase(): Promise<void> {
   }
 
   // Recreate schema
-  await createSchema()
+  await createSchema(connection)
 }
 
 /**
