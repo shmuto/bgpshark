@@ -171,6 +171,16 @@ const SHOTS: Shot[] = [
     },
   },
   {
+    // Both teardown rows next to the flapping warning they do not replace —
+    // the manual's point is that these are symptom and cause, not duplicates.
+    file: 's11-teardown-alerts',
+    scenario: 's11',
+    take: async (page) => {
+      await go(page, 'Dashboard')
+      return card(page, 'Alerts')
+    },
+  },
+  {
     // The reset selected: the packet list shows the gap, the detail names the flags.
     file: 's11-tcp-reset',
     scenario: 's11',

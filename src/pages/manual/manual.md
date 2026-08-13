@@ -289,12 +289,27 @@ comparison to you.
 ### “It dropped, and nothing says why”
 
 No NOTIFICATION anywhere in the capture, and the session came back a minute
-later. The evidence is at the TCP layer, and the packet list hides it by
-default.
+later. The evidence is at the TCP layer, which the packet list hides by default
+— so start at the **Dashboard**, which now names it and takes you there.
 
-**Messages → All Packets.** The tell is already visible before you switch: the
-frame numbers in BGP Only jump — 10, then 15 — and the missing frames are the
-ones that ended the session.
+Two critical rows, one per teardown: *"10.0.0.1 ↔ 10.0.0.2 was reset with no
+NOTIFICATION"* and *"…was closed with no NOTIFICATION"*. `View →` on either one
+switches the list to **All Packets** and selects the frame it is talking about,
+which is the point — a row naming a reset you then have to go and find would
+only be half an answer.
+
+![The Alerts panel with two critical rows — one reading "10.0.0.1 ↔ 10.0.0.2 was reset with no NOTIFICATION", one "was closed with no NOTIFICATION" — above a "Session flapping detected" warning](manual/s11-teardown-alerts.png)
+
+They sit beside the *"Session flapping detected"* warning rather than replacing
+it: that one counts how often the session came *up*, these say how it went
+*down*. The split into two rows is deliberate too. An RST is something actively
+rejecting the connection — a firewall, a stack with no socket left. A FIN is
+something deciding the session was finished and closing it politely, which is
+what an idle timeout looks like. The next thing to check differs.
+
+**Messages → All Packets**, if you arrive by hand instead. The tell is visible
+before you switch: the frame numbers in BGP Only jump — 10, then 15 — and the
+missing frames are the ones that ended the session.
 
 ![The packet list in All Packets mode with frame 11 selected: an [AR] frame from 10.0.0.2, and a detail pane reading "TCP Flags: ACK, RST"](manual/s11-tcp-reset.png)
 
@@ -303,10 +318,12 @@ seconds after the last KEEPALIVE, with a fresh SYN 60 seconds later. `[F]` for a
 FIN is the polite version of the same story: something closed the connection
 deliberately, and BGP never got the chance to say why.
 
-The Dashboard stays silent about this. Transport-level alerts are only computed
-for a capture that contains no BGP at all, so a *post-establishment* reset is
-never surfaced — you have to come and look. There is also no filter field for
-TCP flags; **All Packets** and your eyes are the whole toolkit here.
+One thing is still missing: there is no filter field for TCP flags, so you
+cannot narrow the list to resets — **All Packets** and your eyes do that part.
+
+A session that never established is not reported here, even though its
+connections also end in RST. Nothing was torn down in that case, and *"TCP
+connects but the peer sends no BGP"* already says the useful thing about it.
 
 ### “The session drops the moment routes are advertised”
 
@@ -572,8 +589,6 @@ Worth knowing, so you do not read absence as evidence:
 - **Which of two causes made a session one-sided.** It tells you one direction
   is missing; whether that is your capture or the network is yours to work out.
   [How to tell them apart](#the-capture-may-be-lying-to-you).
-- **Why a session dropped without a NOTIFICATION.** The TCP reset is visible
-  under **All Packets**, but nothing points you there.
 - **Whether a path is one it should be carrying.** There is no notion of an
   expected AS_PATH, so a leak looks exactly like a legitimate announcement.
 - **Whether a restart was graceful.** A graceful restart and a crash loop are

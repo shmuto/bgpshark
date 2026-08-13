@@ -43,7 +43,12 @@ export function MessagesPage() {
   const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
-  const [showAllPackets, setShowAllPackets] = useState(false)
+  // In the URL because a dashboard alert can point at a TCP frame, and the list
+  // shows BGP only until this is on — a link naming an RST has to be able to
+  // set it, or it lands the reader on a list that cannot contain the frame.
+  const [showAllPackets, setShowAllPackets] = useState(
+    () => new URLSearchParams(window.location.search).get('all') === '1'
+  )
   // A filter arriving in the URL opens in advanced mode: a dashboard alert
   // links an expression the rule builder has no way to represent, and the
   // builder starting empty would mean starting by throwing that filter away.
@@ -192,6 +197,45 @@ export function MessagesPage() {
       }))
     }
   }, [filteredPackets, allPackets, showAllPackets])
+
+  /**
+   * A `?frame=` link names a frame by its index in the capture, which is the
+   * only way to address one that carries no BGP — `?selected=` indexes the BGP
+   * packet array, and an RST is not in it. Honoured once, like `?selected=`,
+   * so the reader's own clicks own the selection afterwards.
+   */
+  const frameAppliedRef = useRef(false)
+  useEffect(() => {
+    if (frameAppliedRef.current) return
+
+    const requested = searchParams.get('frame')
+    if (requested === null) return
+
+    const frameIndex = parseInt(requested, 10)
+    if (isNaN(frameIndex)) return
+
+    const displayIdx = displayPackets.findIndex((p) => p.packet.frameIndex === frameIndex)
+    if (displayIdx < 0) return
+
+    frameAppliedRef.current = true
+    selectPacket(displayIdx)
+    setHighlightedIndex(displayIdx)
+  }, [searchParams, displayPackets, selectPacket])
+
+  /**
+   * Keep the All Packets toggle in the URL, so the view a reader is looking at
+   * is the view they share. Replace rather than push: flipping it is a change
+   * of lens, not a place worth a Back button entry.
+   */
+  useEffect(() => {
+    const inUrl = searchParams.get('all') === '1'
+    if (inUrl === showAllPackets) return
+
+    const next = new URLSearchParams(searchParams)
+    if (showAllPackets) next.set('all', '1')
+    else next.delete('all')
+    setSearchParams(next, { replace: true })
+  }, [showAllPackets, searchParams, setSearchParams])
 
   /**
    * Save whatever the list currently shows as a pcap.

@@ -214,18 +214,24 @@ healthy: a bare RST five seconds after a KEEPALIVE, and later an ordinary FIN
 close. A BGP speaker that meant to go away would have sent Cease first, so a FIN
 on its own is the same missing explanation.
 
-**◑** The evidence is there — switch the packet list to **All Packets** and the
-`[AR]` and `[F]` frames are visible with their timestamps — but nothing routes
-you to it. The dashboard reports *"Session flapping detected"*, marks the pair
-`✓ OK`, and stays silent about both teardowns, because `computeTransportAlerts`
-only runs when the capture holds no BGP at all (`DashboardPage.tsx:117`). There
-is also no filter field for TCP flags.
+**✔** The dashboard reports both teardowns as critical rows — one for the RST,
+one for the FIN — naming the peering and saying that nothing at the BGP layer
+accounted for either. `View →` switches the packet list to **All Packets** and
+selects the frame itself, which it has to: the list shows BGP only by default,
+so a row naming an `[AR]` would otherwise land you where it cannot be seen.
 
-Note that `s3-holdtimer-flap` also contains RSTs — after its NOTIFICATIONs. Any
-alert added here has to stay quiet about those, or it will fire on every healthy
-teardown in the corpus. `design.md` §2.1.14 specifies the rule this scenario is
-waiting for, including why it has to be scoped to a connection rather than a
-peer, and why connections have to be delimited by SYN.
+The rows sit next to the existing *"Session flapping detected"* rather than
+replacing it. They are symptom and cause: flapping counts how often the session
+came up, these say how it went down and that nothing explained it.
+
+`s3-holdtimer-flap` also contains RSTs — after its NOTIFICATIONs — and stays
+quiet, as does `s14-open-unanswered`, whose resets end connections that never
+became sessions and which already has a row of its own. `design.md` §2.1.14
+carries the rule, including why it is scoped to a connection rather than a peer
+and why connections are delimited by SYN rather than by the four-tuple.
+
+Still missing: there is no filter field for TCP flags, so narrowing the packet
+list to resets by hand is not possible.
 
 ### S12 — `s12-one-direction` · A capture that shows a session the router calls down
 
@@ -297,21 +303,22 @@ that disagreed. Nothing fires on a reply that never came, a direction that is no
 there, or a session that never reached Established — and from a capture taken on
 one router, absence is exactly how a fault at the far end appears.
 
-The first of those gaps is now closed. `computeSessionSetupAlerts` reports a
-session with one direction in it and a connection that was accepted and never
-answered, both as critical rows, and the neighbour table marks the pair
-`⚠ Never up` rather than `✓ OK`. Run against all fourteen captures plus the
-sample and the ContainerLab capture, the two rules fire on S12 and S14 and stay
-silent everywhere else.
+Two of those gaps are now closed, both by rules that fire on an absence.
+`computeSessionSetupAlerts` reports a session with one direction in it and a
+connection that was accepted and never answered, both as critical rows, and the
+neighbour table marks the pair `⚠ Never up` rather than `✓ OK`. Run against all
+fourteen captures plus the sample and the ContainerLab capture, the two rules
+fire on S12 and S14 and stay silent everywhere else.
+
+`computeSilentTeardownAlerts` closes the second: a connection that carried BGP
+both ways and then ended in RST or FIN with no NOTIFICATION on it. Across the
+corpus it fires on S11, as two rows for the two shapes, and on S8 — where a
+graceful restart genuinely is a teardown nobody announced, and telling that
+apart from a crash is S8's own question rather than this rule's.
 
 What remains:
 
-1. **A post-establishment RST or FIN is never surfaced** (S11). The data is
-   already parsed into `GenericPacket.tcpFlags`; only the gate on
-   `computeTransportAlerts` keeps it off the dashboard. Both teardown shapes are
-   in the capture, and `s3-holdtimer-flap` holds the RSTs any new rule must stay
-   quiet about.
-2. **Best-path attributes stop at AS_PATH and Next Hop** (S4). MED, LOCAL_PREF
+1. **Best-path attributes stop at AS_PATH and Next Hop** (S4). MED, LOCAL_PREF
    and communities reach DuckDB but not the route history or the filter
    language, which makes the most common "why this path" question SQL-only.
 
