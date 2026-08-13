@@ -198,6 +198,11 @@ const SHOTS: Shot[] = [
   },
   {
     // The query as well as its answer: this one is worth copying, not just reading.
+    //
+    // This is also the one shot that re-diffs on every run without anything
+    // having changed: the SQL console prints how long the query took, and that
+    // is a wall clock. If `git status` offers you this file and nothing else,
+    // compare the two before committing — it is usually 75ms against 89ms.
     file: 's4-bestpath',
     scenario: 's4',
     take: async (page) => {
