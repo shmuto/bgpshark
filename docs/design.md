@@ -265,11 +265,36 @@ is why captures of outright broken sessions were once summarised as healthy.
 | AS_PATH changed | warning | More than one distinct AS_PATH for a prefix; worst 5 plus a summary row | Prepends that never varied |
 | One direction | critical | A peering with TCP frames in only one direction | Anything with both directions present |
 | Accepted, no BGP | critical | A SYN-ACK was seen and only one end sent BGP | A refused connection — `computeTransportAlerts` owns that, and a second explanation of the same packets is a worse one |
+| Graceful restart | warning, critical when a promise was broken | A teardown with no NOTIFICATION followed by both ends re-OPENing with the Graceful Restart capability; reports the negotiated Restart Time, whether forwarding state was preserved, and the measured re-establishment→End-of-RIB convergence | A flap between peers that never advertised the capability, and a teardown a NOTIFICATION explained — a speaker that sent a Cease was leaving, not restarting |
 | Silent teardown | critical | A connection that carried BGP *in both directions* ends in RST or FIN with no NOTIFICATION on it; grouped per peering and teardown kind | Every teardown that a NOTIFICATION already explains, and a session that never established — `s14-open-unanswered` resets three connections and belongs to "Accepted, no BGP" |
 
 `computeTransportAlerts` is separate and runs only when a capture holds no BGP
 at all: with nothing above TCP to report, the interesting question is what
 answers the SYN.
+
+##### Two rules that deliberately silence others
+
+The panel prefers rules that do not suppress each other — "why is this alert not
+firing" with no answer short of reading both is a bad place to end up. Two
+exceptions are worth the cost, and both are cases where the quieter rule would
+be actively *wrong* rather than merely redundant.
+
+**Graceful restart replaces the flapping row** for a peering whose
+re-establishments it accounts for. "Session flapping detected" is not a
+second opinion there, it is the confusion S8 exists to end: a reload that kept
+forwarding and a crash loop that did not read identically. The restart row
+carries its own count, so a router restarting thirty times is still visible as
+thirty — the signal moves rather than disappearing.
+
+**Graceful restart replaces the silent-teardown row** for the reset it came back
+from. The teardown rule's premise is that *nothing* explained the reset; a
+restart is an explanation, in the same way a NOTIFICATION is. Leaving both would
+put a row pointing at firewalls next to a row saying the router came back with
+forwarding intact.
+
+Both rules read the same connection list from `connectionsByPeering`, which is
+what makes the interlock exact: they cannot disagree about where one connection
+ended and the next began.
 
 ##### The rule, in detail
 

@@ -471,12 +471,29 @@ are decoded in the message detail but are not compared for you.
 
 Both leave a capture that looks like something worse than it is.
 
-A **graceful restart** and a crash loop are indistinguishable to the Dashboard:
-both are reported as *"Session flapping detected"*. What separates them is in the
-Capability Diff — Graceful Restart with its restart time and the forwarding-state
-flag — and in the packet list, where the re-established session's **End-of-RIB**
-marker tells you when convergence finished. An UPDATE with nothing in it is
-labelled `End-of-RIB` rather than left looking empty, so it is easy to find.
+A **graceful restart** is named as one. The Dashboard reports
+*"10.0.0.1 restarted gracefully"* instead of *"Session flapping detected"*, and
+carries the three things the question needs: the **Restart Time** the speaker
+asked for, whether it advertised that it **kept forwarding state**, and how long
+convergence actually took — measured from the session coming back to the
+**End-of-RIB** that says the routes are.
+
+![The Alerts panel with a single warning row reading "10.0.0.1 restarted gracefully, peer 10.0.0.2", explaining that routes were back 3.8s after the session came up against the 120s it asked for, and that it kept forwarding state](manual/s8-graceful-restart.png)
+
+That last number is the one worth reading. It is what the restart cost in
+practice, and if it runs past the Restart Time the peer has already given up
+holding the routes and withdrawn them — so the row turns critical. It turns
+critical too when forwarding state was *not* preserved, because then the
+dataplane dropped traffic for the whole window, which is the thing a graceful
+restart exists to avoid.
+
+A crash loop has none of that: no capability, so nothing was agreed, and it
+still reads as *"Session flapping detected"* plus a teardown row. The difference
+between the two screens is the answer.
+
+The raw material is still there if you want to check the reading: the capability
+with its flags is in the **Capability Diff**, and an UPDATE with nothing in it is
+labelled `End-of-RIB` in the packet list rather than left looking empty.
 
 A **soft clear** shows up as a ROUTE-REFRESH followed by the re-advertisement.
 Both halves are visible as messages; comparing what came back against what was
@@ -591,8 +608,6 @@ Worth knowing, so you do not read absence as evidence:
   [How to tell them apart](#the-capture-may-be-lying-to-you).
 - **Whether a path is one it should be carrying.** There is no notion of an
   expected AS_PATH, so a leak looks exactly like a legitimate announcement.
-- **Whether a restart was graceful.** A graceful restart and a crash loop are
-  both reported as a flapping session.
 - **What your router decided.** BGPShark reads what crossed the wire. Which path
   was selected, what policy did to it, and what ended up in the RIB are on the
   router, not in the capture.

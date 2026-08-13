@@ -13,9 +13,12 @@
 import type {
   BgpPacket,
   BgpNotificationMessage,
+  BgpOpenMessage,
   BgpUpdateMessage,
+  GracefulRestartCapability,
   MpUnreachNlriAttribute,
 } from '../../lib/bgp/types'
+import { endOfRibMarker } from '../../lib/bgp/update'
 import type { GenericPacket } from '../../lib/pcap'
 import { aggregatePrefixStats, type PrefixStats } from '../../lib/bgp/prefix-stats'
 import type { DashboardAlert } from './types'
@@ -372,6 +375,14 @@ type TeardownKind = 'RST' | 'FIN'
  * NOTIFICATION in the file, and the rule below would find every teardown
  * explained and stay silent on the very capture it exists for.
  */
+/** An OPEN as this file cares about it: who sent it, when, and its GR terms. */
+interface OpenOnConnection {
+  src: string
+  timestamp: Date
+  packetIndex: number
+  gracefulRestart?: GracefulRestartCapability
+}
+
 interface Connection {
   /**
    * Addresses that sent BGP on this connection. Both ends, or there was no
@@ -383,11 +394,21 @@ interface Connection {
   /** The RST or FIN frame itself, so `View →` can land on it. */
   endFrame?: GenericPacket
   endedAt?: Date
+  /** The address that sent the bare SYN, i.e. the end that dialled. */
+  initiator?: string
+  opens: OpenOnConnection[]
+  /** End-of-RIB markers, which is where a restarting speaker says it is done. */
+  endOfRib: { src: string; timestamp: Date }[]
+}
+
+function newConnection(): Connection {
+  return { bgpSenders: new Set(), sawNotification: false, opens: [], endOfRib: [] }
 }
 
 function splitIntoConnections(
   frames: GenericPacket[],
-  bgpByFrame: Map<number, BgpPacket>
+  bgpByFrame: Map<number, BgpPacket>,
+  indexByFrame: Map<number, number>
 ): Connection[] {
   const connections: Connection[] = []
   let current: Connection | null = null
@@ -396,13 +417,14 @@ function splitIntoConnections(
     // A bare SYN opens a connection; a SYN-ACK is the answer to one and must
     // not start a second, or every handshake would be split down the middle.
     if (frame.tcpFlags?.syn && !frame.tcpFlags.ack) {
-      current = { bgpSenders: new Set(), sawNotification: false }
+      current = newConnection()
+      current.initiator = frame.srcIp
       connections.push(current)
     }
     // Frames before the first SYN belong to a connection whose start the
     // capture missed. It is still a connection, and its teardown still counts.
     if (!current) {
-      current = { bgpSenders: new Set(), sawNotification: false }
+      current = newConnection()
       connections.push(current)
     }
 
@@ -411,6 +433,22 @@ function splitIntoConnections(
       current.bgpSenders.add(frame.srcIp)
       if (bgp.messages.some((message) => message.type === 'NOTIFICATION')) {
         current.sawNotification = true
+      }
+      for (const message of bgp.messages) {
+        if (message.type === 'OPEN') {
+          const capability = (message as BgpOpenMessage).capabilities?.find(
+            (entry) => entry.parsed?.type === 'GRACEFUL_RESTART'
+          )
+          current.opens.push({
+            src: bgp.srcIp,
+            timestamp: bgp.timestamp,
+            packetIndex: indexByFrame.get(frame.frameIndex) ?? 0,
+            gracefulRestart: capability?.parsed as GracefulRestartCapability | undefined,
+          })
+        }
+        if (message.type === 'UPDATE' && endOfRibMarker(message as BgpUpdateMessage)) {
+          current.endOfRib.push({ src: bgp.srcIp, timestamp: bgp.timestamp })
+        }
       }
     }
 
@@ -446,12 +484,25 @@ function splitIntoConnections(
  * `s11-silent-teardown` — which holds one of each precisely so that a rule
  * looking for resets alone fails a test rather than shipping.
  */
-function computeSilentTeardownAlerts(
+/**
+ * Every peering's connections, in order.
+ *
+ * Computed once and read by both the teardown rule and the graceful-restart
+ * rule, which have to agree about what a connection is: the second explains
+ * exactly the teardowns the first would otherwise report, and two different
+ * ideas of where one connection ends and the next begins would leave rows
+ * contradicting each other on the same capture.
+ */
+function connectionsByPeering(
   packets: BgpPacket[],
   allPackets: GenericPacket[]
-): DashboardAlert[] {
+): Map<string, Connection[]> {
   const bgpByFrame = new Map<number, BgpPacket>()
-  for (const packet of packets) bgpByFrame.set(packet.frameIndex, packet)
+  const indexByFrame = new Map<number, number>()
+  packets.forEach((packet, packetIndex) => {
+    bgpByFrame.set(packet.frameIndex, packet)
+    indexByFrame.set(packet.frameIndex, packetIndex)
+  })
 
   const framesByPair = new Map<string, GenericPacket[]>()
   for (const frame of allPackets) {
@@ -463,6 +514,105 @@ function computeSilentTeardownAlerts(
     else framesByPair.set(key, [frame])
   }
 
+  const byPeering = new Map<string, Connection[]>()
+  for (const [key, frames] of framesByPair) {
+    byPeering.set(key, splitIntoConnections(frames, bgpByFrame, indexByFrame))
+  }
+  return byPeering
+}
+
+/**
+ * A restart the two speakers had agreed how to survive.
+ *
+ * RFC 4724: a speaker advertises how long it expects to be away and, per address
+ * family, whether it kept forwarding while it was. When both ends advertised the
+ * capability and the session came back, the interesting number is not that it
+ * flapped but how long the routes took to return.
+ */
+interface GracefulRestartEvent {
+  /** The end that went away and dialled back in. */
+  restarter: string
+  /** Its own advertised Restart Time, in seconds. */
+  restartTime: number
+  /** Whether it claimed forwarding state survived, for any address family. */
+  forwardingPreserved: boolean
+  wentDownAt?: Date
+  cameBackAt: Date
+  /** Re-establishment to End-of-RIB, in seconds. Absent when unmeasurable. */
+  convergenceSeconds?: number
+  packetIndex: number
+}
+
+/** The GR capability an address sent on this connection, if it sent one. */
+function gracefulRestartOf(connection: Connection, src: string): GracefulRestartCapability | undefined {
+  return connection.opens.find((open) => open.src === src)?.gracefulRestart
+}
+
+/**
+ * Restarts that both ends had agreed to ride out.
+ *
+ * A connection that ended without a NOTIFICATION, followed by one where both
+ * ends re-OPEN advertising Graceful Restart, is a restart rather than a flap —
+ * and which of the two it is decides whether anyone needs to be woken up. The
+ * teardown itself is the same shape either way, which is why this reads the
+ * same connection list as `computeSilentTeardownAlerts` and why that rule skips
+ * what this one claims.
+ */
+function gracefulRestarts(connections: Connection[]): GracefulRestartEvent[] {
+  const events: GracefulRestartEvent[] = []
+
+  for (let index = 1; index < connections.length; index++) {
+    const previous = connections[index - 1]
+    const current = connections[index]
+
+    // The session has to have gone down the way a restart takes it down: no
+    // NOTIFICATION, because a speaker that sent a Cease was not restarting, it
+    // was leaving. That is the same condition the teardown rule fires on, which
+    // is what makes the two interlock exactly.
+    if (!previous.kind || previous.sawNotification) continue
+    if (previous.bgpSenders.size < 2 || current.bgpSenders.size < 2) continue
+
+    // The end that went away: it dropped the connection, or — in a capture
+    // taken from the other side, where its RST never appears — it is the one
+    // that dialled back in.
+    const restarter = previous.endFrame?.srcIp ?? current.initiator
+    if (!restarter) continue
+
+    // Both ends have to have advertised the capability. One end alone means
+    // nobody agreed to hold the routes, so nothing was graceful about it.
+    const theirs = gracefulRestartOf(current, restarter)
+    const peer = [...current.bgpSenders].find((address) => address !== restarter)
+    if (!theirs || !peer || !gracefulRestartOf(current, peer)) continue
+
+    const opens = [...current.opens].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    // Both OPENs exchanged is the earliest point the capture can call the
+    // session up again, so convergence is measured from there rather than from
+    // whichever end spoke first.
+    const established = opens[opens.length - 1]
+    const endOfRib = current.endOfRib.find(
+      (marker) => marker.src === restarter && marker.timestamp >= established.timestamp
+    )
+
+    events.push({
+      restarter,
+      restartTime: theirs.restartTime,
+      // RFC 4724 §3: the per-family F bit is the speaker saying it kept
+      // forwarding across the restart. Any family counts — the row says
+      // whether traffic kept flowing, not for which AFI.
+      forwardingPreserved: theirs.addressFamilies.some((family) => (family.flags & 0x80) !== 0),
+      wentDownAt: previous.endedAt,
+      cameBackAt: established.timestamp,
+      convergenceSeconds: endOfRib
+        ? (endOfRib.timestamp.getTime() - established.timestamp.getTime()) / 1000
+        : undefined,
+      packetIndex: established.packetIndex,
+    })
+  }
+
+  return events
+}
+
+function computeSilentTeardownAlerts(byPeering: Map<string, Connection[]>): DashboardAlert[] {
   // Grouped by (peering, kind) and counted within, the same shape the
   // NOTIFICATION rule uses. A session dying every ten minutes for six hours is
   // at most two rows carrying their own counts, not thirty-six rows — and the
@@ -471,12 +621,25 @@ function computeSilentTeardownAlerts(
   // was finished, which is what an idle timeout looks like.
   const alerts: DashboardAlert[] = []
 
-  for (const [pairKey, frames] of framesByPair) {
+  for (const [pairKey, connections] of byPeering) {
     const [ipA, ipB] = pairKey.split('|')
 
-    const unexplained = splitIntoConnections(frames, bgpByFrame).filter(
+    // A graceful restart is a teardown with an explanation, so it is not this
+    // rule's business — the same reasoning that keeps it quiet about a reset a
+    // NOTIFICATION accounted for. Without this, `s8-graceful-restart` would
+    // carry both a reset row pointing at firewalls and a restart row saying the
+    // router came back with forwarding intact, which is the confusion S8 exists
+    // to end rather than a second opinion worth having.
+    const explained = new Set(
+      gracefulRestarts(connections).map((event) => event.wentDownAt?.getTime())
+    )
+
+    const unexplained = connections.filter(
       (connection) =>
-        connection.bgpSenders.size >= 2 && connection.kind && !connection.sawNotification
+        connection.bgpSenders.size >= 2 &&
+        connection.kind &&
+        !connection.sawNotification &&
+        !explained.has(connection.endedAt?.getTime())
     )
 
     for (const kind of ['RST', 'FIN'] as TeardownKind[]) {
@@ -527,6 +690,88 @@ function computeSilentTeardownAlerts(
   return alerts
 }
 
+/** `1.5` rather than `1.5000000000000002`, and `3` rather than `3.0`. */
+function seconds(value: number): string {
+  return `${Math.round(value * 10) / 10}s`
+}
+
+/**
+ * A restart both ends had agreed to ride out, reported as that rather than as a
+ * flap.
+ *
+ * The operational meanings are opposite — a graceful restart kept forwarding
+ * while the control plane came back, a crash loop did not — and until this rule
+ * existed the dashboard said "Session flapping detected" for both. The numbers
+ * that separate them are all in the capture: the capability says how long the
+ * speaker expected to be away and whether it kept forwarding, and the gap
+ * between re-establishment and End-of-RIB says how long it actually took.
+ */
+function computeGracefulRestartAlerts(byPeering: Map<string, Connection[]>): DashboardAlert[] {
+  const alerts: DashboardAlert[] = []
+
+  for (const [pairKey, connections] of byPeering) {
+    const [ipA, ipB] = pairKey.split('|')
+    const events = gracefulRestarts(connections)
+    if (events.length === 0) continue
+
+    const first = events[0]
+    const slow = events.filter(
+      (event) => event.convergenceSeconds !== undefined && event.convergenceSeconds > event.restartTime
+    )
+    const withoutForwarding = events.filter((event) => !event.forwardingPreserved)
+
+    // Benign by default: a restart that stayed inside its own Restart Time with
+    // forwarding preserved is the mechanism working, and shouting about it
+    // would be the same mistake in the other direction. It becomes critical
+    // when one of the two promises was not kept.
+    const severity: DashboardAlert['severity'] =
+      slow.length > 0 || withoutForwarding.length > 0 ? 'critical' : 'warning'
+
+    const convergence =
+      first.convergenceSeconds !== undefined
+        ? `Routes were back ${seconds(first.convergenceSeconds)} after the session came up, ` +
+          `against the ${first.restartTime}s ${first.restarter} asked for.`
+        : `The capture holds no End-of-RIB from ${first.restarter} after it came back, so how ` +
+          `long convergence took cannot be measured here — only that the session returned.`
+
+    const forwarding = first.forwardingPreserved
+      ? `${first.restarter} advertised that it kept forwarding state across the restart, so ` +
+        `traffic should have continued while BGP caught up.`
+      : `${first.restarter} did not advertise preserved forwarding state, so its dataplane ` +
+        `most likely dropped traffic for the whole of that window — which is the part a ` +
+        `graceful restart is supposed to avoid.`
+
+    const overran =
+      slow.length > 0
+        ? ` Convergence ran past the Restart Time, so the peer will have given up holding the ` +
+          `routes and withdrawn them before they came back.`
+        : ''
+
+    alerts.push({
+      id: `graceful-restart-${pairKey}`,
+      severity,
+      // Names the end that went away and the one that held its routes, rather
+      // than repeating the restarter inside a peering string that contains it.
+      title: `${first.restarter} restarted gracefully, peer ${first.restarter === ipA ? ipB : ipA}`,
+      detail:
+        `The session went down with nothing at the BGP layer announcing it and came back with ` +
+        `both ends re-advertising Graceful Restart, which is a restart rather than a flap. ` +
+        `${convergence} ${forwarding}${overran}`,
+      timestamp: first.cameBackAt,
+      filter: sessionFilter(ipA, ipB),
+      pairKey,
+      packetIndex: first.packetIndex,
+      count: events.length > 1 ? events.length : undefined,
+      timeSpan:
+        events.length > 1
+          ? { start: first.cameBackAt, end: events[events.length - 1].cameBackAt }
+          : undefined,
+    })
+  }
+
+  return alerts
+}
+
 /**
  * `allPackets` is optional so the many tests that only care about BGP-level
  * rules can keep passing packets alone; the establishment rules simply find
@@ -537,9 +782,11 @@ export function computeAlerts(
   allPackets: GenericPacket[] = []
 ): DashboardAlert[] {
   const alerts: DashboardAlert[] = []
+  const byPeering = connectionsByPeering(packets, allPackets)
 
   alerts.push(...computeSessionSetupAlerts(packets, allPackets))
-  alerts.push(...computeSilentTeardownAlerts(packets, allPackets))
+  alerts.push(...computeSilentTeardownAlerts(byPeering))
+  alerts.push(...computeGracefulRestartAlerts(byPeering))
 
   // 1. NOTIFICATIONs, one row per repeated fault rather than per packet.
   alerts.push(...groupNotifications(packets))
@@ -556,6 +803,16 @@ export function computeAlerts(
   })
   for (const [key, opens] of opensByPair) {
     if (opens.length < FLAP_OPEN_THRESHOLD) continue
+
+    // "Session flapping detected" is the wrong headline for a peering whose
+    // every re-establishment was a graceful restart: the row above already
+    // says the session came back, and says whether forwarding survived, which
+    // is the question. It carries its own count, so a router restarting thirty
+    // times is still visible as thirty — the signal moves rather than being
+    // suppressed.
+    const restarts = gracefulRestarts(byPeering.get(key) ?? [])
+    if (restarts.length > 0 && restarts.length >= Math.floor(opens.length / 2) - 1) continue
+
     const [ipA, ipB] = key.split('|')
     const establishments = Math.floor(opens.length / 2)
     alerts.push({
