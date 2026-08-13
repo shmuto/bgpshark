@@ -276,6 +276,58 @@ export function silentTeardownCapture(): Buffer {
 }
 
 /**
+ * A soft clear, and what came back from it.
+ *
+ * `gained` is the `s9-route-refresh` shape: the re-advertisement brings back
+ * the original route plus one tagged with a community. `lost` is the other
+ * half of the same complaint and the reason this cannot be read from
+ * withdrawals — a route the peer no longer has is simply *absent* from the
+ * re-advertisement, and nothing in the capture withdraws it.
+ */
+export function routeRefreshCapture(outcome: 'gained' | 'lost' = 'gained'): Buffer {
+  const a = { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 }
+  const b = { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 }
+
+  const route = (prefix: string, communities?: string[]) => ({
+    type: 'UPDATE' as const,
+    pathAttributes: [
+      { type: 'ORIGIN' as const, value: 'IGP' as const },
+      { type: 'AS_PATH' as const, segments: [{ type: 'AS_SEQUENCE' as const, asNumbers: [65001] }] },
+      { type: 'NEXT_HOP' as const, address: a.ip },
+      ...(communities ? [{ type: 'COMMUNITIES' as const, communities }] : []),
+    ],
+    nlri: [prefix],
+  })
+
+  const before =
+    outcome === 'gained' ? [route('10.1.0.0/24')] : [route('10.1.0.0/24'), route('10.2.0.0/24')]
+  const after =
+    outcome === 'gained'
+      ? [route('10.1.0.0/24'), route('10.1.1.0/24', ['65001:999'])]
+      : [route('10.1.0.0/24')]
+
+  const built = buildScenario({
+    a,
+    b,
+    gap: 200,
+    steps: [
+      { kind: 'handshake' },
+      { kind: 'open', from: 'a' },
+      { kind: 'open', from: 'b' },
+      { kind: 'keepalive', from: 'a' },
+      { kind: 'keepalive', from: 'b' },
+      { kind: 'send', from: 'a', messages: [...before, END_OF_RIB] },
+      { kind: 'delay', gap: 10_000 },
+      // B asks A to re-advertise, which is what a soft clear looks like on the
+      // wire — so the table being compared is A's.
+      { kind: 'send', from: 'b', messages: [{ type: 'ROUTE_REFRESH', afi: 1, safi: 1 }] },
+      { kind: 'send', from: 'a', messages: [...after, END_OF_RIB] },
+    ],
+  })
+  return Buffer.from(built.bytes)
+}
+
+/**
  * One prefix offered by two peers, where the shorter AS_PATH is not the winner.
  *
  * The same shape as `s4-bestpath`: 192.0.2.1 offers `65010 65200` with MED 300

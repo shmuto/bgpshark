@@ -69,10 +69,17 @@ export function ManualPage() {
   // A link into a section has to work on first paint, and the content is
   // injected rather than rendered as elements, so the browser's own hash
   // handling has nothing to scroll to yet when it runs.
+  //
+  // Not a smooth scroll. Smooth is animated, and the animation races the images
+  // above the target settling into place: it aims at the position the anchor
+  // had when it started and lands there, several hundred pixels off, without
+  // correcting afterwards. Landing instantly on the position as it is now is
+  // both right more often and, on a link someone followed deliberately, no
+  // worse to read.
   useEffect(() => {
     if (!hash) return
     const target = document.getElementById(hash.slice(1))
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    target?.scrollIntoView({ block: 'start' })
   }, [hash])
 
   // Highlight whichever section the reader is actually in.

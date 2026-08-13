@@ -501,10 +501,27 @@ with its flags is in the **Capability Diff**, and an UPDATE with nothing in it i
 labelled `End-of-RIB` in the packet list rather than left looking empty.
 
 A **soft clear** shows up as a ROUTE-REFRESH followed by the re-advertisement.
-Both halves are visible as messages; comparing what came back against what was
-there before is yours to do, most easily by noting the frame number of the
-refresh and filtering the UPDATEs on either side of it (`frame < 240`,
-`frame >= 240`).
+Select the refresh and the detail panel takes the difference for you: what the
+re-advertisement **added**, what is **no longer advertised**, and what came back
+with **changed attributes**. Routes that returned identical are counted, not
+listed. Click any route named there to open the UPDATE that carried it.
+
+![The ROUTE-REFRESH detail with a panel reading "What the refresh changed": 10.0.0.1 re-advertised IPv4 Unicast, one route unchanged, and 10.1.1.0/24 added with community 65001:999](manual/s9-refresh-diff.png)
+
+The "no longer advertised" list is the one worth understanding. After a refresh
+the peer re-sends its whole table, so a route it no longer has is simply
+**absent** from the answer — nothing withdraws it. Looking for withdrawals after
+a soft clear that lost routes finds nothing at all, which is why this list
+exists.
+
+Two things it will tell you rather than guess. If the capture began after the
+session was already up, the "before" side is only what was caught, so something
+listed as gone may have been announced before recording started. If no
+End-of-RIB closed the re-advertisement, anything not re-sent by the end of the
+capture is listed as gone whether or not it was on its way.
+
+A capture with several refreshes compares each one separately — selecting the
+message is how you pick the interval.
 
 ### The capture may be lying to you
 

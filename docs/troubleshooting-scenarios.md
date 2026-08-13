@@ -223,7 +223,23 @@ withdrawn them, which is the outage the mechanism exists to prevent.
 *Want from the capture:* the ROUTE-REFRESH AFI/SAFI, and how the re-advertisement
 differs from what was there before.
 
-**◑** Both halves are visible as messages; the diff between them is yours to make.
+**✔** Select the ROUTE-REFRESH and the detail panel takes the difference: what
+the re-advertisement added, what it did not bring back, and what came back with
+different attributes. On this capture it reads *"10.1.1.0/24 — announced with
+community 65001:999"*, with the route that returned identical counted rather
+than listed.
+
+The half that cannot be read from withdrawals is the important one. After a
+refresh the peer re-sends its whole table, so a route it no longer has is simply
+**absent** from the answer — nothing withdraws it. That is the "my soft clear
+lost routes" complaint, and a rule watching for withdrawals would find nothing
+wrong with the capture.
+
+Selecting the message is also how a capture holding several refreshes chooses
+the interval, since each compares its own. Where the capture cannot settle the
+question it says so rather than guessing: no OPEN before the refresh means the
+"before" side is only what was caught, and no End-of-RIB after it means anything
+not yet re-sent is listed as gone whether or not it was on its way.
 
 ### S10 — `s10-churn` · High CPU and a RIB that will not settle
 
@@ -346,11 +362,10 @@ corpus it fires on S11, as two rows for the two shapes. S8 is the exception it
 stands down for: a graceful restart is a teardown nobody announced, but the
 restart rule accounts for it and says something more useful about it.
 
-What remains, in the same shape: **S5 has no notion of an expected AS_PATH**, so
-a leak looks exactly like a legitimate announcement — the missing thing there is
-not in the capture at all but in what the operator meant to accept, and no
-amount of reading the file supplies it. **S9** can show both halves of a route
-refresh but not the difference between them.
+What remains is one scenario, and it is the one the capture cannot answer at
+all: **S5 has no notion of an expected AS_PATH**, so a leak looks exactly like a
+legitimate announcement. The missing thing there is not in the file but in what
+the operator meant to accept, and no amount of reading the capture supplies it.
 
 Smaller ones: `hold_time` exists as a column but not as a filter field, and the
 SQL results grid renders `timestamp` as raw epoch milliseconds.

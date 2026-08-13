@@ -171,6 +171,21 @@ const SHOTS: Shot[] = [
     },
   },
   {
+    // The diff panel under the refresh it belongs to. Viewport rather than the
+    // panel alone: half the point is that selecting the message is what asks
+    // the question, so the packet list has to be in shot beside it.
+    file: 's9-refresh-diff',
+    scenario: 's9',
+    take: async (page) => {
+      await go(page, 'Messages')
+      // The row, not the "ROUTE_REFRESH 1" chip above the list — that filters.
+      await page.getByText('IPv4/Unicast').first().click()
+      await page.waitForTimeout(600)
+      await page.getByText('What the refresh changed').first().waitFor()
+      return null
+    },
+  },
+  {
     // The restart row in place of the flapping one, with the three numbers the
     // manual promises: Restart Time, forwarding state, measured convergence.
     file: 's8-graceful-restart',
