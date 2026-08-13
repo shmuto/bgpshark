@@ -8,6 +8,8 @@ import type {
   ExtendedCommunitiesAttribute,
   LargeCommunitiesAttribute,
   NextHopAttribute,
+  MedAttribute,
+  LocalPrefAttribute,
   OriginAttribute,
   MpReachNlriAttribute,
   MpUnreachNlriAttribute,
@@ -134,6 +136,16 @@ export const FILTER_FIELDS = {
     description: 'Origin (path_attributes.origin_value)',
     values: ['IGP', 'EGP', 'INCOMPLETE'],
     valueType: 'string' as const,
+  },
+  med: {
+    description: 'MULTI_EXIT_DISC — ranges with < <= > >=, e.g. med > 100. Absent on an UPDATE that carries none',
+    values: [] as string[],
+    valueType: 'number' as const,
+  },
+  local_pref: {
+    description: 'LOCAL_PREF — ranges with < <= > >=, e.g. local_pref >= 200. iBGP only; eBGP UPDATEs carry none',
+    values: [] as string[],
+    valueType: 'number' as const,
   },
   next_hop: {
     description: 'Next Hop (path_attributes.next_hop)',
@@ -719,6 +731,22 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
       }
       return false
 
+    case 'med':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const med = getMed(msg as BgpUpdateMessage)
+        if (med !== null && matchNumber(med, operator, value)) return true
+      }
+      return false
+
+    case 'local_pref':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const localPref = getLocalPref(msg as BgpUpdateMessage)
+        if (localPref !== null && matchNumber(localPref, operator, value)) return true
+      }
+      return false
+
     case 'next_hop':
       for (const msg of packet.messages) {
         if (msg.type !== 'UPDATE') continue
@@ -853,6 +881,26 @@ function evaluateOrderedComparison(
       }
       return false
 
+    // Absent is not zero and not a match: an UPDATE with no MED must not be
+    // swept in by `med < 100`, which would otherwise select most of an eBGP
+    // capture. The SQL side gets this for free, since NULL fails every
+    // comparison.
+    case 'med':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const med = getMed(msg as BgpUpdateMessage)
+        if (med !== null && compareOrdered(med, operator, query)) return true
+      }
+      return false
+
+    case 'local_pref':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        const localPref = getLocalPref(msg as BgpUpdateMessage)
+        if (localPref !== null && compareOrdered(localPref, operator, query)) return true
+      }
+      return false
+
     case 'vni':
       for (const route of evpnRoutes(packet)) {
         if (route.label !== undefined && compareOrdered(route.label, operator, query)) return true
@@ -900,6 +948,25 @@ function getOrigin(msg: BgpUpdateMessage): string | null {
   const attr = msg.pathAttributes.find((a) => a.parsed?.type === 'ORIGIN')
   if (!attr?.parsed || attr.parsed.type !== 'ORIGIN') return null
   return (attr.parsed as OriginAttribute).value
+}
+
+/**
+ * MED and LOCAL_PREF, as numbers or absent.
+ *
+ * Absent is not zero. `med = 0` has to match only the UPDATEs that carried a
+ * MED of zero, and `med > 100` must not sweep in every route that had no MED at
+ * all — which is most of them on an eBGP session.
+ */
+function getMed(msg: BgpUpdateMessage): number | null {
+  const attr = msg.pathAttributes.find((a) => a.parsed?.type === 'MULTI_EXIT_DISC')
+  if (!attr?.parsed || attr.parsed.type !== 'MULTI_EXIT_DISC') return null
+  return (attr.parsed as MedAttribute).value
+}
+
+function getLocalPref(msg: BgpUpdateMessage): number | null {
+  const attr = msg.pathAttributes.find((a) => a.parsed?.type === 'LOCAL_PREF')
+  if (!attr?.parsed || attr.parsed.type !== 'LOCAL_PREF') return null
+  return (attr.parsed as LocalPrefAttribute).value
 }
 
 function getNextHop(msg: BgpUpdateMessage): string | null {

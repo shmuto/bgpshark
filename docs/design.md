@@ -154,7 +154,11 @@ in MP_REACH_NLRI / MP_UNREACH_NLRI.
 - **Message Explorer** (`/messages`): packet list, detail view, hex dump, filtering
 - **Neighbor Analysis** (`/neighbors`): sessions grouped by Router ID, capability and
   session-event summaries, plus the capability diff (§2.1.10)
-- **Route Analysis** (`/routes`): per-prefix announce/withdraw history and flap count
+- **Route Analysis** (`/routes`): per-prefix announce/withdraw history and flap count,
+  with the best-path attributes per announcement — AS_PATH, Next Hop, MED,
+  LOCAL_PREF and communities. Each of those columns appears only when the
+  selected route carries it, and ORIGIN only when it *differs* between
+  announcements, since a column of identical values costs width the others need
 - **SQL Console** (`/sql`): raw SQL against the DuckDB tables, with query templates
 - **Capture Builder** (`/build`): §2.1.12
 - **Manual** (`/manual`): §2.1.13
@@ -165,9 +169,18 @@ Two modes over the same expression language:
 - **Advanced**: free-form expression with autocomplete
 
 Grammar: `field (= | != | contains | not contains) value`, combined with
-`and` / `or` / `not` and parentheses. Fields are defined by `FILTER_FIELDS` in
-`src/lib/filter/parser.ts`. The expression is evaluated either in memory
-(`filter/parser.ts`) or compiled to SQL (`db/filter-to-sql.ts`) when DuckDB is available.
+`and` / `or` / `not` and parentheses. The integer fields also take `<`, `<=`,
+`>`, `>=`. Fields are defined by `FILTER_FIELDS` in `src/lib/filter/parser.ts`.
+The expression is evaluated either in memory (`filter/parser.ts`) or compiled to
+SQL (`db/filter-to-sql.ts`) when DuckDB is available.
+
+**An attribute that was not sent matches nothing.** `med` and `local_pref` are
+optional on an UPDATE, and absent is not zero: `med < 100` must not select every
+route in an eBGP capture, and `med = 0` must select only the routes deliberately
+made unattractive. The SQL side gets this from NULL failing every comparison;
+the in-memory side tests for the attribute before comparing. Both are pinned by
+tests, because this is exactly the kind of difference that would otherwise make
+a filter's answer depend on whether DuckDB happened to start.
 
 #### 2.1.10 Capability Diff
 

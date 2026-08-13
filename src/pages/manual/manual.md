@@ -119,9 +119,8 @@ The search box matches three ways, which is the part people trip on:
 ### SQL
 
 The capture as a set of tables you can query. Use it when the built-in screens do
-not ask your question — comparing path attributes across peers is the usual
-reason, since the Routes screen shows AS_PATH and next hop but not MED or
-LOCAL_PREF.
+not ask your question — a comparison across many prefixes at once, or one that
+wants an aggregate.
 
 The schema is in the sidebar and the **Query Templates** are worth reading once
 even if you write your own.
@@ -378,32 +377,38 @@ at a 576-byte MTU still counts 400 prefixes here.
 
 ### “Traffic leaves by the wrong upstream”
 
-The Routes screen shows AS_PATH and Next Hop per announcement, which decides
-some best-path questions and not the interesting ones. MED, LOCAL_PREF and
-communities reach the database but not that screen, so this one is a SQL
-question:
+**Routes → the prefix.** The route history lists every announcement of it, one
+row per peer, with the attributes the decision was made on: AS_PATH, Next Hop,
+MED, LOCAL_PREF and communities.
 
-```sql
-select n.prefix || '/' || n.prefix_length as route, p.src_ip,
-       (select string_agg(a.asn, ' ' order by a.as_index)
-          from as_path a where a.message_id = m.id) as as_path,
-       (select max(med_value)  from path_attributes where message_id = m.id) as med,
-       (select max(local_pref) from path_attributes where message_id = m.id) as local_pref
-from nlri n join messages m on m.id = n.message_id join packets p using(frame_index)
-order by route, p.src_ip
+![The route history for 172.20.0.0/16 with two announcements side by side: the short AS_PATH carrying MED 300 and no LOCAL_PREF, the long one carrying MED 10 and LOCAL_PREF 200](manual/s4-bestpath.png)
+
+Read across the two rows and the answer is there: the **longer** AS_PATH wins,
+because it carries LOCAL_PREF 200 and LOCAL_PREF is compared long before path
+length. The short path's MED of 300 never gets a say — MED is compared much
+later, and only between paths from the same neighbouring AS.
+
+A dash means the attribute was not on that UPDATE, which is not the same as a
+value of zero. `192.0.2.1` sent no LOCAL_PREF at all; had it sent 0, that would
+be a route deliberately made unattractive, and the column would say `0`.
+
+Columns appear only when the selected route carries them, so a capture with no
+LOCAL_PREF anywhere does not get a column of dashes. ORIGIN is the exception in
+the other direction: it appears only when it *differs* between announcements,
+since it is IGP on almost everything and a column of identical values costs
+width the others need.
+
+To ask it across many prefixes at once, `med` and `local_pref` are filter
+fields, and take ranges:
+
+```
+med > 100
+local_pref = 200
+prefix = 172.20.0.0/16 and local_pref >= 200
 ```
 
-![The SQL console with that query and its result: one prefix, two source addresses, two AS_PATHs, and a LOCAL_PREF of 200 on the longer path](manual/s4-bestpath.png)
-
-Every path for the prefix, side by side, which is the shape the decision was
-made in: here the longer AS_PATH wins because it carries LOCAL_PREF 200, and
-LOCAL_PREF is compared long before path length.
-
-Two traps, both visible in that query. `nlri.prefix` holds no mask —
-`172.20.0.0`, not `172.20.0.0/16` — so it wants `prefix || '/' || prefix_length`.
-And `nlri`, `as_path` and `path_attributes` all join on `message_id`, so a plain
-three-way JOIN fans out into their cross product; the correlated subqueries
-above are the shape that works.
+An UPDATE carrying no MED matches no `med` comparison at all — absent is not
+zero here either, or `med < 100` would select most of an eBGP capture.
 
 Remember what a capture can and cannot settle: it holds what crossed the wire,
 not what the router did with it. Which path was installed is on the router.
@@ -563,6 +568,8 @@ Combine conditions with `and`, `or`, `not` and parentheses. The operators are
 | `asn` | AS number appearing anywhere in AS_PATH |
 | `origin` | `IGP`, `EGP`, `INCOMPLETE` |
 | `next_hop` | NEXT_HOP, or the MP_REACH next hop |
+| `med` | MULTI_EXIT_DISC, with ranges — `med > 100`. Matches nothing on an UPDATE that carried no MED |
+| `local_pref` | LOCAL_PREF, with ranges — `local_pref >= 200`. iBGP only; eBGP UPDATEs carry none |
 | `prefix` | Announced or withdrawn prefix |
 | `withdrawn` | Withdrawn prefix only |
 | `community` | Standard or large community |
@@ -596,8 +603,7 @@ a filter using the same text.
 An invalid expression shows a red message next to the **Showing N of M packets**
 counter, and leaves the list unfiltered. "Showing 5 of 5" next to a red message
 means the filter was not applied — not that everything matched. The most common
-cause is a field name that does not exist: `med` and `local_pref`, for instance,
-are available in SQL but are not filter fields.
+cause is a field name that does not exist — check it against the table above.
 
 ## What BGPShark will not tell you
 

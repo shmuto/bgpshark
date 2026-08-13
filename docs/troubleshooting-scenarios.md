@@ -118,9 +118,31 @@ order by p.frame_index
 *Want from the capture:* every path for the prefix, side by side — AS_PATH
 length, LOCAL_PREF, MED, ORIGIN, NEXT_HOP, communities.
 
-**◑** SQL only. The Routes screen's per-prefix history carries AS_PATH and Next
-Hop but not MED, LOCAL_PREF or communities (`lib/bgp/prefix-stats.ts`), and
-neither `med` nor `local_pref` is a filter field.
+**✔** Routes → the prefix. The route history lists every announcement with the
+attributes the decision was made on, one row per peer: AS_PATH, Next Hop, MED,
+LOCAL_PREF and communities. On this capture the two rows say it outright — the
+longer AS_PATH wins, carrying LOCAL_PREF 200 against a shorter path with none,
+and the loser's MED of 300 never gets a say because MED is compared much later
+and only between paths from the same neighbouring AS.
+
+A dash means the attribute was absent from that UPDATE, which is not a value of
+zero: a route deliberately made unattractive with `local_pref 0` reads as `0`,
+and one that simply carries no LOCAL_PREF reads as `-`. Columns appear only when
+the selected route has them, and ORIGIN only when it *differs* between
+announcements — it is IGP on almost everything, and a column of identical values
+costs width the others need.
+
+`med` and `local_pref` are also filter fields, with ranges (`med > 100`,
+`local_pref >= 200`), in both the in-memory and the SQL backend. An UPDATE that
+carried no MED matches no `med` comparison at all — treating absent as zero
+would make `med < 100` select most of an eBGP capture.
+
+SQL is still the better tool for the same question asked across every prefix at
+once, and two traps are worth knowing there. `nlri.prefix` holds no mask —
+`172.20.0.0`, not `172.20.0.0/16` — so it wants `prefix || '/' || prefix_length`.
+And `nlri`, `as_path` and `path_attributes` all join on `message_id`, so a plain
+three-way JOIN fans out into the cross product; correlated subqueries are the
+shape that works:
 
 ```sql
 select n.prefix || '/' || n.prefix_length as route, p.src_ip,
@@ -131,12 +153,6 @@ select n.prefix || '/' || n.prefix_length as route, p.src_ip,
        (select string_agg(formatted, ',') from communities where message_id = m.id) as comms
 from nlri n join messages m on m.id = n.message_id join packets p using(frame_index)
 ```
-
-Two traps worth knowing, both visible here. `nlri.prefix` holds no mask —
-`172.20.0.0`, not `172.20.0.0/16` — so it wants `prefix || '/' || prefix_length`.
-And `nlri`, `as_path` and `path_attributes` all join on `message_id`, so a plain
-three-way JOIN fans out into the cross product; the correlated subqueries above
-are the shape that works.
 
 ### S5 — `s5-route-leak` · A customer announcing more than it should
 
@@ -330,11 +346,11 @@ corpus it fires on S11, as two rows for the two shapes. S8 is the exception it
 stands down for: a graceful restart is a teardown nobody announced, but the
 restart rule accounts for it and says something more useful about it.
 
-What remains:
-
-1. **Best-path attributes stop at AS_PATH and Next Hop** (S4). MED, LOCAL_PREF
-   and communities reach DuckDB but not the route history or the filter
-   language, which makes the most common "why this path" question SQL-only.
+What remains, in the same shape: **S5 has no notion of an expected AS_PATH**, so
+a leak looks exactly like a legitimate announcement — the missing thing there is
+not in the capture at all but in what the operator meant to accept, and no
+amount of reading the file supplies it. **S9** can show both halves of a route
+refresh but not the difference between them.
 
 Smaller ones: `hold_time` exists as a column but not as a filter field, and the
 SQL results grid renders `timestamp` as raw epoch milliseconds.

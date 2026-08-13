@@ -75,6 +75,12 @@ function comparisonToSql(expr: Comparison): string {
     case 'origin':
       return pathAttrSql('origin_value', operator, value)
 
+    case 'med':
+      return numericPathAttrSql('med_value', operator, value)
+
+    case 'local_pref':
+      return numericPathAttrSql('local_pref', operator, value)
+
     case 'next_hop':
       return nextHopSql(operator, value)
 
@@ -143,6 +149,23 @@ function orderedComparisonToSql(field: string, operator: OrderedOperator, value:
         SELECT 1 FROM as_path ap
         JOIN messages m ON ap.message_id = m.id
         WHERE m.frame_index = p.frame_index AND ap.asn ${operator} ${numeric}
+      )`
+
+    // NULL never satisfies a comparison in SQL, which is the answer wanted here:
+    // an UPDATE that carried no MED is not "MED 0" and must not match `med > x`
+    // or `med < x`. The in-memory side skips the same rows by testing for null.
+    case 'med':
+      return `EXISTS (
+        SELECT 1 FROM path_attributes pa
+        JOIN messages m ON pa.message_id = m.id
+        WHERE m.frame_index = p.frame_index AND pa.med_value ${operator} ${numeric}
+      )`
+
+    case 'local_pref':
+      return `EXISTS (
+        SELECT 1 FROM path_attributes pa
+        JOIN messages m ON pa.message_id = m.id
+        WHERE m.frame_index = p.frame_index AND pa.local_pref ${operator} ${numeric}
       )`
 
     case 'vni':
@@ -540,6 +563,46 @@ function pathAttrSql(column: string, operator: MatchOperator, value: FilterValue
         JOIN messages m ON pa.message_id = m.id
         WHERE m.frame_index = p.frame_index AND LOWER(pa.${column}) LIKE LOWER('%${strValue}%')
       )`
+  }
+}
+
+/**
+ * SQL for an integer path attribute under `=` and `!=`.
+ *
+ * `contains` on a number is meaningless, and `matchNumber` in the in-memory
+ * evaluator resolves it to plain equality rather than rejecting it. This does
+ * the same, deliberately: the two backends disagreeing about a filter is the
+ * failure mode this codebase already carries one example of, and it is not
+ * worth a second.
+ *
+ * `!=` is the interesting one: `NOT EXISTS (... = v)` is true for a packet that
+ * carried no such attribute at all, which is the same answer the in-memory side
+ * gives for a non-UPDATE packet, and is the reading the existing negated
+ * fields already have.
+ */
+function numericPathAttrSql(
+  column: string,
+  operator: MatchOperator,
+  value: FilterValue
+): string {
+  const numeric = coerceNumericValue(value)
+  if (typeof numeric !== 'number') return '1=0'
+
+  const exists = `EXISTS (
+        SELECT 1 FROM path_attributes pa
+        JOIN messages m ON pa.message_id = m.id
+        WHERE m.frame_index = p.frame_index AND pa.${column} = ${numeric}
+      )`
+
+  switch (operator) {
+    case '=':
+      return exists
+    case '!=':
+      return `NOT ${exists}`
+    case 'contains':
+      return exists
+    case 'not contains':
+      return `NOT ${exists}`
   }
 }
 

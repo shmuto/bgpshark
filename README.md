@@ -172,6 +172,8 @@ not (type = KEEPALIVE)
 | `asn` | AS number appearing anywhere in AS_PATH |
 | `origin` | `IGP` / `EGP` / `INCOMPLETE` |
 | `next_hop` | NEXT_HOP or MP_REACH next hop |
+| `med` | MULTI_EXIT_DISC; takes `<`, `<=`, `>`, `>=` |
+| `local_pref` | LOCAL_PREF; takes `<`, `<=`, `>`, `>=` |
 | `prefix` | Announced or withdrawn NLRI prefix |
 | `withdrawn` | Withdrawn prefix |
 | `community` | Standard or large community |
