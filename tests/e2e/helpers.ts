@@ -237,6 +237,89 @@ export function unansweredOpenCapture(): Buffer {
 }
 
 /**
+ * A session that drops twice with nothing at the BGP layer recording it: once
+ * by RST, once by FIN, then coming back up.
+ *
+ * Both shapes are here on purpose. A firewall closes an idle session politely
+ * as readily as it resets one, so a rule that only looked for RST would call
+ * the second teardown healthy — the same reasoning `testlab/scenarios.ts`
+ * writes into `s11-silent-teardown`, which this is the test-sized copy of.
+ */
+export function silentTeardownCapture(): Buffer {
+  const a = { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 }
+  const b = { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 }
+  const establish = [
+    { kind: 'handshake' as const },
+    { kind: 'open' as const, from: 'a' as const },
+    { kind: 'open' as const, from: 'b' as const },
+    { kind: 'keepalive' as const, from: 'a' as const },
+    { kind: 'keepalive' as const, from: 'b' as const },
+  ]
+
+  const built = buildScenario({
+    a,
+    b,
+    gap: 200,
+    steps: [
+      ...establish,
+      { kind: 'delay', gap: 20_000 },
+      { kind: 'reset', from: 'b' },
+      { kind: 'delay', gap: 60_000 },
+      ...establish,
+      { kind: 'delay', gap: 20_000 },
+      { kind: 'close', from: 'b' },
+      { kind: 'delay', gap: 60_000 },
+      ...establish,
+    ],
+  })
+  return Buffer.from(built.bytes)
+}
+
+/**
+ * The same two teardowns, each with a NOTIFICATION in front of it.
+ *
+ * This is the capture the teardown rule has to stay quiet about: the resets are
+ * still there, but a Cease said why, so a second row announcing the reset would
+ * be a worse explanation of packets that already have one.
+ */
+export function explainedTeardownCapture(): Buffer {
+  const a = { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 }
+  const b = { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 }
+  const establish = [
+    { kind: 'handshake' as const },
+    { kind: 'open' as const, from: 'a' as const },
+    { kind: 'open' as const, from: 'b' as const },
+    { kind: 'keepalive' as const, from: 'a' as const },
+    { kind: 'keepalive' as const, from: 'b' as const },
+  ]
+  // Cease / Administrative Shutdown, which is how a speaker that meant to go
+  // away says so.
+  const cease = {
+    kind: 'send' as const,
+    from: 'b' as const,
+    messages: [{ type: 'NOTIFICATION' as const, errorCode: 6, errorSubcode: 2 }],
+  }
+
+  const built = buildScenario({
+    a,
+    b,
+    gap: 200,
+    steps: [
+      ...establish,
+      { kind: 'delay', gap: 20_000 },
+      cease,
+      { kind: 'reset', from: 'b' },
+      { kind: 'delay', gap: 60_000 },
+      ...establish,
+      { kind: 'delay', gap: 20_000 },
+      cease,
+      { kind: 'reset', from: 'b' },
+    ],
+  })
+  return Buffer.from(built.bytes)
+}
+
+/**
  * The same session with every frame the far end sent removed, which is what
  * both a one-legged mirror and a one-way reachability fault do to the evidence.
  */

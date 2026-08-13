@@ -12,7 +12,11 @@ export function AlertList({ alerts }: AlertListProps) {
   const handleView = (alert: DashboardAlert) => {
     const filterPart = alert.filter ? `filter=${encodeURIComponent(alert.filter)}` : ''
     const selectedPart = alert.packetIndex !== undefined ? `selected=${alert.packetIndex}` : ''
-    const query = [filterPart, selectedPart].filter(Boolean).join('&')
+    // A row whose evidence is a bare TCP frame needs both halves: the list
+    // switched to All Packets, and the frame addressed by its frame index.
+    const framePart = alert.frameIndex !== undefined ? `frame=${alert.frameIndex}` : ''
+    const allPart = alert.showAllPackets ? 'all=1' : ''
+    const query = [filterPart, selectedPart, framePart, allPart].filter(Boolean).join('&')
     navigate(`/messages${query ? `?${query}` : ''}`)
   }
 

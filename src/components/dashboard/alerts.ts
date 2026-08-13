@@ -359,6 +359,174 @@ function computeSessionSetupAlerts(
   return alerts
 }
 
+/** How a connection ended, when nothing at the BGP layer accounted for it. */
+type TeardownKind = 'RST' | 'FIN'
+
+/**
+ * One TCP connection's worth of frames, as delimited by the SYN that opened it.
+ *
+ * Not by the four-tuple: `s11-silent-teardown` and `s3-holdtimer-flap` each
+ * hold three connections and exactly one four-tuple, because the source port is
+ * reused — as it is in any real capture taken over a long enough window. Keyed
+ * on the tuple, all three collapse into one "connection" that contains every
+ * NOTIFICATION in the file, and the rule below would find every teardown
+ * explained and stay silent on the very capture it exists for.
+ */
+interface Connection {
+  /**
+   * Addresses that sent BGP on this connection. Both ends, or there was no
+   * session here to tear down — see `computeSilentTeardownAlerts`.
+   */
+  bgpSenders: Set<string>
+  sawNotification: boolean
+  kind?: TeardownKind
+  /** The RST or FIN frame itself, so `View →` can land on it. */
+  endFrame?: GenericPacket
+  endedAt?: Date
+}
+
+function splitIntoConnections(
+  frames: GenericPacket[],
+  bgpByFrame: Map<number, BgpPacket>
+): Connection[] {
+  const connections: Connection[] = []
+  let current: Connection | null = null
+
+  for (const frame of frames) {
+    // A bare SYN opens a connection; a SYN-ACK is the answer to one and must
+    // not start a second, or every handshake would be split down the middle.
+    if (frame.tcpFlags?.syn && !frame.tcpFlags.ack) {
+      current = { bgpSenders: new Set(), sawNotification: false }
+      connections.push(current)
+    }
+    // Frames before the first SYN belong to a connection whose start the
+    // capture missed. It is still a connection, and its teardown still counts.
+    if (!current) {
+      current = { bgpSenders: new Set(), sawNotification: false }
+      connections.push(current)
+    }
+
+    const bgp = bgpByFrame.get(frame.frameIndex)
+    if (bgp && bgp.messages.length > 0) {
+      current.bgpSenders.add(frame.srcIp)
+      if (bgp.messages.some((message) => message.type === 'NOTIFICATION')) {
+        current.sawNotification = true
+      }
+    }
+
+    // RST outranks FIN: a connection that was closing politely and then got
+    // reset ended by the reset, and the reset is the more urgent half to show.
+    if (frame.tcpFlags?.rst && current.kind !== 'RST') {
+      current.kind = 'RST'
+      current.endFrame = frame
+      current.endedAt = frame.timestamp
+    } else if (frame.tcpFlags?.fin && current.kind === undefined) {
+      // Only the first FIN. A graceful close has one from each end, which is
+      // one teardown rather than two.
+      current.kind = 'FIN'
+      current.endFrame = frame
+      current.endedAt = frame.timestamp
+    }
+  }
+
+  return connections
+}
+
+/**
+ * A session that went down with nothing at the BGP layer recording it.
+ *
+ * A BGP speaker that meant to go away sends a Cease first, so a connection that
+ * carried BGP and then ended in RST or FIN with no NOTIFICATION on it is a
+ * teardown nobody explained — a middlebox, an idle timeout, a stack out of
+ * sockets. The evidence is already in the capture as an `[AR]` or an `[F]`, but
+ * only under **All Packets**, which is why these rows carry the reader there.
+ *
+ * Both shapes count. A firewall closes an idle session with FIN as readily as
+ * it resets it, and treating only RST as suspicious would miss half of
+ * `s11-silent-teardown` — which holds one of each precisely so that a rule
+ * looking for resets alone fails a test rather than shipping.
+ */
+function computeSilentTeardownAlerts(
+  packets: BgpPacket[],
+  allPackets: GenericPacket[]
+): DashboardAlert[] {
+  const bgpByFrame = new Map<number, BgpPacket>()
+  for (const packet of packets) bgpByFrame.set(packet.frameIndex, packet)
+
+  const framesByPair = new Map<string, GenericPacket[]>()
+  for (const frame of allPackets) {
+    if (frame.protocol !== 'TCP') continue
+    if (frame.srcPort !== 179 && frame.dstPort !== 179) continue
+    const key = sortedPairKey(frame.srcIp, frame.dstIp)
+    const frames = framesByPair.get(key)
+    if (frames) frames.push(frame)
+    else framesByPair.set(key, [frame])
+  }
+
+  // Grouped by (peering, kind) and counted within, the same shape the
+  // NOTIFICATION rule uses. A session dying every ten minutes for six hours is
+  // at most two rows carrying their own counts, not thirty-six rows — and the
+  // two kinds stay apart because they point somewhere different: an RST is
+  // something actively rejecting the connection, a FIN something deciding it
+  // was finished, which is what an idle timeout looks like.
+  const alerts: DashboardAlert[] = []
+
+  for (const [pairKey, frames] of framesByPair) {
+    const [ipA, ipB] = pairKey.split('|')
+
+    const unexplained = splitIntoConnections(frames, bgpByFrame).filter(
+      (connection) =>
+        connection.bgpSenders.size >= 2 && connection.kind && !connection.sawNotification
+    )
+
+    for (const kind of ['RST', 'FIN'] as TeardownKind[]) {
+      const matching = unexplained.filter((connection) => connection.kind === kind)
+      if (matching.length === 0) continue
+
+      const first = matching[0]
+      const times = matching
+        .map((connection) => connection.endedAt)
+        .filter((at): at is Date => at !== undefined)
+      const sender = first.endFrame ? first.endFrame.srcIp : ipA
+
+      alerts.push({
+        id: `silent-teardown-${kind}-${pairKey}`,
+        severity: 'critical',
+        title:
+          kind === 'RST'
+            ? `${ipA} ↔ ${ipB} was reset with no NOTIFICATION`
+            : `${ipA} ↔ ${ipB} was closed with no NOTIFICATION`,
+        detail:
+          kind === 'RST'
+            ? `A connection carrying BGP ended when ${sender} sent an RST, and no ` +
+              `NOTIFICATION was exchanged on it. A speaker shutting the session ` +
+              `down would have sent a Cease first, so the reset came from ` +
+              `somewhere else — a firewall or load balancer dropping the flow, a ` +
+              `stack that had no socket for it, an ACL applied mid-session. The ` +
+              `frame is in the capture under All Packets.`
+            : `A connection carrying BGP was closed with FIN by ${sender}, and no ` +
+              `NOTIFICATION was exchanged on it. BGP does not end a session that ` +
+              `way — a speaker going down sends a Cease — so something in the ` +
+              `path decided the connection was finished, which is what an idle ` +
+              `timeout on a firewall or NAT looks like. The frame is in the ` +
+              `capture under All Packets.`,
+        timestamp: times[0] ?? null,
+        filter: sessionFilter(ipA, ipB),
+        pairKey,
+        frameIndex: first.endFrame?.frameIndex,
+        showAllPackets: true,
+        count: matching.length > 1 ? matching.length : undefined,
+        timeSpan:
+          matching.length > 1 && times.length > 1
+            ? { start: times[0], end: times[times.length - 1] }
+            : undefined,
+      })
+    }
+  }
+
+  return alerts
+}
+
 /**
  * `allPackets` is optional so the many tests that only care about BGP-level
  * rules can keep passing packets alone; the establishment rules simply find
@@ -371,6 +539,7 @@ export function computeAlerts(
   const alerts: DashboardAlert[] = []
 
   alerts.push(...computeSessionSetupAlerts(packets, allPackets))
+  alerts.push(...computeSilentTeardownAlerts(packets, allPackets))
 
   // 1. NOTIFICATIONs, one row per repeated fault rather than per packet.
   alerts.push(...groupNotifications(packets))

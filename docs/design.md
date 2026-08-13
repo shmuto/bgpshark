@@ -265,20 +265,20 @@ is why captures of outright broken sessions were once summarised as healthy.
 | AS_PATH changed | warning | More than one distinct AS_PATH for a prefix; worst 5 plus a summary row | Prepends that never varied |
 | One direction | critical | A peering with TCP frames in only one direction | Anything with both directions present |
 | Accepted, no BGP | critical | A SYN-ACK was seen and only one end sent BGP | A refused connection — `computeTransportAlerts` owns that, and a second explanation of the same packets is a worse one |
-| *(planned)* Silent teardown | critical | A connection that carried BGP ends in RST or FIN with no NOTIFICATION on it; grouped per peering and teardown kind | Every teardown that a NOTIFICATION already explains |
+| Silent teardown | critical | A connection that carried BGP *in both directions* ends in RST or FIN with no NOTIFICATION on it; grouped per peering and teardown kind | Every teardown that a NOTIFICATION already explains, and a session that never established — `s14-open-unanswered` resets three connections and belongs to "Accepted, no BGP" |
 
 `computeTransportAlerts` is separate and runs only when a capture holds no BGP
 at all: with nothing above TCP to report, the interesting question is what
 answers the SYN.
 
-##### The planned rule, in detail
+##### The rule, in detail
 
 S11 in `troubleshooting-scenarios.md` is a session that drops twice with nothing
-at the BGP layer recording it. The evidence is in the capture — an `[AR]` and a
-`[F]` under **All Packets** — but the dashboard says only "Session flapping
-detected" and marks the pair `✓ OK`.
+at the BGP layer recording it. The evidence was in the capture — an `[AR]` and a
+`[F]` under **All Packets** — but the dashboard said only "Session flapping
+detected" and marked the pair `✓ OK`.
 
-Three decisions the implementation has to get right, each of which the corpus
+Four decisions the implementation has to get right, each of which the corpus
 already argues for:
 
 1. **Both shapes count.** A firewall that times out a session closes it with FIN
@@ -297,10 +297,32 @@ already argues for:
    enough window. A new SYN starts a new connection; the teardown that ends a
    segment belongs to that segment.
 
-Put together: split each peering's TCP frames at every SYN, and for each segment
-that carried BGP, fire when it ends in RST or FIN and no NOTIFICATION appears
-within it. `s3-holdtimer-flap` is the false positive to check against — it must
-stay silent.
+4. **Both ends had to have spoken.** A connection where only one side ever sent
+   BGP is not a session that came down; it is one that never came up.
+   `s14-open-unanswered` is exactly that — an OPEN out, nothing back, and our
+   own side resetting three times — and it already has a row, "TCP connects but
+   the peer sends no BGP", which says the useful thing. Firing here as well
+   would put two criticals on the same three connections, and the rule above
+   for "Accepted, no BGP" already states the principle: *a second explanation of
+   the same packets is a worse one*. This is the one condition the rule adds
+   beyond what the S11 gap asked for, and `s14` is the capture that asks for it.
+
+Put together: split each peering's TCP frames at every bare SYN, and for each
+segment that carried BGP in both directions, fire when it ends in RST or FIN and
+no NOTIFICATION appears within it. `s3-holdtimer-flap` and `s14-open-unanswered`
+are the false positives to check against — both must stay silent.
+
+A SYN-ACK does not open a segment, only a SYN without ACK does; otherwise every
+handshake would be split down its middle and the teardown would be attributed to
+a segment that began with the answer to its own SYN. Within a segment RST
+outranks FIN, so a connection that was closing politely and then got reset is
+reported as the reset, and only the first FIN counts — a graceful close carries
+one from each end and is one teardown, not two.
+
+`s8-graceful-restart` fires this rule too, since a GR restart is also a teardown
+without a NOTIFICATION. That is correct as far as this rule goes and is left
+alone deliberately: telling a graceful restart apart from a crash is S8's
+question, and the row it should get instead is specified when that rule lands.
 
 ##### Grouping: one row per peering and teardown kind
 
@@ -343,8 +365,11 @@ this rule's rows set it. Without that the alert names evidence it then refuses
 to show, which is half of the S11 gap left in place — the complaint there was
 never that the reset is unfindable, only that nothing points at it.
 
-The same parameter is worth having for the existing transport alerts, which
-have the same problem for the same reason.
+Addressing the frame needs a second parameter. `?selected=` indexes the *BGP*
+packet array, and an RST is not in it, so these rows travel with `?frame=`,
+which names a frame by its index in the capture and is resolved against
+whatever list is on screen. Both are honoured once, so the reader's own clicks
+own the selection afterwards.
 
 ### 2.2 Future Features
 

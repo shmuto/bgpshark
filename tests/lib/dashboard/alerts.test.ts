@@ -442,3 +442,190 @@ describe('sessions that never got going', () => {
     expect(byId(alerts, 'no-reply-')).toHaveLength(0)
   })
 })
+
+/**
+ * A session that went down with nothing at the BGP layer recording it.
+ *
+ * The decisions being pinned here are the three that `design.md` §2.1.14 argues
+ * for from the corpus, each of which has a capture that punishes getting it
+ * wrong: both RST and FIN count, a connection is delimited by its SYN rather
+ * than by the four-tuple, and a teardown a NOTIFICATION already explains is not
+ * this rule's business.
+ */
+describe('teardowns nothing explained', () => {
+  function tcp(
+    frameIndex: number,
+    src: string,
+    dst: string,
+    flags: Partial<{ syn: boolean; ack: boolean; rst: boolean; fin: boolean; psh: boolean }> = {}
+  ): GenericPacket {
+    return {
+      frameIndex,
+      timestamp: at(frameIndex),
+      capturedLength: 60,
+      originalLength: 60,
+      frameBytes: new Uint8Array(),
+      srcIp: src,
+      dstIp: dst,
+      protocol: 'TCP',
+      protocolNumber: 6,
+      srcPort: src === '10.0.0.2' ? 179 : 51000,
+      dstPort: src === '10.0.0.2' ? 51000 : 179,
+      tcpFlags: { syn: false, ack: false, rst: false, fin: false, psh: false, urg: false, ...flags },
+      payloadLength: 0,
+    }
+  }
+
+  const open: BgpMessage = { type: 'OPEN' } as BgpMessage
+
+  /**
+   * One connection: SYN, an OPEN from each end, then whatever ends it.
+   *
+   * The BGP packets share a frame index with their TCP frames, which is how the
+   * rule ties a message to the connection that carried it.
+   */
+  function connection(
+    start: number,
+    ending: 'RST' | 'FIN' | 'none',
+    options: { notification?: boolean } = {}
+  ): { frames: GenericPacket[]; bgp: BgpPacket[] } {
+    const frames = [
+      tcp(start, '10.0.0.1', '10.0.0.2', { syn: true }),
+      tcp(start + 1, '10.0.0.2', '10.0.0.1', { syn: true, ack: true }),
+      tcp(start + 2, '10.0.0.1', '10.0.0.2', { ack: true }),
+      tcp(start + 3, '10.0.0.1', '10.0.0.2', { ack: true, psh: true }),
+      tcp(start + 4, '10.0.0.2', '10.0.0.1', { ack: true, psh: true }),
+    ]
+    const bgp = [
+      packet('10.0.0.1', '10.0.0.2', start + 3, [open]),
+      packet('10.0.0.2', '10.0.0.1', start + 4, [open]),
+    ]
+
+    if (options.notification) {
+      frames.push(tcp(start + 5, '10.0.0.2', '10.0.0.1', { ack: true, psh: true }))
+      bgp.push(notification('10.0.0.2', '10.0.0.1', start + 5))
+    }
+    if (ending === 'RST') frames.push(tcp(start + 6, '10.0.0.2', '10.0.0.1', { ack: true, rst: true }))
+    if (ending === 'FIN') frames.push(tcp(start + 6, '10.0.0.2', '10.0.0.1', { ack: true, fin: true }))
+
+    return { frames, bgp }
+  }
+
+  function alertsFor(...parts: { frames: GenericPacket[]; bgp: BgpPacket[] }[]) {
+    return computeAlerts(
+      parts.flatMap((part) => part.bgp),
+      parts.flatMap((part) => part.frames)
+    )
+  }
+
+  test('a reset on a session nothing else accounts for is reported', () => {
+    const rows = byId(alertsFor(connection(0, 'RST')), 'silent-teardown-')
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0].severity).toBe('critical')
+    expect(rows[0].title).toContain('reset')
+    // The row has to reach the frame it is talking about, and that frame is not
+    // a BGP packet — so it travels as a frame index, with the list switched over.
+    expect(rows[0].frameIndex).toBe(6)
+    expect(rows[0].showAllPackets).toBe(true)
+  })
+
+  test('a FIN counts the same as a reset', () => {
+    // A firewall closes an idle session politely as readily as it resets one, so
+    // a rule that only looked for RST would miss half of s11-silent-teardown.
+    const rows = byId(alertsFor(connection(0, 'FIN')), 'silent-teardown-')
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0].title).toContain('closed')
+  })
+
+  test('the two kinds are separate rows, because they point somewhere different', () => {
+    const rows = byId(alertsFor(connection(0, 'RST'), connection(10, 'FIN')), 'silent-teardown-')
+
+    expect(rows).toHaveLength(2)
+    expect(rows.map((row) => row.id).sort()).toEqual([
+      'silent-teardown-FIN-10.0.0.1|10.0.0.2',
+      'silent-teardown-RST-10.0.0.1|10.0.0.2',
+    ])
+  })
+
+  test('a teardown a NOTIFICATION already explains stays quiet', () => {
+    // s3-holdtimer-flap: three connections that each ended in RST *after* a
+    // NOTIFICATION said why. This is the false positive the rule exists beside.
+    const rows = byId(
+      alertsFor(
+        connection(0, 'RST', { notification: true }),
+        connection(10, 'RST', { notification: true }),
+        connection(20, 'RST', { notification: true })
+      ),
+      'silent-teardown-'
+    )
+
+    expect(rows).toHaveLength(0)
+  })
+
+  test('connections are delimited by SYN, not by the four-tuple', () => {
+    // Every frame here shares one four-tuple, because the source port is reused
+    // — as it is in both scenario captures and in any long real one. Keyed on
+    // the tuple these three collapse into one "connection" holding the middle
+    // NOTIFICATION, and the rule would find everything explained and say
+    // nothing at all.
+    const rows = byId(
+      alertsFor(
+        connection(0, 'RST'),
+        connection(10, 'RST', { notification: true }),
+        connection(20, 'RST')
+      ),
+      'silent-teardown-'
+    )
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0].count).toBe(2)
+  })
+
+  test('repeated teardowns of the same kind are one row that counts them', () => {
+    // The capture that decides this is a session dying every ten minutes for
+    // six hours: two rows carrying counts, not thirty-six rows.
+    const rows = byId(
+      alertsFor(connection(0, 'RST'), connection(10, 'RST'), connection(20, 'RST')),
+      'silent-teardown-'
+    )
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0].count).toBe(3)
+    expect(rows[0].timeSpan).toBeDefined()
+    // The row links to the first occurrence, so "View →" opens the start.
+    expect(rows[0].frameIndex).toBe(6)
+  })
+
+  test('a graceful close is one teardown even though both ends send a FIN', () => {
+    const part = connection(0, 'FIN')
+    part.frames.push(tcp(7, '10.0.0.1', '10.0.0.2', { ack: true, fin: true }))
+
+    const rows = byId(alertsFor(part), 'silent-teardown-')
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0].count).toBeUndefined()
+  })
+
+  test('a session that never established is not a teardown', () => {
+    // s14-open-unanswered: our OPEN goes out, the peer never answers, and our
+    // side eventually resets. "TCP connects but the peer sends no BGP" already
+    // owns those packets, and a second explanation of them is a worse one.
+    const frames = [
+      tcp(0, '10.0.0.1', '10.0.0.2', { syn: true }),
+      tcp(1, '10.0.0.2', '10.0.0.1', { syn: true, ack: true }),
+      tcp(2, '10.0.0.1', '10.0.0.2', { ack: true }),
+      tcp(3, '10.0.0.1', '10.0.0.2', { ack: true, psh: true }),
+      tcp(4, '10.0.0.1', '10.0.0.2', { ack: true, rst: true }),
+    ]
+    const alerts = computeAlerts([packet('10.0.0.1', '10.0.0.2', 3, [open])], frames)
+
+    expect(byId(alerts, 'silent-teardown-')).toHaveLength(0)
+    expect(byId(alerts, 'no-reply-')).toHaveLength(1)
+  })
+
+  test('a healthy session still ends the capture without a row', () => {
+    expect(byId(alertsFor(connection(0, 'none')), 'silent-teardown-')).toHaveLength(0)
+  })
+})

@@ -31,6 +31,18 @@ export interface DashboardAlert {
    * neighbour table can mark the same pair without deriving the finding twice.
    */
   pairKey?: string
+  /**
+   * A frame to select by its `frameIndex`, for rows whose evidence is not a BGP
+   * message. `packetIndex` cannot address one: it indexes the BGP packet array,
+   * and an RST carries no BGP at all.
+   */
+  frameIndex?: number
+  /**
+   * Ask the explorer to open on **All Packets**. The list shows BGP only by
+   * default, so a row pointing at a TCP frame would otherwise land the reader
+   * on a list that cannot contain the thing it just named.
+   */
+  showAllPackets?: boolean
 }
 
 export interface NeighborRow {
