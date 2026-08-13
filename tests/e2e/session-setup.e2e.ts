@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loadCapture, loadSample, oneDirectionCapture, unansweredOpenCapture } from './helpers'
+import { goToDashboard, loadCapture, loadSample, oneDirectionCapture, unansweredOpenCapture } from './helpers'
 
 /**
  * The two alerts that fire on something missing from the capture.
@@ -13,7 +13,7 @@ test.describe('sessions that never got going', () => {
   test('a connection accepted and then never answered is called out', async ({ page }) => {
     await loadCapture(page, 'open-unanswered.pcap', unansweredOpenCapture())
     await page.waitForURL('**/messages')
-    await page.getByRole('link', { name: 'Dashboard', exact: true }).click()
+    await goToDashboard(page)
 
     const body = await page.locator('body').innerText()
     expect(body).not.toContain('No issues detected')
@@ -27,7 +27,7 @@ test.describe('sessions that never got going', () => {
   test('a capture with one direction in it is called out, without blaming the capture', async ({ page }) => {
     await loadCapture(page, 'one-direction.pcap', oneDirectionCapture())
     await page.waitForURL('**/messages')
-    await page.getByRole('link', { name: 'Dashboard', exact: true }).click()
+    await goToDashboard(page)
 
     const body = await page.locator('body').innerText()
     expect(body).not.toContain('No issues detected')
@@ -41,7 +41,7 @@ test.describe('sessions that never got going', () => {
     // The rules judge whole sessions, so a false positive here would fire on
     // every capture in the suite rather than on an edge case.
     await loadSample(page)
-    await page.getByRole('link', { name: 'Dashboard', exact: true }).click()
+    await goToDashboard(page)
 
     const body = await page.locator('body').innerText()
     expect(body).not.toContain('sends no BGP')
