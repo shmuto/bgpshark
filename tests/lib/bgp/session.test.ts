@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { BgpSessionTracker, afiSafiKey, endpointKey } from '../../../src/lib/bgp/session'
+import {
+  BgpSessionTracker,
+  addPathDirections,
+  afiSafiKey,
+  endpointKey,
+} from '../../../src/lib/bgp/session'
 import { parseOpenMessage } from '../../../src/lib/bgp/open'
 import { BinaryReader } from '../../../src/lib/pcap/reader'
 
@@ -111,5 +116,64 @@ describe('negotiating ADD-PATH', () => {
     const t = new BgpSessionTracker()
     t.observeOpen(A, open({ addPath: 'both' }))
     expect(t.decodingFor(A, B).addPath).toBeNull()
+  })
+})
+
+describe('reporting what ADD-PATH came to', () => {
+  // What `decodingFor` reduces to a yes/no, spelled out per direction, because
+  // a capability diff that only compares advertisements calls the interesting
+  // failures a match.
+
+  test('both ends configured to send is not a working session', () => {
+    // Two ticks in the capability table, both saying "ADD-PATH: send", and not
+    // one Path Identifier on the wire in either direction. This is the row the
+    // section exists for.
+    const [out] = addPathDirections(open({ addPath: 'send' }), open({ addPath: 'send' }))
+    expect(out.negotiated).toBe(false)
+    expect(out.senderSends).toBe(true)
+    expect(out.receiverReceives).toBe(false)
+  })
+
+  test('send meeting receive is the working case, one way', () => {
+    const sender = open({ addPath: 'send' })
+    const receiver = open({ addPath: 'receive' })
+
+    expect(addPathDirections(sender, receiver)[0].negotiated).toBe(true)
+    // And nothing comes back the other way, which is the point of asking per
+    // direction rather than per session.
+    expect(addPathDirections(receiver, sender)[0].negotiated).toBe(false)
+  })
+
+  test('a family only one side named is reported rather than dropped', () => {
+    // Leaving it out would hide the mismatch, which is the one thing the
+    // section must not do.
+    const directions = addPathDirections(open({ addPath: 'both' }), open({ fourByteAs: 65002 }))
+
+    expect(directions).toHaveLength(1)
+    expect(directions[0]).toMatchObject({ afi: 1, safi: 1, negotiated: false, receiverReceives: false })
+  })
+
+  test('a session where neither side asked has nothing to report', () => {
+    expect(addPathDirections(open({ fourByteAs: 65001 }), open({ fourByteAs: 65002 }))).toEqual([])
+  })
+
+  test('it agrees with how the UPDATEs are actually parsed', () => {
+    // The two must not drift: the screen says what was agreed and the parser
+    // acts on it, and a session where they disagree shows prefixes that
+    // contradict the panel above them.
+    const sender = open({ addPath: 'send' })
+    const receiver = open({ addPath: 'receive' })
+    const t = new BgpSessionTracker()
+    t.observeOpen(A, sender)
+    t.observeOpen(B, receiver)
+
+    for (const [from, to, a, b] of [
+      [A, B, sender, receiver],
+      [B, A, receiver, sender],
+    ] as const) {
+      const reported = addPathDirections(a, b).filter((f) => f.negotiated)
+      const parsed = t.decodingFor(from, to).addPath!
+      expect(reported.map((f) => afiSafiKey(f.afi, f.safi))).toEqual([...parsed])
+    }
   })
 })

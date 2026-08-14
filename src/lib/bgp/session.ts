@@ -81,6 +81,68 @@ function advertisedFrom(open: BgpOpenMessage): Advertised {
   return { fourByteAs, addPath }
 }
 
+/**
+ * What one direction of a session agreed about ADD-PATH, for one family.
+ *
+ * The two halves are kept apart rather than reduced to a yes/no because the
+ * interesting failure is not "neither side asked for it" — it is two routers
+ * both configured to *send* additional paths and neither willing to receive
+ * them. Both OPENs name the family, a capability diff comparing advertisements
+ * calls that a match, and no Path Identifier is ever sent in either direction.
+ */
+export interface AddPathDirection {
+  afi: number
+  safi: number
+  /** The sending end advertised that it would send Path Identifiers. */
+  senderSends: boolean
+  /** The receiving end advertised that it could take them. */
+  receiverReceives: boolean
+  /** Both of the above, which is the only case that puts identifiers on the wire. */
+  negotiated: boolean
+}
+
+/**
+ * ADD-PATH for messages travelling from the sender of `from` to the sender of
+ * `to`, per address family.
+ *
+ * Every family either OPEN named is reported, including one only a single side
+ * named — that is a mismatch, and leaving it out would hide it.
+ *
+ * The one place this is worked out. `decodingFor` reads it to decide how to
+ * parse NLRI and the neighbour screen reads it to say what was agreed; two
+ * implementations of a negotiation this asymmetric would drift, and the screen
+ * would then contradict the prefixes on it.
+ */
+export function addPathDirections(
+  from: BgpOpenMessage,
+  to: BgpOpenMessage
+): AddPathDirection[] {
+  return addPathBetween(advertisedFrom(from).addPath, advertisedFrom(to).addPath)
+}
+
+type AddPathFamilies = ReadonlyMap<string, AddPathSendReceive>
+
+function addPathBetween(sender: AddPathFamilies, receiver: AddPathFamilies): AddPathDirection[] {
+  return [...new Set([...sender.keys(), ...receiver.keys()])]
+    .map((key) => {
+      const [afi, safi] = key.split('/').map(Number)
+      const senderSends = advertisesSend(sender.get(key) ?? 'receive')
+      const receiverReceives = advertisesReceive(receiver.get(key) ?? 'send')
+      // A family the other side never named is not negotiated whatever this
+      // side offered, which the defaults above already produce: the missing
+      // side reads as the direction it did not commit to.
+      const present = sender.has(key) && receiver.has(key)
+      return {
+        afi,
+        safi,
+        senderSends: sender.has(key) && senderSends,
+        receiverReceives: receiver.has(key) && receiverReceives,
+        negotiated: present && senderSends && receiverReceives,
+      }
+    })
+    .sort((a, b) => a.afi - b.afi || a.safi - b.safi)
+}
+
 /** Identifies one end of a TCP connection. */
 export function endpointKey(ip: string, port: number): string {
   return `${ip}:${port}`
@@ -107,15 +169,13 @@ export class BgpSessionTracker {
     const receiver = this.advertised.get(to)
     if (!sender || !receiver) return DEFAULT_DECODING
 
-    const addPath = new Set<string>()
-    for (const [key, sendReceive] of sender.addPath) {
-      // The sender puts Path Identifiers on the wire only if it said it would
-      // send them and the receiver said it could take them.
-      const peer = receiver.addPath.get(key)
-      if (peer !== undefined && advertisesSend(sendReceive) && advertisesReceive(peer)) {
-        addPath.add(key)
-      }
-    }
+    // Through the same function the neighbour screen uses, so what that screen
+    // says was agreed and how the NLRI on it was parsed cannot disagree.
+    const addPath = new Set(
+      addPathBetween(sender.addPath, receiver.addPath)
+        .filter((family) => family.negotiated)
+        .map((family) => afiSafiKey(family.afi, family.safi))
+    )
 
     return {
       fourByteAs: sender.fourByteAs && receiver.fourByteAs,
