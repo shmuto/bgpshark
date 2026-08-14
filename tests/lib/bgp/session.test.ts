@@ -46,33 +46,40 @@ describe('negotiating the 4-byte AS capability', () => {
 })
 
 describe('negotiating ADD-PATH', () => {
+  /** The negotiated set, asserting it was decided at all. */
+  function negotiated(t: BgpSessionTracker, from: string, to: string): ReadonlySet<string> {
+    const { addPath } = t.decodingFor(from, to)
+    expect(addPath).not.toBeNull()
+    return addPath!
+  }
+
   test('the sender sends Path IDs when it offered to send and the peer to receive', () => {
     const t = new BgpSessionTracker()
     t.observeOpen(A, open({ addPath: 'send' }))
     t.observeOpen(B, open({ addPath: 'receive' }))
-    expect(t.decodingFor(A, B).addPath.has(IPV4_UNICAST)).toBe(true)
+    expect(negotiated(t, A, B).has(IPV4_UNICAST)).toBe(true)
   })
 
   test('has a direction: the same session is not add-path the other way', () => {
     const t = new BgpSessionTracker()
     t.observeOpen(A, open({ addPath: 'send' }))
     t.observeOpen(B, open({ addPath: 'receive' }))
-    expect(t.decodingFor(B, A).addPath.has(IPV4_UNICAST)).toBe(false)
+    expect(negotiated(t, B, A).has(IPV4_UNICAST)).toBe(false)
   })
 
   test('both ends saying "both" makes it add-path in both directions', () => {
     const t = new BgpSessionTracker()
     t.observeOpen(A, open({ addPath: 'both' }))
     t.observeOpen(B, open({ addPath: 'both' }))
-    expect(t.decodingFor(A, B).addPath.has(IPV4_UNICAST)).toBe(true)
-    expect(t.decodingFor(B, A).addPath.has(IPV4_UNICAST)).toBe(true)
+    expect(negotiated(t, A, B).has(IPV4_UNICAST)).toBe(true)
+    expect(negotiated(t, B, A).has(IPV4_UNICAST)).toBe(true)
   })
 
   test('a sender willing to send but a peer that cannot receive means no Path IDs', () => {
     const t = new BgpSessionTracker()
     t.observeOpen(A, open({ addPath: 'send' }))
     t.observeOpen(B, open({ addPath: 'send' }))
-    expect(t.decodingFor(A, B).addPath.has(IPV4_UNICAST)).toBe(false)
+    expect(negotiated(t, A, B).has(IPV4_UNICAST)).toBe(false)
   })
 
   test('only the address families both ends named are affected', () => {
@@ -80,11 +87,29 @@ describe('negotiating ADD-PATH', () => {
     t.observeOpen(A, open({ addPath: 'both' }))
     t.observeOpen(B, open({ addPath: 'both' }))
     // The capability above names IPv4 unicast only.
-    expect(t.decodingFor(A, B).addPath.has(afiSafiKey(2, 1))).toBe(false)
+    expect(negotiated(t, A, B).has(afiSafiKey(2, 1))).toBe(false)
   })
 
-  test('an unobserved session claims nothing', () => {
+  test('a session where neither end offered ADD-PATH decided that it has none', () => {
+    // An empty set, not null: both OPENs were seen and the answer is "no".
     const t = new BgpSessionTracker()
-    expect(t.decodingFor(A, B).addPath.size).toBe(0)
+    t.observeOpen(A, open({ fourByteAs: 65001 }))
+    t.observeOpen(B, open({ fourByteAs: 65002 }))
+    expect(negotiated(t, A, B).size).toBe(0)
+  })
+
+  test('an unobserved session does not claim there is no ADD-PATH', () => {
+    // Null rather than an empty set. The difference is the whole point: an
+    // empty set says the OPENs ruled it out, and null says nobody asked them.
+    // Reading NLRI as plain because of the second is how a capture that began
+    // mid-session shows prefixes nobody announced.
+    const t = new BgpSessionTracker()
+    expect(t.decodingFor(A, B).addPath).toBeNull()
+  })
+
+  test('half an exchange is not an answer either', () => {
+    const t = new BgpSessionTracker()
+    t.observeOpen(A, open({ addPath: 'both' }))
+    expect(t.decodingFor(A, B).addPath).toBeNull()
   })
 })

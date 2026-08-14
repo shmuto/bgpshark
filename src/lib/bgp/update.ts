@@ -43,7 +43,7 @@ export function parseUpdateMessage(
 
   // The classic fields carry IPv4 unicast only; anything else travels in
   // MP_REACH/MP_UNREACH, which name their own address family.
-  const ipv4Unicast = { afi: 1, addPath: decoding.addPath.has(afiSafiKey(1, 1)) }
+  const ipv4Unicast = { afi: 1, addPath: negotiatedAddPath(decoding, 1, 1) }
 
   // Withdrawn Routes Length (2 bytes)
   const withdrawnRoutesLength = reader.readUint16()
@@ -122,9 +122,10 @@ function parsePrefixes(
   reader: BinaryReader,
   length: number,
   warnings: string[],
-  options: { afi?: number; addPath?: boolean } = {}
+  options: { afi?: number; addPath?: boolean | null } = {}
 ): BgpPrefix[] {
-  const { afi = 1, addPath = false } = options
+  const { afi = 1 } = options
+  const addPath = resolveAddPath(reader, length, warnings, afi, options.addPath ?? null)
   const prefixes: BgpPrefix[] = []
   const endPos = reader.getPosition() + length
   const limit = maxPrefixLength(afi)
@@ -173,6 +174,108 @@ function parsePrefixes(
   }
 
   return prefixes
+}
+
+/**
+ * What the two OPENs said about ADD-PATH for one family, or null when they were
+ * not both captured.
+ */
+function negotiatedAddPath(
+  decoding: UpdateDecoding,
+  afi: number,
+  safi: number
+): boolean | null {
+  return decoding.addPath === null ? null : decoding.addPath.has(afiSafiKey(afi, safi))
+}
+
+/**
+ * Does this NLRI block decode cleanly with — or without — Path Identifiers?
+ *
+ * The same question `asPathFits` asks about AS number width, for the same
+ * reason: every entry well-formed, prefix lengths within the family, and the
+ * block consumed exactly.
+ */
+function prefixesFit(
+  block: Uint8Array,
+  afi: number,
+  addPath: boolean
+): { fits: boolean; defaultRoutes: number } {
+  const limit = maxPrefixLength(afi)
+  let offset = 0
+  let defaultRoutes = 0
+
+  while (offset < block.length) {
+    if (addPath) {
+      if (offset + 4 > block.length) return { fits: false, defaultRoutes }
+      offset += 4
+    }
+    if (offset >= block.length) return { fits: false, defaultRoutes }
+    const prefixLength = block[offset]
+    if (prefixLength > limit) return { fits: false, defaultRoutes }
+    if (prefixLength === 0) defaultRoutes++
+    offset += 1 + Math.ceil(prefixLength / 8)
+  }
+
+  return { fits: offset === block.length, defaultRoutes }
+}
+
+/**
+ * Decide whether this block carries Path Identifiers when the session was never
+ * observed.
+ *
+ * Reading an ADD-PATH block as a plain one is not a near miss — the four
+ * identifier bytes become a prefix length and an address, so three announced
+ * routes can come back as fourteen, several of them 0.0.0.0/0, and the lengths
+ * are all legal so nothing complains. That is measured, not supposed.
+ *
+ * Often the structure decides it: only one reading consumes the block exactly.
+ * When both do, the tell is those default routes — a real UPDATE carrying
+ * several 0.0.0.0/0 in one block does not happen, while a misread ADD-PATH
+ * block produces them by construction, since a small Path Identifier is mostly
+ * zero bytes. Even then the reading is announced rather than presented as fact.
+ */
+function resolveAddPath(
+  reader: BinaryReader,
+  length: number,
+  warnings: string[],
+  afi: number,
+  negotiated: boolean | null
+): boolean {
+  if (negotiated !== null) return negotiated
+  // A block that claims more bytes than are there is already broken; the read
+  // loop reports that, and guessing at its framing first would only add noise.
+  if (length === 0 || !reader.hasBytes(length)) return false
+
+  const block = reader.peek(length)
+  const plain = prefixesFit(block, afi, false)
+  const tagged = prefixesFit(block, afi, true)
+
+  if (plain.fits && !tagged.fits) return false
+  if (tagged.fits && !plain.fits) {
+    warnings.push(
+      'This NLRI only decodes as ADD-PATH, and no OPEN was captured for the session — ' +
+        'reading it with Path Identifiers'
+    )
+    return true
+  }
+  if (!plain.fits && !tagged.fits) return false
+
+  // Both readings consume the block. Prefer the one that does not invent
+  // default routes; failing that, say the answer is a guess.
+  if (plain.defaultRoutes > 1 && tagged.defaultRoutes === 0) {
+    warnings.push(
+      `This NLRI decodes either way and no OPEN was captured for the session. Read as plain ` +
+        `NLRI it yields ${plain.defaultRoutes} default routes, which a real UPDATE does not ` +
+        `carry, so it is being read as ADD-PATH instead`
+    )
+    return true
+  }
+
+  warnings.push(
+    'This NLRI decodes both with and without ADD-PATH Path Identifiers and no OPEN was ' +
+      'captured for the session, so the prefixes shown are the plain reading and may be wrong'
+  )
+  return false
 }
 
 function formatIpv4Prefix(octets: Uint8Array, _prefixLength: number): string {
@@ -474,7 +577,7 @@ function parseMpReachNlri(
       ? evpnPrefixes(reader, reader.remaining(), warnings)
       : parsePrefixes(reader, reader.remaining(), warnings, {
           afi,
-          addPath: decoding.addPath.has(afiSafiKey(afi, safi)),
+          addPath: negotiatedAddPath(decoding, afi, safi),
         }))
   )
 
@@ -503,7 +606,7 @@ function parseMpUnreachNlri(
       ? evpnPrefixes(reader, reader.remaining(), warnings)
       : parsePrefixes(reader, reader.remaining(), warnings, {
           afi,
-          addPath: decoding.addPath.has(afiSafiKey(afi, safi)),
+          addPath: negotiatedAddPath(decoding, afi, safi),
         })
 
   return {

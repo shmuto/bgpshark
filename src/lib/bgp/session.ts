@@ -26,13 +26,23 @@ export interface UpdateDecoding {
    * session, so the parser has to work it out from the attribute itself.
    */
   fourByteAs: boolean | null
-  /** `afi/safi` pairs whose NLRI carries a 4-byte Path Identifier (RFC 7911). */
-  addPath: ReadonlySet<string>
+  /**
+   * `afi/safi` pairs whose NLRI carries a 4-byte Path Identifier (RFC 7911),
+   * or `null` when the session's OPENs were not captured and there is nothing
+   * to answer from.
+   *
+   * Null rather than an empty set, for the same reason `fourByteAs` is
+   * `boolean | null`: "this session does not use ADD-PATH" and "we never saw
+   * the OPENs" lead to the same decoding but are different statements, and
+   * treating the second as the first is how a capture started mid-session ends
+   * up showing prefixes nobody announced.
+   */
+  addPath: ReadonlySet<string> | null
 }
 
 export const DEFAULT_DECODING: UpdateDecoding = {
   fourByteAs: null,
-  addPath: new Set(),
+  addPath: null,
 }
 
 export function afiSafiKey(afi: number, safi: number): string {
