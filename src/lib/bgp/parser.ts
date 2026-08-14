@@ -13,7 +13,6 @@ import { parseNotificationMessage } from './notification'
 import { parseUpdateMessage } from './update'
 import { BgpSessionTracker, endpointKey, type UpdateDecoding } from './session'
 import { getAfiName, getSafiName } from './constants'
-const updateParseWarnings: string[] = []
 
 const BGP_HEADER_LENGTH = 19
 const BGP_MIN_MESSAGE_LENGTH = 19
@@ -220,7 +219,13 @@ function parseBgpMessages(
     const messageReader = reader.subReader(messageBodyLength)
 
     try {
-      const message = parseBgpMessageBody(header.type, messageReader, session.decoding())
+      const message = parseBgpMessageBody(
+        header.type,
+        messageReader,
+        session.decoding(),
+        warnings,
+        packetIndex
+      )
       if (message) {
         // Registered as it is read, so an OPEN and an UPDATE arriving in the
         // same segment are still read in the right order.
@@ -277,7 +282,9 @@ function parseBgpHeader(reader: BinaryReader): BgpMessageHeader {
 function parseBgpMessageBody(
   type: number,
   reader: BinaryReader,
-  decoding: UpdateDecoding
+  decoding: UpdateDecoding,
+  warnings: string[],
+  packetIndex: number
 ): BgpMessage | null {
   switch (type) {
     case BgpMessageType.OPEN:
@@ -286,8 +293,17 @@ function parseBgpMessageBody(
     case BgpMessageType.UPDATE: {
       // parseUpdateMessage expects raw bytes, not a BinaryReader
       const updateData = reader.readBytes(reader.remaining())
-      updateParseWarnings.length = 0 // Clear previous warnings
-      return parseUpdateMessage(updateData, updateParseWarnings, decoding)
+      // Into the packet's own list, so they surface next to the packet they
+      // came from. These used to go into a module-level array that nothing ever
+      // read, which meant the UPDATE parser's warnings — a prefix length past
+      // the family maximum, an NLRI block that decodes two different ways —
+      // were collected and then dropped. The parser was talking to no one.
+      const before = warnings.length
+      const message = parseUpdateMessage(updateData, warnings, decoding)
+      for (let i = before; i < warnings.length; i++) {
+        warnings[i] = `Packet ${packetIndex}: ${warnings[i]}`
+      }
+      return message
     }
 
     case BgpMessageType.NOTIFICATION:

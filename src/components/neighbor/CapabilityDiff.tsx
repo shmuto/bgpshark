@@ -1,5 +1,7 @@
 import { useMemo } from 'react'
 import type { BgpOpenMessage } from '../../lib/bgp/types'
+import { addPathDirections, type AddPathDirection } from '../../lib/bgp/session'
+import { getAfiName, getSafiName } from '../../lib/bgp/constants'
 
 export interface CapabilityDiffProps {
   localLabel: string
@@ -82,6 +84,15 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
         )}
       </section>
 
+      {localOpen && remoteOpen && (
+        <AddPathOutcome
+          localLabel={localLabel}
+          remoteLabel={remoteLabel}
+          localOpen={localOpen}
+          remoteOpen={remoteOpen}
+        />
+      )}
+
       {matchedRows.length > 0 && (
         <details>
           <summary className="text-xs font-semibold uppercase tracking-wide text-muted cursor-pointer select-none">
@@ -93,6 +104,115 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
         </details>
       )}
     </div>
+  )
+}
+
+/**
+ * What ADD-PATH actually came to, per direction and address family.
+ *
+ * The capability table above says what each side *advertised*, and for
+ * ADD-PATH that is not enough to answer the question anyone has. The
+ * capability is directional and negotiated crosswise: identifiers flow one way
+ * only if the sender offered to send and the receiver offered to receive. Two
+ * routers that both advertise `send` for the same family produce two ticks and
+ * a "matching capability" row, and not one Path Identifier on the wire — which
+ * is exactly the configuration mistake this section exists to catch.
+ *
+ * It appears only when both OPENs were captured, because half an exchange
+ * cannot answer a crosswise question, and only when at least one side asked for
+ * ADD-PATH at all.
+ */
+function AddPathOutcome({
+  localLabel,
+  remoteLabel,
+  localOpen,
+  remoteOpen,
+}: {
+  localLabel: string
+  remoteLabel: string
+  localOpen: BgpOpenMessage
+  remoteOpen: BgpOpenMessage
+}) {
+  const outward = useMemo(() => addPathDirections(localOpen, remoteOpen), [localOpen, remoteOpen])
+  const inward = useMemo(() => addPathDirections(remoteOpen, localOpen), [localOpen, remoteOpen])
+
+  if (outward.length === 0) return null
+
+  return (
+    <section>
+      <h4 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">
+        ADD-PATH Result
+      </h4>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-muted">
+            <th className="py-1 pr-3 font-medium">Address Family</th>
+            <th className="py-1 pr-3 font-medium">Direction</th>
+            <th className="py-1 font-medium">Path Identifiers</th>
+          </tr>
+        </thead>
+        <tbody>
+          {outward.map((family) => (
+            <AddPathRow
+              key={`out:${family.afi}/${family.safi}`}
+              family={family}
+              from={localLabel}
+              to={remoteLabel}
+            />
+          ))}
+          {inward.map((family) => (
+            <AddPathRow
+              key={`in:${family.afi}/${family.safi}`}
+              family={family}
+              from={remoteLabel}
+              to={localLabel}
+            />
+          ))}
+        </tbody>
+      </table>
+    </section>
+  )
+}
+
+function AddPathRow({
+  family,
+  from,
+  to,
+}: {
+  family: AddPathDirection
+  from: string
+  to: string
+}) {
+  // Which half is missing is the whole diagnosis, so the reason names it rather
+  // than saying "not negotiated" and leaving the reader to diff two rows of the
+  // table above.
+  const reason = family.negotiated
+    ? null
+    : !family.senderSends && !family.receiverReceives
+      ? `${from} does not send them and ${to} does not accept them`
+      : !family.senderSends
+        ? `${from} did not advertise send for this family`
+        : `${to} did not advertise receive for this family`
+
+  return (
+    <tr>
+      <td className="py-1.5 pr-3 align-top">
+        {getAfiName(family.afi)} / {getSafiName(family.safi)}
+      </td>
+      <td className="py-1.5 pr-3 font-mono align-top whitespace-nowrap">
+        {from} → {to}
+      </td>
+      <td className="py-1.5 align-top">
+        <span
+          className={`inline-block px-1.5 py-0.5 rounded text-xs ${
+            TONE_CLASSES[family.negotiated ? 'ok' : 'neutral']
+          }`}
+        >
+          {family.negotiated ? 'Sent' : 'Not sent'}
+        </span>
+        {reason && <div className="text-xs text-dim mt-0.5">{reason}</div>}
+      </td>
+    </tr>
   )
 }
 

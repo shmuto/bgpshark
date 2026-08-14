@@ -37,6 +37,13 @@ Two things worth knowing before you trust what you see:
 - **TCP-level frames are hidden by default.** The packet list shows BGP only
   until you switch it to **All Packets**. A session killed by a firewall shows
   up as a `[R]` frame there and nowhere else.
+- **A capture that starts mid-session is missing the OPENs**, and the OPENs are
+  where several things about an UPDATE's encoding were agreed — whether AS_PATH
+  holds 2-byte or 4-byte AS numbers, whether each route carries an ADD-PATH Path
+  Identifier. Neither is visible in the UPDATE itself. BGPShark works them out
+  from the message's own structure when it has to, and says so in the warning
+  banner rather than presenting a guess as a reading. If you see such a warning
+  and can re-capture from before the session came up, do.
 
 ## The screens
 
@@ -374,6 +381,30 @@ above is the next stop.
 A capture whose UPDATEs are split across TCP segments needs nothing special
 from you: the segments are reassembled before parsing, and a 400-prefix UPDATE
 at a 576-byte MTU still counts 400 prefixes here.
+
+### “Only one path arrives, though the peer has several”
+
+A route reflector with several paths to a prefix sends its clients one of them
+unless ADD-PATH was negotiated (RFC 7911), and that negotiation is easy to get
+half right.
+
+**Neighbors → the router → the session**, and read the **ADD-PATH Result**
+section under the capability diff. It says, per direction and address family,
+whether Path Identifiers are actually being sent.
+
+The section exists because the capability table above it cannot answer this. The
+capability is directional and negotiated crosswise: identifiers flow one way only
+if the sender advertised *send* and the receiver advertised *receive*. Two
+routers both configured to send them advertise the same family, show two ticks,
+and produce a cheerful *“No capability mismatches detected”* — while nothing on
+the wire carries a Path Identifier in either direction. The result section names
+which half is missing.
+
+When it is negotiated, the identifiers are on the routes. A prefix chip in the
+packet detail reads `10.1.0.0/24 path 2`, and the route history grows a **Path
+ID** column. That column is the difference between *“the prefix was withdrawn”*
+and *“one of its two paths was withdrawn and the other is still up”*, which look
+identical without it.
 
 ### “Traffic leaves by the wrong upstream”
 

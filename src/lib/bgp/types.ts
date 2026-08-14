@@ -91,6 +91,16 @@ export interface BgpPrefix {
   prefix: string
   length: number
   /**
+   * The ADD-PATH Path Identifier this route arrived with (RFC 7911).
+   *
+   * Present only when the two OPENs negotiated ADD-PATH for this address
+   * family in this direction, which is also the only case where the four bytes
+   * are on the wire at all. Absent therefore means "not an ADD-PATH session",
+   * or — when the capture missed the OPENs — that we could not tell; the two
+   * are different answers and the UI says which.
+   */
+  pathId?: number
+  /**
    * EVPN routes are not prefixes — they are a tagged union keyed by route
    * type. The structured route lives here; `prefix` carries a readable
    * one-liner so screens that list routes as text still have something to

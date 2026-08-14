@@ -306,6 +306,18 @@ export function RoutesPage() {
     ).size > 1
   const showCommunitiesColumn =
     selectedPrefixStats?.history.some((event) => (event.communities?.length ?? 0) > 0) ?? false
+  /**
+   * The ADD-PATH Path Identifier, shown only on a route that has one — which is
+   * to say only on a session that negotiated ADD-PATH for this family.
+   *
+   * It earns a column because without it two rows of this table can be
+   * identical in every visible field and still be different routes: same
+   * prefix, same peer, same time, two paths. A withdraw of one of them then
+   * reads as the prefix going away, which is the wrong answer and an
+   * unarguable-looking one.
+   */
+  const showPathIdColumn =
+    selectedPrefixStats?.history.some((event) => event.pathId !== undefined) ?? false
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-canvas">
@@ -506,6 +518,14 @@ export function RoutesPage() {
                     <th className="px-3 py-2 font-medium" title="Time since the previous event">Δ</th>
                     <th className="px-3 py-2 font-medium">Action</th>
                     <th className="px-3 py-2 font-medium">AS_PATH</th>
+                    {showPathIdColumn && (
+                      <th
+                        className="px-3 py-2 font-medium"
+                        title="ADD-PATH Path Identifier (RFC 7911) — which of the peer's paths to this prefix this event is about"
+                      >
+                        Path ID
+                      </th>
+                    )}
                     {showRdColumn && (
                       <th
                         className="px-3 py-2 font-medium"
@@ -569,6 +589,9 @@ export function RoutesPage() {
                       <td className="px-3 py-2 font-mono text-muted">
                         {event.asPath ? formatAsPath(event.asPath) : '-'}
                       </td>
+                      {showPathIdColumn && (
+                        <td className="px-3 py-2 font-mono text-muted">{event.pathId ?? '-'}</td>
+                      )}
                       {showRdColumn && (
                         <td className="px-3 py-2 font-mono text-muted">{event.rd ?? '-'}</td>
                       )}

@@ -10,7 +10,7 @@
  * and a preset can be taken apart and edited rather than only run.
  */
 import type { Scenario, ScenarioPeer } from './scenario'
-import type { BgpMessageSpec, PathAttributeSpec } from './bgp-encode'
+import type { BgpMessageSpec, PathAttributeSpec, PrefixSpec } from './bgp-encode'
 import { Afi, Safi } from '../bgp/constants'
 
 export interface PresetDefinition {
@@ -35,9 +35,15 @@ const ROUTER_B: ScenarioPeer = {
   holdTime: 90,
 }
 
-/** An UPDATE announcing `prefixes` with a plausible set of attributes. */
+/**
+ * An UPDATE announcing `prefixes` with a plausible set of attributes.
+ *
+ * `PrefixSpec` rather than `string` so a prefix can carry an ADD-PATH Path
+ * Identifier, which the encoder has always written — the narrower signature
+ * here just made it unreachable from the presets and the test captures.
+ */
 export function announce(
-  prefixes: string[],
+  prefixes: PrefixSpec[],
   options: { nextHop: string; asPath: number[]; origin?: 'IGP' | 'EGP' | 'INCOMPLETE'; med?: number; communities?: string[] }
 ): BgpMessageSpec {
   const attributes: PathAttributeSpec[] = [
@@ -55,7 +61,7 @@ export function announce(
 }
 
 /** An UPDATE that withdraws `prefixes`. */
-export function withdraw(prefixes: string[]): BgpMessageSpec {
+export function withdraw(prefixes: PrefixSpec[]): BgpMessageSpec {
   return { type: 'UPDATE', withdrawnRoutes: prefixes }
 }
 

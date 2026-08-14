@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test'
-import { buildScenario, END_OF_RIB } from '../../src/lib/build'
+import { announce, buildScenario, END_OF_RIB } from '../../src/lib/build'
 import { writePcap } from '../../src/lib/pcap/writer'
 
 /**
@@ -614,6 +614,74 @@ export function holdTimerExpiryCapture(): Buffer {
       { kind: 'delay', gap: 60_000 },
       { kind: 'send', from: 'b', messages: [{ type: 'NOTIFICATION', errorCode: 4, errorSubcode: 0 }] },
       { kind: 'close', from: 'b', gap: 50 },
+    ],
+  })
+  return Buffer.from(built.bytes)
+}
+
+/**
+ * An ADD-PATH session, either working or misconfigured.
+ *
+ * `'both'` is the ordinary working case: identifiers flow each way and the same
+ * prefix arrives twice, once per path. `'send'` is the interesting one — both
+ * ends offer to *send* additional paths and neither offers to receive them, so
+ * both OPENs name IPv4 unicast under ADD-PATH, a diff of advertisements calls
+ * that a match, and nothing carries a Path Identifier in either direction.
+ */
+export function addPathCapture(sendReceive: 'both' | 'send' = 'both'): Buffer {
+  const capabilities = (asNumber: number) => [
+    { type: 'MULTIPROTOCOL' as const, afi: 1, safi: 1 },
+    { type: 'FOUR_OCTET_AS' as const, asNumber },
+    { type: 'ADD_PATH' as const, addressFamilies: [{ afi: 1, safi: 1, sendReceive }] },
+  ]
+  // Two paths to one prefix when they are actually negotiated; one plain
+  // announcement otherwise, since a misconfigured session cannot send them.
+  const nlri =
+    sendReceive === 'both'
+      ? [{ prefix: '10.1.0.0/24', pathId: 1 }, { prefix: '10.1.0.0/24', pathId: 2 }]
+      : ['10.1.0.0/24']
+
+  const built = buildScenario({
+    a: {
+      ip: '10.0.0.1',
+      as: 65001,
+      routerId: '1.1.1.1',
+      holdTime: 90,
+      capabilities: capabilities(65001),
+    },
+    b: {
+      ip: '10.0.0.2',
+      as: 65002,
+      routerId: '2.2.2.2',
+      holdTime: 90,
+      capabilities: capabilities(65002),
+    },
+    gap: 200,
+    steps: [
+      { kind: 'handshake' },
+      { kind: 'open', from: 'a' },
+      { kind: 'open', from: 'b' },
+      { kind: 'keepalive', from: 'a' },
+      { kind: 'keepalive', from: 'b' },
+      {
+        kind: 'send',
+        from: 'a',
+        messages: [announce(nlri, { nextHop: '10.0.0.1', asPath: [65001] }), END_OF_RIB],
+      },
+      { kind: 'delay', gap: 5000 },
+      // Only one of the two paths goes away, which is the withdraw that reads
+      // as "the prefix is gone" unless the identifier is on screen.
+      ...(sendReceive === 'both'
+        ? [
+            {
+              kind: 'send' as const,
+              from: 'a' as const,
+              messages: [
+                { type: 'UPDATE' as const, withdrawnRoutes: [{ prefix: '10.1.0.0/24', pathId: 2 }] },
+              ],
+            },
+          ]
+        : []),
     ],
   })
   return Buffer.from(built.bytes)

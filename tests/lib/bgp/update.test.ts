@@ -72,9 +72,125 @@ describe('NLRI with Path Identifiers (RFC 7911)', () => {
     expect(warnings.join(' ')).toContain('Path Identifier')
   })
 
+  test('the Path Identifier is kept, not just stepped over', () => {
+    // Two routes to the same prefix are two routes. Discarding the identifier
+    // collapsed them into one everywhere downstream — the route history showed
+    // a single entry, and a withdraw of one path read as the prefix going away.
+    const msg = parseUpdateMessage(
+      update([...ORIGIN, ...NEXT_HOP], withPathIds),
+      [],
+      decoding({ addPath: new Set([afiSafiKey(1, 1)]) })
+    )
+
+    expect(msg.nlri.map((p) => p.pathId)).toEqual([1, 2])
+  })
+
+  test('a prefix from a session without ADD-PATH carries no identifier', () => {
+    // Absent rather than zero: there was no Path Identifier on the wire, which
+    // is a different statement from one whose value happened to be 0.
+    const msg = parseUpdateMessage(update([...ORIGIN, ...NEXT_HOP], [24, 10, 1, 1]), [], decoding())
+
+    expect(msg.nlri[0].pathId).toBeUndefined()
+  })
+
   test('a session without ADD-PATH still reads plain NLRI', () => {
     const msg = parseUpdateMessage(update([...ORIGIN, ...NEXT_HOP], [24, 10, 1, 1]), [], decoding())
     expect(msg.nlri.map((p) => `${p.prefix}/${p.length}`)).toEqual(['10.1.1.0/24'])
+  })
+})
+
+describe('Path Identifiers when the OPENs were never captured', () => {
+  // A capture that starts mid-session has no OPEN to learn ADD-PATH from, and
+  // the difference between the two readings is not a near miss: the four
+  // identifier bytes become a prefix length and an address, so a handful of
+  // announced routes come back as a longer list of routes nobody sent, several
+  // of them default routes, with every length legal and nothing to complain
+  // about. So the block's own structure is asked instead — the same move
+  // `asPathFits` makes for AS width — and the answer is declared either way.
+  const undecided = decoding({ addPath: null })
+
+  test('a block that only decodes as ADD-PATH is read that way, and says so', () => {
+    const warnings: string[] = []
+    const msg = parseUpdateMessage(
+      update([...ORIGIN, ...NEXT_HOP], [0, 0, 0, 1, 32, 10, 1, 1, 1]),
+      warnings,
+      undecided
+    )
+
+    expect(msg.nlri).toEqual([{ prefix: '10.1.1.1', length: 32, pathId: 1 }])
+    expect(warnings.join(' ')).toContain('only decodes as ADD-PATH')
+  })
+
+  test('the default routes a misread invents are the tell when both readings fit', () => {
+    // Read plain, this block yields six 0.0.0.0/0 — a small Path Identifier is
+    // mostly zero bytes, and a zero byte is a default route. One UPDATE does
+    // not carry six of them; two paths to 10.1.1.0/24 is what was sent.
+    const warnings: string[] = []
+    const msg = parseUpdateMessage(
+      update([...ORIGIN, ...NEXT_HOP], [0, 0, 0, 1, 24, 10, 1, 1, 0, 0, 0, 2, 24, 10, 1, 1]),
+      warnings,
+      undecided
+    )
+
+    expect(msg.nlri.map((p) => `${p.prefix}/${p.length}`)).toEqual(['10.1.1.0/24', '10.1.1.0/24'])
+    expect(msg.nlri.map((p) => p.pathId)).toEqual([1, 2])
+    expect(warnings.join(' ')).toContain('default routes')
+  })
+
+  test('a block that fits both ways with nothing to choose by says the answer is a guess', () => {
+    // A large Path Identifier has no zero bytes to give it away. Both readings
+    // consume the block and neither invents a default route, so the plain one
+    // is shown — but as a reading, not as fact.
+    const warnings: string[] = []
+    const msg = parseUpdateMessage(
+      update([...ORIGIN, ...NEXT_HOP], [1, 2, 3, 4, 24, 10, 1, 1]),
+      warnings,
+      undecided
+    )
+
+    expect(msg.nlri.map((p) => `${p.prefix}/${p.length}`)).toEqual([
+      '2.0.0.0/1',
+      '4.0.0.0/3',
+      '10.1.1.0/24',
+    ])
+    expect(warnings.join(' ')).toContain('may be wrong')
+  })
+
+  test('ordinary NLRI is not talked about', () => {
+    // The common case by far. Only the ADD-PATH reading runs out of block here,
+    // so there is nothing undecided and nothing to warn about.
+    const warnings: string[] = []
+    const msg = parseUpdateMessage(update([...ORIGIN, ...NEXT_HOP], [24, 10, 1, 1]), warnings, undecided)
+
+    expect(msg.nlri).toEqual([{ prefix: '10.1.1.0', length: 24 }])
+    expect(warnings).toEqual([])
+  })
+
+  test('a session that was observed is not second-guessed', () => {
+    // The block below fits both ways and its plain reading invents no default
+    // route, so the structural guess would call it plain. The OPENs said
+    // ADD-PATH, and what the OPENs said wins — with no warning, because
+    // nothing here is uncertain.
+    const warnings: string[] = []
+    const msg = parseUpdateMessage(
+      update([...ORIGIN, ...NEXT_HOP], [1, 2, 3, 4, 24, 10, 1, 1]),
+      warnings,
+      decoding({ addPath: new Set([afiSafiKey(1, 1)]) })
+    )
+
+    expect(msg.nlri).toEqual([{ prefix: '10.1.1.0', length: 24, pathId: 0x01020304 }])
+    expect(warnings).toEqual([])
+  })
+
+  test('a block that decodes neither way keeps its own complaint', () => {
+    // Nothing to choose between two impossible readings, so the guess stays out
+    // of the way and the prefix length validation reports what is actually
+    // wrong rather than being talked over.
+    const warnings: string[] = []
+    parseUpdateMessage(update([...ORIGIN, ...NEXT_HOP], [40, 10, 1, 1, 0, 0]), warnings, undecided)
+
+    expect(warnings.join(' ')).toContain('exceeds the maximum 32')
+    expect(warnings.join(' ')).not.toContain('only decodes as ADD-PATH')
   })
 })
 
