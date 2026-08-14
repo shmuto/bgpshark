@@ -107,11 +107,17 @@ function markdownPlugin(): Plugin {
 }
 
 /**
- * Gives every h2 and h3 an `id` derived from its text.
+ * Gives every h2 and h3 an `id`, from an explicit marker or derived from its text.
  *
  * Two things need them: the table of contents the manual page builds by reading
  * its own HTML back, and links from elsewhere in the app into a specific section
  * — `/manual#filters` should land on Filters rather than at the top.
+ *
+ * A heading may end with `{#some-id}` to name its own anchor, which the
+ * translated manual uses so that both languages answer to the same links. It has
+ * to: the slug is derived from the letters in the heading, and a Japanese
+ * heading has none of the ones this keeps — every id would come out empty, the
+ * contents list would be blank and `#filters` would land at the top of the page.
  *
  * Done with a regex over the output rather than through a `marked` renderer
  * because the renderer API is the part of `marked` that changes between major
@@ -119,6 +125,12 @@ function markdownPlugin(): Plugin {
  */
 function withHeadingIds(html: string): string {
   return html.replace(/<h([23])>(.*?)<\/h\1>/g, (whole, level: string, inner: string) => {
+    const explicit = inner.match(/\s*\{#([A-Za-z0-9-]+)\}\s*$/)
+    if (explicit) {
+      const text = inner.slice(0, explicit.index).trimEnd()
+      return `<h${level} id="${explicit[1]}">${text}</h${level}>`
+    }
+
     const slug = inner
       .replace(/<[^>]+>/g, '')
       .toLowerCase()

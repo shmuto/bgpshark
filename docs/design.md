@@ -187,7 +187,7 @@ in MP_REACH_NLRI / MP_UNREACH_NLRI.
   announcements, since a column of identical values costs width the others need
 - **SQL Console** (`/sql`): raw SQL against the DuckDB tables, with query templates
 - **Capture Builder** (`/build`): §2.1.12
-- **Manual** (`/manual`): §2.1.13
+- **Manual** (`/manual`): §2.1.13, in English or Japanese
 
 #### 2.1.9 Filtering
 Two modes over the same expression language:
@@ -276,6 +276,24 @@ Markdown parser is shipped. The plugin also gives every `h2`/`h3` an id, which i
 what lets the page build its table of contents by reading its own output back —
 a section cannot be added to the prose and forgotten in the contents — and what
 makes `/manual#filters` land on the right section.
+
+**In English and Japanese.** `manual.ja.md` is the same document translated;
+both are converted at build time and the page holds both, so switching is
+instant and neither costs a request. The choice is remembered, and the opening
+language comes from the browser when there is nothing remembered.
+
+The two are kept in step by their **anchors**, which the Japanese headings name
+explicitly with a `{#id}` marker rather than having them derived. They have to
+be: the slug comes from the letters in the heading and a Japanese heading has
+none that the slugger keeps, so every id would come out empty — a blank contents
+list, and `/manual#filters` landing at the top of the page. Naming them by hand
+also means one link serves both languages, and an e2e test asserts the two
+manuals publish exactly the same set of ids, since a section added to one and
+forgotten in the other is the silent failure of any translated document.
+
+The screenshots are shared rather than re-shot: the app's own labels are English
+whichever manual you are reading, so a translated screenshot would show a screen
+that does not exist. The captions are translated, being prose.
 
 #### 2.1.14 Dashboard alert rules
 
