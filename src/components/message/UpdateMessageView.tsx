@@ -81,6 +81,7 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
                     {allNlri.slice(0, 8).map((prefix, i) => (
                       <span key={i} className="font-mono text-xs bg-ok-subtle text-ok px-1.5 py-0.5 rounded">
                         {formatPrefix(prefix)}
+                        <PathId prefix={prefix} />
                       </span>
                     ))}
                     {allNlri.length > 8 && (
@@ -101,6 +102,7 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
                     {allWithdrawn.slice(0, 5).map((prefix, i) => (
                       <span key={i} className="font-mono text-xs bg-critical-subtle text-critical px-1.5 py-0.5 rounded line-through">
                         {formatPrefix(prefix)}
+                        <PathId prefix={prefix} />
                       </span>
                     ))}
                     {allWithdrawn.length > 5 && (
@@ -222,6 +224,26 @@ function AsPathCompact({ segments }: { segments: AsPathSegment[] }) {
   )
 }
 
+/**
+ * The ADD-PATH Path Identifier, on the routes that carry one (RFC 7911).
+ *
+ * Shown rather than folded into the prefix text because it is not part of the
+ * route's name — `10.1.0.0/24` is the prefix whether or not the session
+ * negotiated ADD-PATH — but it is the only thing distinguishing two chips that
+ * otherwise read identically. Two announcements of the same prefix in one
+ * UPDATE is not a duplicate; it is two paths, and without this it looks like
+ * one.
+ */
+function PathId({ prefix }: { prefix: BgpPrefix }) {
+  if (prefix.pathId === undefined) return null
+  return (
+    <span className="opacity-60" title={`ADD-PATH Path Identifier ${prefix.pathId} (RFC 7911)`}>
+      {' '}
+      path {prefix.pathId}
+    </span>
+  )
+}
+
 function PrefixList({ prefixes, className }: { prefixes: BgpPrefix[]; className: string }) {
   return (
     <div className={`rounded-lg border p-3 ${className}`}>
@@ -229,6 +251,7 @@ function PrefixList({ prefixes, className }: { prefixes: BgpPrefix[]; className:
         {prefixes.map((prefix, i) => (
           <span key={i} className="font-mono text-xs bg-surface px-1.5 py-0.5 rounded border border-hair">
             {formatPrefix(prefix)}
+            <PathId prefix={prefix} />
           </span>
         ))}
       </div>
@@ -364,6 +387,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
               {parsed.nlri.map((prefix, i) => (
                 <span key={i} className="font-mono text-xs bg-ok-subtle text-ok px-1.5 py-0.5 rounded">
                   {formatPrefix(prefix)}
+                  <PathId prefix={prefix} />
                 </span>
               ))}
             </div>
@@ -382,6 +406,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
               {parsed.withdrawnRoutes.map((prefix, i) => (
                 <span key={i} className="font-mono text-xs bg-critical-subtle text-critical px-1.5 py-0.5 rounded">
                   {formatPrefix(prefix)}
+                  <PathId prefix={prefix} />
                 </span>
               ))}
             </div>
