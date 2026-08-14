@@ -11,6 +11,37 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import manualHtml from './manual/manual.md'
+import manualHtmlJa from './manual/manual.ja.md'
+
+type Language = 'en' | 'ja'
+
+const LANGUAGE_KEY = 'bgpshark:manual-language'
+
+const MANUALS: Record<Language, string> = { en: manualHtml, ja: manualHtmlJa }
+
+/** Labels that have to read in the language they offer, not in the current one. */
+const LANGUAGE_LABELS: Record<Language, string> = { en: 'English', ja: '日本語' }
+
+const CONTENTS_HEADING: Record<Language, string> = { en: 'Contents', ja: '目次' }
+
+/**
+ * Which manual to open with.
+ *
+ * A remembered choice wins, then the browser's languages. Someone reading the
+ * app in Japanese is more likely to want the Japanese manual than to want to be
+ * asked, and the toggle is right there for when the guess is wrong.
+ */
+function initialLanguage(): Language {
+  try {
+    const stored = window.localStorage.getItem(LANGUAGE_KEY)
+    if (stored === 'en' || stored === 'ja') return stored
+  } catch {
+    // Storage can be unavailable — private mode, a blocked origin. Not knowing
+    // the reader's last choice is not a reason to fail to render the manual.
+  }
+  const languages = navigator.languages ?? [navigator.language]
+  return languages.some((tag) => tag.toLowerCase().startsWith('ja')) ? 'ja' : 'en'
+}
 
 interface Heading {
   id: string
@@ -63,8 +94,19 @@ function extractHeadings(html: string): Heading[] {
 export function ManualPage() {
   const { hash } = useLocation()
   const contentRef = useRef<HTMLDivElement>(null)
-  const headings = useMemo(() => extractHeadings(manualHtml), [])
+  const [language, setLanguage] = useState<Language>(initialLanguage)
+  const html = MANUALS[language]
+  const headings = useMemo(() => extractHeadings(html), [html])
   const [activeId, setActiveId] = useState<string>('')
+
+  const chooseLanguage = (next: Language) => {
+    setLanguage(next)
+    try {
+      window.localStorage.setItem(LANGUAGE_KEY, next)
+    } catch {
+      // As above: a reader who cannot be remembered can still read.
+    }
+  }
 
   // A link into a section has to work on first paint, and the content is
   // injected rather than rendered as elements, so the browser's own hash
@@ -104,7 +146,9 @@ export function ManualPage() {
       observer.observe(element)
     }
     return () => observer.disconnect()
-  }, [])
+    // Switching language replaces every heading element, so the observer has to
+    // be rebuilt against the new ones.
+  }, [html])
 
   return (
     <div className="flex-1 overflow-y-auto bg-canvas">
@@ -117,7 +161,7 @@ export function ManualPage() {
           className="sticky top-6 hidden h-fit max-h-[calc(100vh-3rem)] w-60 shrink-0 overflow-y-auto lg:block"
         >
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">
-            Contents
+            {CONTENTS_HEADING[language]}
           </p>
           <ul className="space-y-0.5 border-l border-hair">
             {headings.map((heading) => (
@@ -141,12 +185,34 @@ export function ManualPage() {
         </nav>
 
         <div className="min-w-0 flex-1">
+          {/* Each label is written in the language it offers, so it is legible
+              to the reader who wants it rather than only to the one already
+              reading. */}
+          <div className="mb-4 flex justify-end gap-1 text-sm">
+            {(['en', 'ja'] as Language[]).map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                lang={tag}
+                onClick={() => chooseLanguage(tag)}
+                aria-pressed={language === tag}
+                className={`rounded px-2 py-1 ${
+                  language === tag
+                    ? 'bg-accent text-accent-fg'
+                    : 'text-muted hover:bg-surface-sunken hover:text-body'
+                }`}
+              >
+                {LANGUAGE_LABELS[tag]}
+              </button>
+            ))}
+          </div>
+
           <article
             ref={contentRef}
             className="manual-prose"
             // The HTML is this repository's own Markdown, converted at build time.
             // See the note on `markdownPlugin` in vite.config.ts.
-            dangerouslySetInnerHTML={{ __html: manualHtml }}
+            dangerouslySetInnerHTML={{ __html: html }}
           />
 
           {/* The typefaces and libraries are redistributed with the app, so

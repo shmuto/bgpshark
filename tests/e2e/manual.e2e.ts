@@ -148,3 +148,115 @@ test.describe('the user manual', () => {
     expect(foreign, `unexpected off-origin requests:\n${foreign.join('\n')}`).toEqual([])
   })
 })
+
+/**
+ * The manual in Japanese.
+ *
+ * The property that matters here is not the prose but the anchors. Section ids
+ * are derived from the letters in a heading, and a Japanese heading has none of
+ * the ones the slugger keeps — so every id would come out empty, the contents
+ * list would be blank, and `/manual#filters` would land at the top of the page.
+ * The translated headings therefore name their own ids, and both languages
+ * answer to the same links. That is what these tests are for.
+ */
+test.describe('the manual in Japanese', () => {
+  async function switchToJapanese(page: import('@playwright/test').Page) {
+    await page.goto('./manual', { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: '日本語' }).click()
+    await expect(page.getByRole('heading', { name: 'BGPShark ユーザーマニュアル' })).toBeVisible()
+  }
+
+  test('the toggle switches the prose and the contents list', async ({ page }) => {
+    await switchToJapanese(page)
+
+    const contents = page.locator('nav[aria-label="Manual contents"]')
+    await expect(contents).toContainText('目次')
+    await expect(contents).toContainText('症状から調べる')
+
+    // And back, so the reader is not stranded in a language they cannot read.
+    await page.getByRole('button', { name: 'English' }).click()
+    await expect(page.getByRole('heading', { name: 'BGPShark user manual' })).toBeVisible()
+  })
+
+  test('sections keep the English anchors, so one link serves both languages', async ({ page }) => {
+    await switchToJapanese(page)
+
+    const ids = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.manual-prose h2[id], .manual-prose h3[id]')).map(
+        (heading) => heading.id
+      )
+    )
+
+    // Not merely non-empty: the same ids the English manual publishes, which is
+    // the whole point of naming them by hand.
+    expect(ids).toContain('filters')
+    expect(ids).toContain('investigating-by-symptom')
+    expect(ids).toContain('the-capture-may-be-lying-to-you')
+    expect(ids.every((id) => /^[a-z0-9-]+$/.test(id))).toBe(true)
+  })
+
+  test('the two manuals cover the same sections', async ({ page }) => {
+    // A section added to one and forgotten in the other is the failure mode of
+    // any translated document, and it is silent without this.
+    await page.goto('./manual', { waitUntil: 'networkidle' })
+    const english = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.manual-prose h2[id], .manual-prose h3[id]')).map(
+        (heading) => heading.id
+      )
+    )
+
+    await switchToJapanese(page)
+    const japanese = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.manual-prose h2[id], .manual-prose h3[id]')).map(
+        (heading) => heading.id
+      )
+    )
+
+    expect(japanese).toEqual(english)
+  })
+
+  test('internal links resolve in Japanese too', async ({ page }) => {
+    await switchToJapanese(page)
+
+    const links = page.locator('.manual-prose a[href^="#"]')
+    const count = await links.count()
+    expect(count).toBeGreaterThan(0)
+
+    for (let i = 0; i < count; i++) {
+      const href = await links.nth(i).getAttribute('href')
+      await expect(page.locator(`.manual-prose ${href}`), `${href} has no heading`).toHaveCount(1)
+    }
+  })
+
+  test('the screenshots are the same files and still resolve', async ({ page }) => {
+    // The app's own labels are English, so the pictures are shared rather than
+    // re-shot — but a translated caption that named a file that does not exist
+    // would break just as quietly as an English one.
+    await switchToJapanese(page)
+
+    const images = page.locator('.manual-prose img')
+    const count = await images.count()
+    expect(count).toBeGreaterThan(0)
+
+    for (let i = 0; i < count; i++) {
+      const image = images.nth(i)
+      const source = await image.getAttribute('src')
+
+      // Loading is deferred, so each one has to be brought into view first —
+      // the same dance the English pass does.
+      await image.scrollIntoViewIfNeeded()
+      await expect
+        .poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth), {
+          message: `${source} did not load`,
+        })
+        .toBeGreaterThan(0)
+    }
+  })
+
+  test('the choice is remembered', async ({ page }) => {
+    await switchToJapanese(page)
+    await page.reload({ waitUntil: 'networkidle' })
+
+    await expect(page.getByRole('heading', { name: 'BGPShark ユーザーマニュアル' })).toBeVisible()
+  })
+})
