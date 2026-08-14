@@ -72,6 +72,27 @@ describe('NLRI with Path Identifiers (RFC 7911)', () => {
     expect(warnings.join(' ')).toContain('Path Identifier')
   })
 
+  test('the Path Identifier is kept, not just stepped over', () => {
+    // Two routes to the same prefix are two routes. Discarding the identifier
+    // collapsed them into one everywhere downstream — the route history showed
+    // a single entry, and a withdraw of one path read as the prefix going away.
+    const msg = parseUpdateMessage(
+      update([...ORIGIN, ...NEXT_HOP], withPathIds),
+      [],
+      decoding({ addPath: new Set([afiSafiKey(1, 1)]) })
+    )
+
+    expect(msg.nlri.map((p) => p.pathId)).toEqual([1, 2])
+  })
+
+  test('a prefix from a session without ADD-PATH carries no identifier', () => {
+    // Absent rather than zero: there was no Path Identifier on the wire, which
+    // is a different statement from one whose value happened to be 0.
+    const msg = parseUpdateMessage(update([...ORIGIN, ...NEXT_HOP], [24, 10, 1, 1]), [], decoding())
+
+    expect(msg.nlri[0].pathId).toBeUndefined()
+  })
+
   test('a session without ADD-PATH still reads plain NLRI', () => {
     const msg = parseUpdateMessage(update([...ORIGIN, ...NEXT_HOP], [24, 10, 1, 1]), [], decoding())
     expect(msg.nlri.map((p) => `${p.prefix}/${p.length}`)).toEqual(['10.1.1.0/24'])

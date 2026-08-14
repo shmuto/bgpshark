@@ -130,6 +130,9 @@ function parsePrefixes(
   const limit = maxPrefixLength(afi)
 
   while (reader.getPosition() < endPos) {
+    // Reset per entry: each NLRI carries its own identifier, and a leftover
+    // from the previous prefix would attach the wrong path to this one.
+    let pathId: number | undefined
     if (addPath) {
       if (endPos - reader.getPosition() < 4) {
         warnings.push(
@@ -139,7 +142,7 @@ function parsePrefixes(
         reader.seek(endPos)
         break
       }
-      reader.skip(4)
+      pathId = reader.readUint32()
     }
 
     const prefixLength = reader.readUint8()
@@ -166,7 +169,7 @@ function parsePrefixes(
     const octets = reader.readBytes(prefixBytes)
     const prefix = afi === 2 ? formatIpv6Prefix(octets, prefixLength) : formatIpv4Prefix(octets, prefixLength)
 
-    prefixes.push({ prefix, length: prefixLength })
+    prefixes.push({ prefix, length: prefixLength, ...(pathId !== undefined && { pathId }) })
   }
 
   return prefixes
