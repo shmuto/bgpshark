@@ -173,6 +173,34 @@ Path attributes parsed into structured values:
 NLRI and withdrawn routes are expanded per prefix, including IPv6 prefixes carried
 in MP_REACH_NLRI / MP_UNREACH_NLRI.
 
+**ADD-PATH Path Identifiers (RFC 7911).** Whether each NLRI entry is preceded by a
+4-byte Path Identifier is settled in the OPEN and invisible in the UPDATE, so reading
+an UPDATE without the session is a guess — and a wrong guess is not a parse failure.
+The identifier's four bytes become a prefix length and an address, every fabricated
+length is legal, and the prefix-length guard never trips: measured on a capture with
+the OPENs removed, three announced prefixes decoded as fourteen, five of them
+0.0.0.0/0, with no warning.
+
+| Situation | Behaviour |
+|---|---|
+| Both OPENs captured | The negotiated answer, per direction and AFI/SAFI (`addPathDirections`). Nothing is guessed and nothing is said. |
+| OPENs missing, one reading fits | That reading, and a warning naming it — usually only one consumes the block exactly, the same test `asPathFits` applies to AS width. |
+| OPENs missing, both fit, plain invents default routes | Read as ADD-PATH, with a warning. A small Path Identifier is mostly zero bytes and a zero byte is a default route; one UPDATE does not carry several 0.0.0.0/0. |
+| OPENs missing, both fit, nothing to choose by | The plain reading, declared a guess. |
+| Neither reading fits | Neither is claimed; the prefix-length validation reports what is actually wrong. |
+
+The identifier is kept on the prefix rather than stepped over, because two paths to one
+prefix are two routes: it is shown on the packet detail's prefix chips and as a Path ID
+column in the route history, which appears only when the selected route carries one. A
+withdraw of one path otherwise reads as the prefix going away.
+
+`UpdateDecoding.addPath` is `ReadonlySet<string> | null`, mirroring `fourByteAs`, so
+"the OPENs ruled it out" and "the OPENs were not captured" are different values —
+collapsing them into an empty set is what made the mis-decode silent.
+
+Warnings raised while parsing an UPDATE are attached to the packet, alongside the
+marker and message-length warnings, and surface in the parser-warning banner.
+
 #### 2.1.8 Analysis Views
 - **Dashboard** (`/dashboard`): summary counts, severity-sorted alerts (§2.1.14),
   neighbor table and a message timeline. Aggregations are computed in memory, so the
@@ -227,6 +255,16 @@ side-by-side diff of the two OPEN messages exchanged on that session
   within one OPEN are deduplicated.
 - Mismatches are listed before matches, since that's what an operator troubleshooting a
   session is scanning for.
+- **ADD-PATH gets a result as well as a diff.** Comparing advertisements does not answer
+  the question for a capability that is directional and negotiated crosswise: identifiers
+  flow one way only if the sender advertised *send* and the receiver advertised *receive*.
+  Two routers both configured to send them advertise the same family, diff as a match, and
+  exchange no Path Identifiers at all. So an **ADD-PATH Result** section states the outcome
+  per direction and AFI/SAFI, naming which half of the exchange is missing when it is not
+  negotiated. It appears only when both OPENs were captured — half an exchange cannot
+  answer a crosswise question — and only when at least one side asked for ADD-PATH.
+  The negotiation itself lives in `addPathDirections` (`lib/bgp/session.ts`), which the
+  UPDATE decoder also calls, so the screen and the prefixes on it cannot disagree.
 - A missing OPEN on one or both sides is handled without breaking the page (one-sided
   comparison notice, or an empty-state message when neither side has one).
 
