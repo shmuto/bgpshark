@@ -404,12 +404,13 @@ describe('UPDATE', () => {
       })
     )
 
-    // Both copies of the prefix survive, which they only can if the writer put
-    // Path Identifiers on and the reader knew to expect them.
+    // Both copies of the prefix survive *and* keep the identifier that tells
+    // them apart, which they only can if the writer put Path Identifiers on and
+    // the reader both expected them and kept them.
     const update = firstOfType(messages, 'UPDATE') as BgpUpdateMessage
     expect(update.nlri).toEqual([
-      { prefix: '10.1.0.0', length: 24 },
-      { prefix: '10.1.0.0', length: 24 },
+      { prefix: '10.1.0.0', length: 24, pathId: 1 },
+      { prefix: '10.1.0.0', length: 24, pathId: 2 },
     ])
     expect(bgp.warnings).toEqual([])
   })
