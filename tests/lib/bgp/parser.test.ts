@@ -240,6 +240,34 @@ describe('parseBgpFromPackets', () => {
       expect(message.withdrawnRoutesLength).toBe(0)
       expect(message.totalPathAttrLength).toBe(0)
     })
+
+    test('what the UPDATE parser complains about reaches the packet', () => {
+      // It used to go into a module-level array that nothing read, so every
+      // warning the UPDATE parser produced — the prefix length checks, the
+      // ADD-PATH ambiguity — was collected and thrown away. The parser was the
+      // only thing that knew, and it was talking to no one.
+      //
+      // The NLRI here is one prefix claiming length 40, which no IPv4 route
+      // has.
+      const updateBody = [
+        0x00, 0x00, // Withdrawn Routes Length
+        0x00, 0x04, // Total Path Attr Length
+        0x40, 0x01, 0x01, 0x00, // ORIGIN
+        40, 10, 1, 1, 0, 0, // NLRI: a prefix length past the family maximum
+      ]
+      const result = parseBgpFromPackets([
+        createRawPacket(createBgpMessage(4, []), 1),
+        createRawPacket(createBgpMessage(2, updateBody), 2),
+      ])
+
+      expect(result.warnings.join(' ')).toContain('exceeds the maximum 32')
+      // Attributed to its packet, like every other warning here, so a capture
+      // with thousands of UPDATEs says which one.
+      expect(result.warnings.join(' ')).toContain('Packet 2:')
+      // And on the packet itself, which is where the UI reads them from.
+      expect(result.packets[1].parseWarnings.join(' ')).toContain('exceeds the maximum 32')
+      expect(result.packets[0].parseWarnings).toEqual([])
+    })
   })
 
   describe('marker validation', () => {
