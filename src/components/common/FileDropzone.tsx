@@ -4,13 +4,17 @@ import {
   MAX_FILE_SIZE_LABEL,
   validateCaptureFile,
 } from '../../lib/file-constraints'
+import type { LoadProgress } from '../../lib/load-progress'
+import { LoadProgressBar } from './LoadProgressBar'
 
 interface FileDropzoneProps {
   onFileLoad: (file: File) => void
   isLoading: boolean
+  /** The load in flight, when there is one to measure. */
+  progress?: LoadProgress | null
 }
 
-export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
+export function FileDropzone({ onFileLoad, isLoading, progress }: FileDropzoneProps) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isSampleLoading, setIsSampleLoading] = useState(false)
@@ -110,7 +114,7 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
           border-2 border-dashed rounded-lg p-12 text-center cursor-pointer
           transition-colors duration-200
           ${isDragOver ? 'border-accent bg-accent-subtle' : 'border-hair-strong hover:border-accent hover:bg-surface-sunken'}
-          ${busy ? 'opacity-50 pointer-events-none' : ''}
+          ${busy ? 'pointer-events-none' : ''}
         `}
       >
         <input
@@ -122,10 +126,15 @@ export function FileDropzone({ onFileLoad, isLoading }: FileDropzoneProps) {
           disabled={busy}
         />
 
-        {busy ? (
+        {busy && progress ? (
+          <div className="flex flex-col items-center">
+            <LoadProgressBar progress={progress} />
+          </div>
+        ) : busy ? (
+          // Fetching the sample, or DuckDB still starting up: nothing to count yet.
           <div className="flex flex-col items-center gap-4">
             <div className="animate-spin w-8 h-8 border-4 border-accent border-t-transparent rounded-full" />
-            <p className="text-muted">{isSampleLoading ? 'Loading sample...' : 'Parsing file...'}</p>
+            <p className="text-muted">{isSampleLoading ? 'Loading sample...' : 'Preparing...'}</p>
           </div>
         ) : (
           <>

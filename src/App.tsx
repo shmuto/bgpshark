@@ -2,7 +2,7 @@ import { lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AppProvider, useApp } from './context/AppContext'
 import { AppHeader } from './components/layout/AppHeader'
-import { ErrorBoundary, WarningBanner } from './components/common'
+import { ErrorBoundary, LoadProgressBar, WarningBanner } from './components/common'
 import { useFileDropzone } from './hooks/useFileDropzone'
 import { FileUploadPage } from './pages'
 
@@ -47,8 +47,18 @@ const ManualPage = lazy(() =>
  * there.
  */
 function RequireCapture({ children }: { children: ReactNode }) {
-  const { status } = useApp()
+  const { status, progress } = useApp()
   const location = useLocation()
+
+  // A capture restored on reload, or one dropped onto this screen, is a load
+  // like any other — and as worth measuring.
+  if (progress) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-canvas p-8">
+        <LoadProgressBar progress={progress} />
+      </div>
+    )
+  }
 
   if (status === 'initializing' || status === 'loading') {
     return <ScreenSpinner label="Restoring capture…" />

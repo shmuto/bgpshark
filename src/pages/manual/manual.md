@@ -13,6 +13,11 @@ Drop a file anywhere in the window, or use the picker on the start screen.
 `.pcap` and `.pcapng` are both accepted and told apart automatically; there is no
 need to say which one you have. The limit is 50 MB.
 
+A large capture takes a few seconds, and a gauge shows how far it has got. Most
+of the wait is the last stage, **Loading into DuckDB**, which counts the rows in
+as it goes; an 18 MB table transfer is a few million of them. The gauge moving
+slowly is normal. The gauge not moving at all is not.
+
 If you have nothing to hand, **Load sample** gives you a working capture to
 explore, and the **Build** screen can write one to your description.
 

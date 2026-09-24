@@ -102,15 +102,28 @@ let loadQueue: Promise<unknown> = Promise.resolve()
  * complete "make the database hold exactly this capture", so the last caller
  * still describes the state the app wants when the queue drains.
  */
-export async function loadPackets(packets: BgpPacket[]): Promise<void> {
+export async function loadPackets(
+  packets: BgpPacket[],
+  onProgress?: LoadProgressCallback
+): Promise<void> {
   // A failed load must not poison the queue for the next caller, hence the
   // swallow on the tail — the error still reaches this call's own awaiter.
-  const run = loadQueue.catch(() => {}).then(() => runLoad(packets))
+  const run = loadQueue.catch(() => {}).then(() => runLoad(packets, onProgress))
   loadQueue = run.catch(() => {})
   return run
 }
 
-async function runLoad(packets: BgpPacket[]): Promise<void> {
+/**
+ * Rows inserted so far, out of every row the capture flattens to.
+ *
+ * Rows rather than packets because rows are what the time goes on: a packet of
+ * eighteen UPDATEs becomes hundreds of rows, a KEEPALIVE becomes two. It is
+ * called once with `done` at zero when the total is known, then after every
+ * batch, and a last time with `done === total`.
+ */
+export type LoadProgressCallback = (done: number, total: number) => void
+
+async function runLoad(packets: BgpPacket[], onProgress?: LoadProgressCallback): Promise<void> {
   // Until the load below completes, the tables must be treated as absent —
   // a partial or failed load left as "loaded" is exactly the state that made
   // every filter silently return zero packets.
@@ -130,7 +143,7 @@ async function runLoad(packets: BgpPacket[]): Promise<void> {
 
   const conn = await getConnection()
 
-  await insertPackets(conn, packets)
+  await insertPackets(conn, packets, onProgress)
 
   markDataLoaded(true)
 }
@@ -138,7 +151,11 @@ async function runLoad(packets: BgpPacket[]): Promise<void> {
 /**
  * Flatten every packet into the rows of the ten tables, then insert each table.
  */
-async function insertPackets(conn: AsyncDuckDBConnection, packets: BgpPacket[]): Promise<void> {
+async function insertPackets(
+  conn: AsyncDuckDBConnection,
+  packets: BgpPacket[],
+  onProgress?: LoadProgressCallback
+): Promise<void> {
   // Prepare data arrays
   const packetsData: Array<{
     frame_index: number
@@ -274,16 +291,28 @@ async function insertPackets(conn: AsyncDuckDBConnection, packets: BgpPacket[]):
     }
   }
 
-  await insertRows(conn, 'packets', packetsData)
-  await insertRows(conn, 'messages', messagesData)
-  await insertRows(conn, 'capabilities', capabilitiesData)
-  await insertRows(conn, 'path_attributes', pathAttrsData)
-  await insertRows(conn, 'as_path', asPathData)
-  await insertRows(conn, 'nlri', nlriData)
-  await insertRows(conn, 'withdrawn', withdrawnData)
-  await insertRows(conn, 'communities', communitiesData)
-  await insertRows(conn, 'large_communities', largeCommunitiesData)
-  await insertRows(conn, 'extended_communities', extCommunitiesData)
+  const tables: Array<[string, unknown[]]> = [
+    ['packets', packetsData],
+    ['messages', messagesData],
+    ['capabilities', capabilitiesData],
+    ['path_attributes', pathAttrsData],
+    ['as_path', asPathData],
+    ['nlri', nlriData],
+    ['withdrawn', withdrawnData],
+    ['communities', communitiesData],
+    ['large_communities', largeCommunitiesData],
+    ['extended_communities', extCommunitiesData],
+  ]
+
+  const total = tables.reduce((sum, [, rows]) => sum + rows.length, 0)
+  let done = 0
+  onProgress?.(done, total)
+  for (const [tableName, rows] of tables) {
+    await insertRows(conn, tableName, rows, (inserted) => {
+      done += inserted
+      onProgress?.(done, total)
+    })
+  }
 }
 
 /**
@@ -467,7 +496,8 @@ function utf8Data(arrow: Arrow, values: unknown[]): import('apache-arrow').Data<
 async function insertRows(
   conn: AsyncDuckDBConnection,
   tableName: string,
-  data: unknown[]
+  data: unknown[],
+  onBatch?: (rowsInserted: number) => void
 ): Promise<void> {
   if (data.length === 0) return
 
@@ -498,6 +528,7 @@ async function insertRows(
     } finally {
       await conn.query(`DROP TABLE IF EXISTS ${staging}`)
     }
+    onBatch?.(batch.length)
   }
 }
 

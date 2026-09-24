@@ -3,6 +3,7 @@ import { parsePcap, isPcapng, parsePcapng, type GenericPacket } from '../lib/pca
 import { parseBgpFromPackets, type BgpPacket } from '../lib/bgp'
 import { initDatabase, loadPackets, isInitialized, isDataLoaded } from '../lib/db'
 import { savePcapFile, loadPcapFile, clearPcapFile } from '../lib/storage'
+import { loadProgress, type LoadProgress } from '../lib/load-progress'
 
 interface AnalyzerState {
   status: 'idle' | 'initializing' | 'loading' | 'ready' | 'error'
@@ -15,6 +16,8 @@ interface AnalyzerState {
   warnings: string[]
   error: string | null
   dbReady: boolean
+  /** How far the load in flight has got; null when nothing is loading. */
+  progress: LoadProgress | null
 }
 
 /**
@@ -35,6 +38,29 @@ const initialState: AnalyzerState = {
   warnings: [],
   error: null,
   dbReady: false,
+  progress: null,
+}
+
+/**
+ * Wait until the browser has had a chance to paint.
+ *
+ * The parsers are synchronous: once one starts, nothing reaches the screen
+ * until it returns. Announcing a stage and starting it in the same task means
+ * the announcement is never seen, so each stage is announced, then this is
+ * awaited, then the stage begins.
+ *
+ * A frame callback is the moment before a paint; the timeout after it lands
+ * past the paint. The outer timeout is for a hidden tab, where frame callbacks
+ * do not run at all and the load would otherwise stall until it was shown.
+ */
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    const fallback = setTimeout(resolve, 100)
+    requestAnimationFrame(() => {
+      clearTimeout(fallback)
+      setTimeout(resolve, 0)
+    })
+  })
 }
 
 export function useBgpAnalyzer() {
@@ -51,8 +77,14 @@ export function useBgpAnalyzer() {
       fileName: string,
       options?: { saveToStorage?: boolean }
     ): Promise<boolean> => {
+      const report = async (progress: LoadProgress): Promise<void> => {
+        setState((prev) => ({ ...prev, progress }))
+        await nextPaint()
+      }
+
       try {
         // Detect format and parse
+        await report(loadProgress('parsing'))
         const pcapResult = isPcapng(buffer) ? parsePcapng(buffer) : parsePcap(buffer)
 
         if (pcapResult.errors.length > 0) {
@@ -60,11 +92,13 @@ export function useBgpAnalyzer() {
             ...prev,
             status: 'error',
             error: pcapResult.errors.join('\n'),
+            progress: null,
           }))
           return false
         }
 
         // Parse BGP messages from BGP-specific packets
+        await report(loadProgress('decoding'))
         const bgpResult = parseBgpFromPackets(pcapResult.packets)
 
         // If no packets at all, show error
@@ -73,6 +107,7 @@ export function useBgpAnalyzer() {
             ...prev,
             status: 'error',
             error: 'No IP packets found in the pcap file.',
+            progress: null,
           }))
           return false
         }
@@ -81,7 +116,12 @@ export function useBgpAnalyzer() {
         const dbWarnings: string[] = []
         if (isInitialized() && bgpResult.packets.length > 0) {
           try {
-            await loadPackets(bgpResult.packets)
+            await report(loadProgress('database'))
+            // Not `report`: batches arrive between worker round trips, which
+            // already give the browser its chance to paint.
+            await loadPackets(bgpResult.packets, (done, total) =>
+              setState((prev) => ({ ...prev, progress: loadProgress('database', done, total) }))
+            )
           } catch (err) {
             console.error('Failed to load packets into DuckDB:', err)
             // Continue without DuckDB — but say so. Filtering falls back to
@@ -96,6 +136,7 @@ export function useBgpAnalyzer() {
         // Save to IndexedDB if requested
         if (options?.saveToStorage) {
           try {
+            await report(loadProgress('saving'))
             await savePcapFile(fileName, buffer)
           } catch (err) {
             console.error('Failed to save file to storage:', err)
@@ -114,6 +155,7 @@ export function useBgpAnalyzer() {
           warnings: [...pcapResult.warnings, ...bgpResult.warnings, ...dbWarnings],
           error: null,
           dbReady: isInitialized(),
+          progress: null,
         })
         return true
       } catch (e) {
@@ -121,6 +163,7 @@ export function useBgpAnalyzer() {
           ...prev,
           status: 'error',
           error: e instanceof Error ? e.message : 'Unknown error occurred',
+          progress: null,
         }))
         return false
       }
@@ -161,7 +204,12 @@ export function useBgpAnalyzer() {
         try {
           const stored = await loadPcapFile()
           if (stored) {
-            setState((prev) => ({ ...prev, status: 'loading', fileName: stored.fileName }))
+            setState((prev) => ({
+              ...prev,
+              status: 'loading',
+              fileName: stored.fileName,
+              progress: loadProgress('reading'),
+            }))
             await processBuffer(stored.data, stored.fileName, { saveToStorage: false })
             return
           }
@@ -189,6 +237,7 @@ export function useBgpAnalyzer() {
         status: 'loading',
         fileName: file.name,
         error: null,
+        progress: loadProgress('reading'),
       }))
 
       const buffer = await file.arrayBuffer()
