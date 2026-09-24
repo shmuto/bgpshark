@@ -1,5 +1,17 @@
 /**
  * DuckDB Schema for BGPShark
+ *
+ * Every column that holds an unsigned 32-bit protocol field is BIGINT, not
+ * INTEGER: 4-byte AS numbers, MED, LOCAL_PREF, the three parts of a large
+ * community, the EVPN Ethernet Tag. DuckDB's INTEGER is *signed* 32-bit, so
+ * it stops at 2,147,483,647, and the parsers read these fields as the
+ * unsigned values they are. Declared INTEGER, the first value past that
+ * failed the entire load with a conversion error — and the private-use ASN
+ * range (RFC 6996: 4200000000–4294967294) is where data-centre fabrics number
+ * their leaves, so it was not a rare capture that hit it.
+ *
+ * Fields that are narrower on the wire (ports, hold time, 2-byte community
+ * halves, AFI/SAFI, the 24-bit VNI) stay INTEGER.
  */
 
 export const SCHEMA_SQL = `
@@ -30,7 +42,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
   -- OPEN message fields
   version         INTEGER,
-  my_as           INTEGER,
+  my_as           BIGINT,
   hold_time       INTEGER,
   router_id       VARCHAR,
 
@@ -65,7 +77,7 @@ CREATE TABLE IF NOT EXISTS capabilities (
   cap_afi_name    VARCHAR,
   cap_safi        INTEGER,
   cap_safi_name   VARCHAR,
-  cap_as_number   INTEGER
+  cap_as_number   BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_capabilities_message ON capabilities(message_id);
@@ -85,9 +97,9 @@ CREATE TABLE IF NOT EXISTS path_attributes (
   -- Parsed values
   origin_value    VARCHAR,
   next_hop        VARCHAR,
-  med_value       INTEGER,
-  local_pref      INTEGER,
-  aggregator_as   INTEGER,
+  med_value       BIGINT,
+  local_pref      BIGINT,
+  aggregator_as   BIGINT,
   aggregator_addr VARCHAR
 );
 
@@ -101,7 +113,7 @@ CREATE TABLE IF NOT EXISTS as_path (
   segment_type    VARCHAR,
   segment_index   INTEGER,
   as_index        INTEGER,
-  asn             INTEGER
+  asn             BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_as_path_message ON as_path(message_id);
@@ -132,7 +144,7 @@ CREATE TABLE IF NOT EXISTS nlri (
   -- A MAC/IP route carries a second label when it also has an L3 VNI.
   evpn_vni2       INTEGER,
   evpn_esi        VARCHAR,
-  evpn_eth_tag    INTEGER
+  evpn_eth_tag    BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_nlri_message ON nlri(message_id);
@@ -161,7 +173,7 @@ CREATE TABLE IF NOT EXISTS withdrawn (
   -- A MAC/IP route carries a second label when it also has an L3 VNI.
   evpn_vni2       INTEGER,
   evpn_esi        VARCHAR,
-  evpn_eth_tag    INTEGER
+  evpn_eth_tag    BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_withdrawn_message ON withdrawn(message_id);
@@ -203,9 +215,9 @@ CREATE INDEX IF NOT EXISTS idx_ext_communities_formatted ON extended_communities
 CREATE TABLE IF NOT EXISTS large_communities (
   id              INTEGER PRIMARY KEY,
   message_id      INTEGER NOT NULL,
-  global_admin    INTEGER,
-  local_data1     INTEGER,
-  local_data2     INTEGER,
+  global_admin    BIGINT,
+  local_data1     BIGINT,
+  local_data2     BIGINT,
   formatted       VARCHAR
 );
 
