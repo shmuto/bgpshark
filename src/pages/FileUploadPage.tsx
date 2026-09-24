@@ -4,7 +4,7 @@ import { useApp } from '../context/AppContext'
 import { FileDropzone } from '../components'
 
 export function FileUploadPage() {
-  const { status, loadFile, error, reset } = useApp()
+  const { status, loadFile, error, reset, progress } = useApp()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -42,6 +42,7 @@ export function FileUploadPage() {
           <FileDropzone
             onFileLoad={loadFile}
             isLoading={status === 'loading' || status === 'initializing'}
+            progress={progress}
           />
 
           {/* Not everyone arrives with a capture. Reproducing a session failure

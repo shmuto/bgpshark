@@ -86,4 +86,39 @@ test.describe('the app makes no third-party requests', () => {
     expect(body).not.toContain('Error:')
     expect(body).toContain('Results (1 rows)')
   })
+
+  test('loading a capture compiles no strings as code', async ({ page }) => {
+    // The production CSP's `script-src 'self' 'wasm-unsafe-eval'` forbids
+    // `eval` and `new Function`, and the dev server this suite drives has no
+    // CSP — the same gap the extension fetch slipped through. Arrow's
+    // builders (`vectorFromArray` and friends) compile their null checks with
+    // `new Function`, so a loader that used them worked here and failed on the
+    // deployed site. Making both throw is the part of that policy a test can
+    // reproduce without one.
+    //
+    // A Proxy rather than a replacement, so `x instanceof Function` and
+    // everything else that reads the global still sees the real constructor.
+    await page.addInitScript(() => {
+      const refuse = (): never => {
+        throw new EvalError('string compiled as code (the production CSP refuses this)')
+      }
+      globalThis.Function = new Proxy(Function, { apply: refuse, construct: refuse })
+      globalThis.eval = refuse
+    })
+    const refused: string[] = []
+    page.on('console', (message) => {
+      if (message.text().includes('the production CSP refuses this')) refused.push(message.text())
+    })
+
+    await loadSample(page)
+
+    // A load that failed says so here, and disables the editor — which would
+    // otherwise surface as a click timing out, not as the reason.
+    await page.getByRole('link', { name: 'SQL', exact: true }).click()
+    await expect(page.getByText(/could not be loaded into DuckDB/)).toBeHidden()
+    const body = await runSql(page, 'select count(*) as n from packets')
+    expect(body).not.toContain('Error:')
+    expect(body).toContain('Results (1 rows)')
+    expect(refused).toEqual([])
+  })
 })

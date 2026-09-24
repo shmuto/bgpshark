@@ -348,7 +348,9 @@ to the app's own origin.
 That constrains how the database may be used, not just how it is served: DuckDB
 fetches its **extensions** from `extensions.duckdb.org` on first use, so anything
 outside the core engine — the JSON reader among them — is unavailable by
-construction. The loader inserts with plain `VALUES` for exactly that reason.
+construction. The loader inserts through Arrow IPC, which is built into the WASM
+runtime, for exactly that reason — and builds the Arrow buffers by hand, because
+Arrow's own builders use `new Function`, which the CSP's `script-src` forbids.
 `tests/e2e/offline.e2e.ts` holds the line, asserting that loading and querying a
 capture sends nothing off-origin.
 
