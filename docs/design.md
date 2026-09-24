@@ -550,8 +550,10 @@ next lever and has not been needed.
   an extension, and behind the CSP that download failed — so every capture failed to
   load and the SQL console was dead on the deployed site, while development looked
   fine because the dev server ships no policy and the download succeeded.
-  `db/loader.ts` now inserts with literal `VALUES`, and
-  `tests/e2e/offline.e2e.ts` asserts that nothing leaves the origin
+  `db/loader.ts` now inserts through Arrow IPC, which is core to the WASM build,
+  with the Arrow buffers laid out by hand because Arrow's builders use
+  `new Function` and `script-src` forbids it; `tests/e2e/offline.e2e.ts` asserts
+  that nothing leaves the origin and nothing is compiled from a string
 - Content Security Policy is injected into the built `index.html` by the `inject-csp`
   plugin in `vite.config.ts`:
 

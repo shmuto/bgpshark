@@ -287,50 +287,182 @@ async function insertPackets(conn: AsyncDuckDBConnection, packets: BgpPacket[]):
 }
 
 /**
- * How much SQL to put in one INSERT.
+ * How many rows go into one Arrow batch.
  *
- * Rows vary enormously in width — a `communities` row is a few dozen bytes, a
- * `packets` row carries a base64 frame and can be several kilobytes — so
- * batching by row count either wastes round trips on the narrow tables or
- * builds a statement of many megabytes on the wide ones. Batching by the size
- * of the statement keeps both in the same range.
+ * Not a performance knob so much as a memory one: the rows are already in the
+ * JS heap once, and a batch is copied twice more — into Arrow vectors, then
+ * into the IPC buffer handed to the worker. Bounding the batch bounds those
+ * copies, which matters for the `packets` table, where every row carries its
+ * frame as base64.
  */
-const MAX_STATEMENT_BYTES = 512 * 1024
+const ROWS_PER_BATCH = 50_000
+
+type Arrow = typeof import('apache-arrow')
 
 /**
- * One SQL literal, the way DuckDB reads it back as the value it came from.
+ * One column of a batch as an Arrow vector, typed from the values it holds.
  *
- * `JSON.stringify` used to do this job, which is why non-finite numbers become
- * NULL here too: that is what it did with them, and a loader that started
- * writing `NaN` into an INTEGER column would be a change of behaviour hiding
- * inside a change of transport.
+ * The type is deliberately loose, and deliberately not the table's declared
+ * type: the rows land in a staging table first and reach the real one through
+ * `INSERT ... SELECT`, so DuckDB casts each column to what the schema says,
+ * exactly as it cast the literals of the `VALUES` statements this replaced.
+ * That is why numbers travel as Float64 rather than Int32 — every value the
+ * parsers emit fits one exactly, and an out-of-range one (a 4-byte ASN in an
+ * INTEGER column) fails the cast loudly instead of wrapping silently in a
+ * typed array. A column that is NULL in every row carries no evidence either
+ * way, and goes as Utf8, which casts from NULL to anything.
+ *
+ * The buffers are laid out by hand rather than through `vectorFromArray`, for
+ * two reasons. Arrow's builders compile their null checks with `new Function`,
+ * which the production CSP (`script-src 'self' 'wasm-unsafe-eval'`) refuses —
+ * and, as with the extension fetch described at `insertRows`, the dev server
+ * has no CSP to say so. And they are slow: several times what DuckDB then
+ * spends reading the result, which made them most of the load time once the
+ * SQL parser was out of the way. Nothing in this file may call a builder (`vectorFromArray`,
+ * `tableFromArrays`, `tableFromJSON`, `makeBuilder`).
+ *
+ * Non-finite numbers become NULL because that is what the loader has always
+ * done with them — first through `JSON.stringify`, then through the literal
+ * writer — and a change of transport should not quietly start writing `NaN`
+ * into an INTEGER column.
  */
-function toSqlLiteral(value: unknown): string {
-  if (value === null || value === undefined) return 'NULL'
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL'
-  if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE'
-  if (Array.isArray(value)) return `[${value.map(toSqlLiteral).join(', ')}]`
-  // DuckDB does not process backslash escapes in a standard string literal, so
-  // doubling the quote is the whole of the escaping.
-  return `'${String(value).replace(/'/g, "''")}'`
+function columnVector(arrow: Arrow, rows: Record<string, unknown>[], column: string): import('apache-arrow').Vector {
+  const length = rows.length
+  const values = rows.map((row) => row[column] ?? null)
+  const sample = values.find((value) => value !== null)
+  const { nullBitmap, nullCount } = validity(values, (value) => value !== null)
+
+  if (typeof sample === 'number') {
+    const data = new Float64Array(length)
+    const finite = validity(values, (value) => typeof value === 'number' && Number.isFinite(value))
+    for (let i = 0; i < length; i++) if (typeof values[i] === 'number') data[i] = values[i] as number
+    return arrow.makeVector(arrow.makeData({ type: new arrow.Float64(), length, ...finite, data }))
+  }
+
+  if (typeof sample === 'boolean') {
+    const data = new Uint8Array((length + 7) >> 3)
+    for (let i = 0; i < length; i++) if (values[i] === true) data[i >> 3] |= 1 << (i & 7)
+    return arrow.makeVector(arrow.makeData({ type: new arrow.Bool(), length, nullBitmap, nullCount, data }))
+  }
+
+  // The only list column is `parse_warnings`, which is text: the child is one
+  // Utf8 column of every warning back to back, and the offsets say which rows
+  // they belong to.
+  if (Array.isArray(sample)) {
+    const valueOffsets = new Int32Array(length + 1)
+    const items: string[] = []
+    for (let i = 0; i < length; i++) {
+      const list = values[i] as string[] | null
+      if (list) items.push(...list)
+      valueOffsets[i + 1] = items.length
+    }
+    const child = new arrow.Field('item', new arrow.Utf8(), true)
+    return arrow.makeVector(
+      arrow.makeData({
+        type: new arrow.List(child),
+        length,
+        nullBitmap,
+        nullCount,
+        valueOffsets,
+        child: utf8Data(arrow, items),
+      })
+    )
+  }
+
+  return arrow.makeVector(utf8Data(arrow, values))
+}
+
+/** Which of `values` are present, as the bitmap Arrow keeps beside a column. */
+function validity(
+  values: unknown[],
+  isPresent: (value: unknown) => boolean
+): { nullBitmap: Uint8Array; nullCount: number } {
+  const nullBitmap = new Uint8Array((values.length + 7) >> 3)
+  let nullCount = 0
+  for (let i = 0; i < values.length; i++) {
+    if (isPresent(values[i])) nullBitmap[i >> 3] |= 1 << (i & 7)
+    else nullCount++
+  }
+  return { nullBitmap, nullCount }
 }
 
 /**
- * Insert rows with literal `VALUES`, which is core SQL and needs no extension.
+ * A Utf8 column: every string back to back, with offsets marking where each
+ * ends. Nearly all of it is ASCII — addresses, prefixes, names, base64 — so
+ * bytes are written directly and only a string that needs it goes through the
+ * encoder.
+ */
+function utf8Data(arrow: Arrow, values: unknown[]): import('apache-arrow').Data<import('apache-arrow').Utf8> {
+  const length = values.length
+  const { nullBitmap, nullCount } = validity(values, (value) => value !== null)
+  const valueOffsets = new Int32Array(length + 1)
+  let bytes = new Uint8Array(Math.max(1024, length * 16))
+  let used = 0
+  const encoder = new TextEncoder()
+  for (let i = 0; i < length; i++) {
+    if (values[i] !== null) {
+      const text = String(values[i])
+      // UTF-8 never needs more than three bytes per UTF-16 unit.
+      if (used + text.length * 3 > bytes.length) {
+        const grown = new Uint8Array(Math.max(bytes.length * 2, used + text.length * 3))
+        grown.set(bytes.subarray(0, used))
+        bytes = grown
+      }
+      let ascii = true
+      for (let j = 0; j < text.length; j++) {
+        const code = text.charCodeAt(j)
+        if (code > 0x7f) {
+          ascii = false
+          break
+        }
+        bytes[used + j] = code
+      }
+      used += ascii ? text.length : encoder.encodeInto(text, bytes.subarray(used)).written
+    }
+    valueOffsets[i + 1] = used
+  }
+  return arrow.makeData({
+    type: new arrow.Utf8(),
+    length,
+    nullBitmap,
+    nullCount,
+    valueOffsets,
+    data: bytes.subarray(0, used),
+  })
+}
+
+/**
+ * Insert rows as Arrow IPC, which DuckDB WASM reads natively.
  *
- * This used to go through `read_json_auto`, which reads better — until you
- * notice that the JSON reader is an *extension*, and DuckDB WASM fetches
- * extensions from `extensions.duckdb.org` on first use. The production build
- * serves a CSP of `connect-src 'self' blob: data:`, so that fetch cannot
- * succeed, and the whole SQL console died with it. Nothing caught it because
- * the end-to-end suite runs against the dev server, which ships no CSP.
+ * This is the third transport this function has had, and both earlier ones
+ * failed in ways worth remembering.
  *
- * So the requirement is not "load quickly", it is "load without reaching the
- * network at all" — the same promise the rest of the app makes. `VALUES` is
- * the cheapest way to keep it: a 100,000-route capture is queryable about nine
- * seconds after it is dropped in, and captures that size are far past what
- * session troubleshooting produces. If that ever stops being true, Arrow IPC
- * (`conn.insertArrowTable`) is the faster transport that is also extension-free.
+ * `read_json_auto` read best, but the JSON reader is an *extension*, and DuckDB
+ * WASM fetches extensions from `extensions.duckdb.org` on first use. The
+ * production CSP is `connect-src 'self' blob: data:`, so that fetch could not
+ * succeed and the SQL console died with it — unnoticed, because the end-to-end
+ * suite runs against the dev server, which ships no CSP.
+ *
+ * Literal `VALUES` fixed that and was far too slow: DuckDB spends roughly a
+ * tenth of a millisecond *parsing* each row of a VALUES list, independent of
+ * indexes or constraints. An 18MB capture of 120,000 UPDATEs is 1.6 million
+ * rows across these tables, and took nearly two minutes to load — during
+ * which the app showed nothing but a spinner, because the packet list waits
+ * on the load. People reasonably concluded it had hung.
+ *
+ * Arrow skips the parser entirely and is built into the WASM build, not an
+ * extension, so it keeps the promise that loading a capture touches no network
+ * (`offline.e2e.ts` holds it to that). The same capture now loads in a few
+ * seconds.
+ *
+ * The rows go through a staging table and a named-column `INSERT ... SELECT`
+ * rather than straight into the target, for two reasons. Inserting into an
+ * existing table binds Arrow columns by *position*, so a column added to the
+ * schema but not to the row object — or in a different order — would land
+ * silently in the wrong place; naming them means each value can only reach the
+ * column it was meant for. And the
+ * SELECT is where DuckDB casts each column to its declared type, see
+ * `columnVector`.
  */
 async function insertRows(
   conn: AsyncDuckDBConnection,
@@ -339,33 +471,34 @@ async function insertRows(
 ): Promise<void> {
   if (data.length === 0) return
 
-  // Name the columns rather than inserting positionally: `SELECT *` binds by
-  // position, so a column added to the table but not to the row object — or
-  // added in a different order — lands silently in the wrong column.
-  const columns = Object.keys(data[0] as Record<string, unknown>)
+  // Imported here, like DuckDB itself in `initDatabase`, so Arrow is fetched
+  // with the database rather than weighing down the upload screen's bundle.
+  const arrow = await import('apache-arrow')
+
+  const rows = data as Record<string, unknown>[]
+  const columns = Object.keys(rows[0])
   const columnList = columns.map((c) => `"${c}"`).join(', ')
-  const prefix = `INSERT INTO ${tableName} (${columnList}) VALUES `
+  const staging = `__load_${tableName}`
 
-  let batch: string[] = []
-  let batchBytes = 0
+  for (let start = 0; start < rows.length; start += ROWS_PER_BATCH) {
+    const batch = rows.slice(start, start + ROWS_PER_BATCH)
+    const vectors: Record<string, import('apache-arrow').Vector> = {}
+    for (const column of columns) vectors[column] = columnVector(arrow, batch, column)
+    const table = new arrow.Table(vectors)
 
-  const flush = async (): Promise<void> => {
-    if (batch.length === 0) return
-    await conn.query(prefix + batch.join(', '))
-    batch = []
-    batchBytes = 0
+    // `insertArrowTable` does exactly this serialisation, but with the copy of
+    // apache-arrow DuckDB bundles; doing it here with ours means the Table
+    // object never has to be recognised across two copies of the library.
+    await conn.insertArrowFromIPCStream(arrow.tableToIPC(table, 'stream'), {
+      name: staging,
+      create: true,
+    })
+    try {
+      await conn.query(`INSERT INTO ${tableName} (${columnList}) SELECT ${columnList} FROM ${staging}`)
+    } finally {
+      await conn.query(`DROP TABLE IF EXISTS ${staging}`)
+    }
   }
-
-  for (const row of data as Record<string, unknown>[]) {
-    const tuple = `(${columns.map((column) => toSqlLiteral(row[column])).join(', ')})`
-    // Flush before adding, so a single row wider than the budget still goes out
-    // on its own rather than being dropped or split.
-    if (batchBytes > 0 && batchBytes + tuple.length > MAX_STATEMENT_BYTES) await flush()
-    batch.push(tuple)
-    batchBytes += tuple.length + 2
-  }
-
-  await flush()
 }
 
 /**

@@ -46,7 +46,7 @@ Same for a one-off script:
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
 ```
 
-Expect **98 passing**. If more than a couple fail, something is actually wrong.
+Expect **129 passing**. If more than a couple fail, something is actually wrong.
 
 One test is flaky *in this container* and nowhere else:
 `navigation.e2e.ts:21` ("reloading keeps the screen you were on") waits on an
@@ -67,15 +67,25 @@ production CSP is `connect-src 'self' blob: data:`, so the download could not
 succeed there either — **the SQL console was broken on the deployed site**, and
 this container merely surfaced it early by blocking the same request.
 
-The loader now inserts with literal `VALUES` (`insertRows` in
-`src/lib/db/loader.ts`) and touches no network at all.
-`tests/e2e/offline.e2e.ts` asserts that no request leaves the origin while a
-capture is loaded and queried, which is the assertion that generalises: it holds
-whether or not a CSP is there to catch the violation.
+Its replacement, literal `VALUES`, touched no network but was the next
+memorable symptom: an 18MB capture sat on the loading spinner for nearly two
+minutes, because DuckDB spends about 0.1ms *parsing* each row of a VALUES list.
+The loader now inserts through Arrow IPC (`insertRows` in
+`src/lib/db/loader.ts`), which is core to the WASM build and loads the same
+capture in a few seconds. It lays the Arrow buffers out by hand: Arrow's builders
+(`vectorFromArray`, `tableFromArrays`, …) compile code with `new Function`,
+which the production CSP's `script-src 'self' 'wasm-unsafe-eval'` refuses — a
+second failure the dev server cannot show.
+
+`tests/e2e/offline.e2e.ts` holds both lines: no request leaves the origin while
+a capture is loaded and queried, and nothing is compiled from a string (the test
+makes `eval` and `Function` throw). Those are the assertions that generalise:
+they hold whether or not a CSP is there to catch the violation.
 
 **The e2e suite drives the dev server, which ships no CSP** (`vite.config.ts`
-injects it at build time only). That is the gap that let this ship. When
-touching anything that fetches, verify against the real thing:
+injects it at build time only). That is the gap that let this ship, twice. When
+touching anything that fetches or pulls in a new library, verify against the real
+thing:
 
 ```bash
 bun run build && bun run preview     # http://localhost:4173/bgpshark/

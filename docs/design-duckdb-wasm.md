@@ -40,7 +40,7 @@ evaluator.
 | Aggregation screens | Aggregate in DuckDB | In memory (`useMemo`), so the screens survive DuckDB failing |
 | React integration | A new `useDuckDB` hook | No new hook; folded into `useBgpAnalyzer` and `useFilter` |
 | CIDR matching | PostgreSQL `inet` operators | DuckDB has no `inet` type — bit-string columns plus `LIKE 'bits%'` |
-| Row loading | Prepared statements per row | Literal `VALUES`, batched by statement size (see below) |
+| Row loading | Prepared statements per row | Arrow IPC through a staging table (see below) |
 
 The first four are one decision seen from four sides, and `design.md` §4.3
 explains it under "DuckDB's role is intentionally narrow": DuckDB selects, it does
@@ -57,6 +57,18 @@ happen, so every capture failed to load and the SQL console was dead on the depl
 site — invisible in development, where there is no CSP and the download succeeds.
 Self-hosting the runtime was necessary but not sufficient: the constraint applies to
 how the database is *used*, not only to how it is served.
+
+Literal `VALUES` replaced it, needed nothing from the network, and was far too slow:
+DuckDB spends about 0.1ms parsing each row of a VALUES list — measured with and
+without the tables' indexes and primary keys, which barely mattered. An 18MB capture
+of 120,000 UPDATEs flattens to 1.6 million rows and took close to two minutes to
+load, with the app showing only a spinner. Arrow IPC (`insertArrowFromIPCStream`)
+skips the parser, is core to the WASM build, and loads the same capture in about six
+seconds. Two details carry the constraint forward. The Arrow vectors are built by
+hand, because Arrow's builders compile their null checks with `new Function` and the
+CSP's `script-src` forbids it. And rows land in a staging table and reach the real
+one through a named-column `INSERT ... SELECT`, so columns bind by name rather than
+position and DuckDB casts each to its declared type.
 
 ## Trade-offs accepted
 
