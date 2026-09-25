@@ -1,9 +1,10 @@
-import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { extractNeighbors, getLatestOpen } from '../lib/bgp/neighbor'
 import type { BgpPacket } from '../lib/bgp/types'
+import type { GenericPacket } from '../lib/pcap'
 import { minMax } from '../lib/range'
+import { perCapture, perCapturePair } from '../lib/capture-memo'
 import {
   SummaryCards,
   AlertList,
@@ -107,27 +108,34 @@ function computeTimeline(packets: BgpPacket[]): TimelineData {
   return { buckets, notifications, start: new Date(startMs), end: new Date(endMs), maxUpdateCount }
 }
 
+/**
+ * Everything the dashboard shows, computed once per capture rather than once
+ * per visit — see `perCapture`. The alerts dominate: they walk every packet,
+ * route history included, and on a large capture that is seconds of work the
+ * reader used to wait through each time they came back to this screen.
+ */
+const summaryFor = perCapture(computeSummary)
+const timelineFor = perCapture(computeTimeline)
+const alertsFor = perCapturePair((packets: BgpPacket[], allPackets: GenericPacket[]) =>
+  packets.length > 0 ? computeAlerts(packets, allPackets) : computeTransportAlerts(allPackets)
+)
+const neighborRowsFor = perCapturePair((packets: BgpPacket[], allPackets: GenericPacket[]) => {
+  const rows = computeNeighborRows(packets)
+  // A session that never came up must not be listed as OK next to a critical
+  // alert saying it never came up. The alerts already decided this; reading
+  // their pair keys keeps one judgement rather than two that can disagree.
+  const troubled = new Set(alertsFor(packets, allPackets).map((alert) => alert.pairKey).filter(Boolean))
+  return rows.map((row) => (troubled.has(row.pairKey) ? { ...row, neverEstablished: true } : row))
+})
+
 export function DashboardPage() {
   const { packets, allPackets, fileName } = useApp()
   const navigate = useNavigate()
 
-  const summary = useMemo(() => computeSummary(packets), [packets])
-  const alerts = useMemo(
-    () =>
-      packets.length > 0 ? computeAlerts(packets, allPackets) : computeTransportAlerts(allPackets),
-    [packets, allPackets]
-  )
-  const neighborRows = useMemo(() => {
-    const rows = computeNeighborRows(packets)
-    // A session that never came up must not be listed as OK next to a critical
-    // alert saying it never came up. The alerts already decided this; reading
-    // their pair keys keeps one judgement rather than two that can disagree.
-    const troubled = new Set(alerts.map((alert) => alert.pairKey).filter(Boolean))
-    return rows.map((row) =>
-      troubled.has(row.pairKey) ? { ...row, neverEstablished: true } : row
-    )
-  }, [packets, alerts])
-  const timeline = useMemo(() => computeTimeline(packets), [packets])
+  const summary = summaryFor(packets)
+  const alerts = alertsFor(packets, allPackets)
+  const neighborRows = neighborRowsFor(packets, allPackets)
+  const timeline = timelineFor(packets)
 
   const handleSummarySelect = (filter: string | null) => {
     navigate(filter ? `/messages?filter=${encodeURIComponent(filter)}` : '/messages')

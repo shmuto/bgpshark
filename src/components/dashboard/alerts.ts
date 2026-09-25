@@ -20,7 +20,7 @@ import type {
 } from '../../lib/bgp/types'
 import { endOfRibMarker } from '../../lib/bgp/update'
 import type { GenericPacket } from '../../lib/pcap'
-import { aggregatePrefixStats, type PrefixStats } from '../../lib/bgp/prefix-stats'
+import { prefixStatsFor, type PrefixStats } from '../../lib/bgp/prefix-stats'
 import type { DashboardAlert } from './types'
 import { formatAsPath } from '../../lib/bgp/as-path-display'
 
@@ -865,9 +865,10 @@ export function computeAlerts(
     }
   }
 
-  // 4. Route-level findings. aggregatePrefixStats walks every packet, so it is
-  // called once here and both route rules read the same result.
-  alerts.push(...computeRouteAlerts(aggregatePrefixStats(packets)))
+  // 4. Route-level findings. The route statistics walk every packet, so both
+  // route rules read the one result — shared with the Routes screen, which
+  // needs the same rows.
+  alerts.push(...computeRouteAlerts(prefixStatsFor(packets)))
 
   // Most severe first, then the rows standing for the most occurrences, then
   // most recent first. Counting before recency keeps a peer that failed 40

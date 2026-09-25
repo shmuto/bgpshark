@@ -5,7 +5,7 @@ import { useIsCompact } from '../hooks/useMediaQuery'
 import { BackToList, PaneDivider } from '../components/common'
 import { useSplitPane } from '../hooks/useSplitPane'
 import { useVirtualRows } from '../hooks/useVirtualRows'
-import { aggregatePrefixStats, type PrefixEvent, type PrefixStats } from '../lib/bgp/prefix-stats'
+import { prefixStatsFor, type PrefixEvent, type PrefixStats } from '../lib/bgp/prefix-stats'
 import { contains, equals, parsePrefix, type ParsedPrefix } from '../lib/net/prefix'
 import { formatDelta, formatTimeOfDayUtc } from '../lib/format-time'
 import { collapsePrepends, formatAsPath } from '../lib/bgp/as-path-display'
@@ -131,7 +131,7 @@ export function RoutesPage() {
 
   // The one pass over the capture. Searching and sorting work on the result, so
   // typing in the box or clicking a header never walks the packets again.
-  const prefixStats = useMemo(() => aggregatePrefixStats(packets), [packets])
+  const prefixStats = prefixStatsFor(packets)
 
   /** Decide what kind of search the text is before matching anything against it. */
   const search = useMemo((): Search | null => {

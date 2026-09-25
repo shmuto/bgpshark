@@ -8,6 +8,7 @@ import { useSplitPane } from '../hooks/useSplitPane'
 import { PacketDetail } from '../components/message/PacketDetail'
 import { holdTimerContext } from '../lib/bgp/hold-timer'
 import { routeRefreshDiff } from '../lib/bgp/route-refresh'
+import { perCapture } from '../lib/capture-memo'
 import type {
   BgpPacket,
   BgpUpdateMessage,
@@ -39,6 +40,140 @@ interface FilterRule {
   operator: Operator
   value: string
 }
+
+/** Messages of each type in the whole capture, for the type badges. */
+const messageTypeCountsFor = perCapture((packets: BgpPacket[]) => {
+  const counts: Record<string, number> = {
+    OPEN: 0,
+    UPDATE: 0,
+    NOTIFICATION: 0,
+    KEEPALIVE: 0,
+    ROUTE_REFRESH: 0,
+  }
+  for (const packet of packets) {
+    for (const msg of packet.messages) {
+      counts[msg.type] = (counts[msg.type] ?? 0) + 1
+    }
+  }
+  return counts
+})
+
+/**
+ * Every value the filter dropdowns offer, gathered once per capture.
+ *
+ * This walks every message and sorts every distinct prefix, which on a large
+ * capture is most of a second — and it used to run on every visit to this
+ * screen, since the page is remounted each time. See `perCapture`.
+ */
+const filterValuesFor = perCapture((packets: BgpPacket[]) => {
+  const values = {
+    src_ip: new Set<string>(),
+    dst_ip: new Set<string>(),
+    src_as: new Set<string>(),
+    router_id: new Set<string>(),
+    asn: new Set<string>(),
+    next_hop: new Set<string>(),
+    prefix: new Set<string>(),
+    withdrawn: new Set<string>(),
+    community: new Set<string>(),
+    capability: new Set<string>(),
+  }
+
+  for (const packet of packets) {
+    values.src_ip.add(packet.srcIp)
+    values.dst_ip.add(packet.dstIp)
+
+    for (const msg of packet.messages) {
+      if (msg.type === 'OPEN') {
+        const open = msg as BgpOpenMessage
+        values.src_as.add(String(open.fourByteAs ?? open.myAs))
+        values.router_id.add(open.bgpIdentifier)
+        for (const cap of open.capabilities) {
+          values.capability.add(cap.name)
+        }
+      }
+
+      if (msg.type === 'UPDATE') {
+        const update = msg as BgpUpdateMessage
+
+        // NLRI prefixes (add to both prefix and withdrawn for unified view)
+        for (const p of update.nlri) {
+          const prefixStr = `${p.prefix}/${p.length}`
+          values.prefix.add(prefixStr)
+        }
+        // Withdrawn prefixes (add to both prefix and withdrawn)
+        for (const p of update.withdrawnRoutes) {
+          const prefixStr = `${p.prefix}/${p.length}`
+          values.prefix.add(prefixStr)
+          values.withdrawn.add(prefixStr)
+        }
+
+        // Path attributes
+        for (const attr of update.pathAttributes) {
+          if (attr.parsed?.type === 'AS_PATH') {
+            const asPath = attr.parsed as AsPathAttribute
+            for (const seg of asPath.segments) {
+              for (const asn of seg.asNumbers) {
+                values.asn.add(String(asn))
+              }
+            }
+          }
+          if (attr.parsed?.type === 'NEXT_HOP') {
+            values.next_hop.add((attr.parsed as NextHopAttribute).address)
+          }
+          if (attr.parsed?.type === 'MP_REACH_NLRI') {
+            const mpReach = attr.parsed as MpReachNlriAttribute
+            values.next_hop.add(mpReach.nextHop)
+            for (const p of mpReach.nlri) {
+              values.prefix.add(`${p.prefix}/${p.length}`)
+            }
+          }
+          if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
+            const mpUnreach = attr.parsed as MpUnreachNlriAttribute
+            for (const p of mpUnreach.withdrawnRoutes) {
+              const prefixStr = `${p.prefix}/${p.length}`
+              values.prefix.add(prefixStr)
+              values.withdrawn.add(prefixStr)
+            }
+          }
+          if (attr.parsed?.type === 'COMMUNITIES') {
+            const comm = attr.parsed as CommunitiesAttribute
+            for (const c of comm.communities) {
+              values.community.add(c)
+            }
+          }
+          if (attr.parsed?.type === 'LARGE_COMMUNITIES') {
+            const lcomm = attr.parsed as LargeCommunitiesAttribute
+            for (const c of lcomm.communities) {
+              values.community.add(`${c.globalAdmin}:${c.localData1}:${c.localData2}`)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Convert to sorted arrays
+  const sortIp = (a: string, b: string) => {
+    const aIsV6 = a.includes(':')
+    const bIsV6 = b.includes(':')
+    if (aIsV6 !== bIsV6) return aIsV6 ? 1 : -1
+    return a.localeCompare(b)
+  }
+
+  return {
+    src_ip: Array.from(values.src_ip).sort(sortIp),
+    dst_ip: Array.from(values.dst_ip).sort(sortIp),
+    src_as: Array.from(values.src_as).sort((a, b) => Number(a) - Number(b)),
+    router_id: Array.from(values.router_id).sort(),
+    asn: Array.from(values.asn).sort((a, b) => Number(a) - Number(b)),
+    next_hop: Array.from(values.next_hop).sort(sortIp),
+    prefix: Array.from(values.prefix).sort(sortIp),
+    withdrawn: Array.from(values.withdrawn).sort(sortIp),
+    community: Array.from(values.community).sort(),
+    capability: Array.from(values.capability).sort(),
+  }
+})
 
 export function MessagesPage() {
   const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
@@ -152,21 +287,7 @@ export function MessagesPage() {
 
   // Message counts for the type badges, over the whole capture (not the
   // filtered view) so the badges keep saying what exists.
-  const messageTypeCounts = useMemo(() => {
-    const counts: Record<string, number> = {
-      OPEN: 0,
-      UPDATE: 0,
-      NOTIFICATION: 0,
-      KEEPALIVE: 0,
-      ROUTE_REFRESH: 0,
-    }
-    for (const packet of packets) {
-      for (const msg of packet.messages) {
-        counts[msg.type] = (counts[msg.type] ?? 0) + 1
-      }
-    }
-    return counts
-  }, [packets])
+  const messageTypeCounts = messageTypeCountsFor(packets)
 
   // Create display packets based on mode
   const displayPackets = useMemo((): DisplayPacket[] => {
@@ -309,116 +430,8 @@ export function MessagesPage() {
     [packets, displayPackets, selectPacket]
   )
 
-  // Extract all dynamic values from packets for filter dropdowns
-  const dynamicValues = useMemo(() => {
-    const values = {
-      src_ip: new Set<string>(),
-      dst_ip: new Set<string>(),
-      src_as: new Set<string>(),
-      router_id: new Set<string>(),
-      asn: new Set<string>(),
-      next_hop: new Set<string>(),
-      prefix: new Set<string>(),
-      withdrawn: new Set<string>(),
-      community: new Set<string>(),
-      capability: new Set<string>(),
-    }
-
-    for (const packet of packets) {
-      values.src_ip.add(packet.srcIp)
-      values.dst_ip.add(packet.dstIp)
-
-      for (const msg of packet.messages) {
-        if (msg.type === 'OPEN') {
-          const open = msg as BgpOpenMessage
-          values.src_as.add(String(open.fourByteAs ?? open.myAs))
-          values.router_id.add(open.bgpIdentifier)
-          for (const cap of open.capabilities) {
-            values.capability.add(cap.name)
-          }
-        }
-
-        if (msg.type === 'UPDATE') {
-          const update = msg as BgpUpdateMessage
-
-          // NLRI prefixes (add to both prefix and withdrawn for unified view)
-          for (const p of update.nlri) {
-            const prefixStr = `${p.prefix}/${p.length}`
-            values.prefix.add(prefixStr)
-          }
-          // Withdrawn prefixes (add to both prefix and withdrawn)
-          for (const p of update.withdrawnRoutes) {
-            const prefixStr = `${p.prefix}/${p.length}`
-            values.prefix.add(prefixStr)
-            values.withdrawn.add(prefixStr)
-          }
-
-          // Path attributes
-          for (const attr of update.pathAttributes) {
-            if (attr.parsed?.type === 'AS_PATH') {
-              const asPath = attr.parsed as AsPathAttribute
-              for (const seg of asPath.segments) {
-                for (const asn of seg.asNumbers) {
-                  values.asn.add(String(asn))
-                }
-              }
-            }
-            if (attr.parsed?.type === 'NEXT_HOP') {
-              values.next_hop.add((attr.parsed as NextHopAttribute).address)
-            }
-            if (attr.parsed?.type === 'MP_REACH_NLRI') {
-              const mpReach = attr.parsed as MpReachNlriAttribute
-              values.next_hop.add(mpReach.nextHop)
-              for (const p of mpReach.nlri) {
-                values.prefix.add(`${p.prefix}/${p.length}`)
-              }
-            }
-            if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
-              const mpUnreach = attr.parsed as MpUnreachNlriAttribute
-              for (const p of mpUnreach.withdrawnRoutes) {
-                const prefixStr = `${p.prefix}/${p.length}`
-                values.prefix.add(prefixStr)
-                values.withdrawn.add(prefixStr)
-              }
-            }
-            if (attr.parsed?.type === 'COMMUNITIES') {
-              const comm = attr.parsed as CommunitiesAttribute
-              for (const c of comm.communities) {
-                values.community.add(c)
-              }
-            }
-            if (attr.parsed?.type === 'LARGE_COMMUNITIES') {
-              const lcomm = attr.parsed as LargeCommunitiesAttribute
-              for (const c of lcomm.communities) {
-                values.community.add(`${c.globalAdmin}:${c.localData1}:${c.localData2}`)
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Convert to sorted arrays
-    const sortIp = (a: string, b: string) => {
-      const aIsV6 = a.includes(':')
-      const bIsV6 = b.includes(':')
-      if (aIsV6 !== bIsV6) return aIsV6 ? 1 : -1
-      return a.localeCompare(b)
-    }
-
-    return {
-      src_ip: Array.from(values.src_ip).sort(sortIp),
-      dst_ip: Array.from(values.dst_ip).sort(sortIp),
-      src_as: Array.from(values.src_as).sort((a, b) => Number(a) - Number(b)),
-      router_id: Array.from(values.router_id).sort(),
-      asn: Array.from(values.asn).sort((a, b) => Number(a) - Number(b)),
-      next_hop: Array.from(values.next_hop).sort(sortIp),
-      prefix: Array.from(values.prefix).sort(sortIp),
-      withdrawn: Array.from(values.withdrawn).sort(sortIp),
-      community: Array.from(values.community).sort(),
-      capability: Array.from(values.capability).sort(),
-    }
-  }, [packets])
+  // Every value the filter dropdowns offer, gathered once per capture.
+  const dynamicValues = filterValuesFor(packets)
 
   // Convert rules to query string
   const rulesToQuery = useCallback((filterRules: FilterRule[]): string => {
