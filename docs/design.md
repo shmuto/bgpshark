@@ -716,7 +716,10 @@ bgpshark/
 │   │   ├── db/
 │   │   │   ├── database.ts      # DuckDB WASM lifecycle
 │   │   │   ├── schema.ts        # Table definitions
-│   │   │   ├── loader.ts        # BgpPacket[] → tables
+│   │   │   ├── loader.ts        # Load queue: worker batches → DuckDB
+│   │   │   ├── load-worker.ts   # Capture bytes → Arrow batches, off the page thread
+│   │   │   ├── rows.ts          # BgpPacket[] → table rows
+│   │   │   ├── arrow-batch.ts   # Rows → Arrow IPC
 │   │   │   ├── queries.ts       # Query API + result mapping
 │   │   │   └── filter-to-sql.ts # Filter AST → SQL
 │   │   ├── filter/
@@ -796,6 +799,7 @@ bgpshark/
         ▼                              ▼
 ┌──────────────────────────┐  ┌────────────────────────────────────┐
 │  AppContext (React)      │  │  db/loader.ts → DuckDB WASM        │
+│                          │  │  (in the background, via a worker) │
 │  - packets: BgpPacket[]  │  │  - packets / messages / nlri / ... │
 │  - allPackets            │  │                                    │
 │  - selectedPacketIndex   │  │  storage.ts → IndexedDB            │
@@ -821,9 +825,11 @@ in-memory evaluation in `filter/parser.ts` and only the SQL console is unavailab
 console, called from `SqlConsolePage.tsx`). Earlier revisions also had DuckDB-backed
 queries for packet counts, single-packet lookup, and neighbor/AS-path/prefix
 statistics, but nothing outside `src/lib/db/` ever called them and they were removed.
-Neighbor Analysis and Route Analysis compute their aggregations in memory with
-`useMemo` over the already-parsed `BgpPacket[]` instead of querying DuckDB, which is
-what keeps those screens usable when DuckDB fails to initialize.
+Neighbor Analysis and Route Analysis compute their aggregations in memory over the
+already-parsed `BgpPacket[]` — once per capture, through `perCapture` in
+`lib/capture-memo.ts`, not once per visit — instead of querying DuckDB, which is what
+keeps those screens usable when DuckDB fails to initialize, and usable before it has
+finished loading.
 
 **DuckDB selects, it does not reconstitute.** `getMatchingFrameIndexes` returns frame
 indexes and nothing else; the caller resolves them against the `BgpPacket[]` it

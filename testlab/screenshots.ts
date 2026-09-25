@@ -362,11 +362,17 @@ async function run(browser: Browser, shot: Shot): Promise<void> {
       buffer: capture.bytes,
     })
     await page.waitForURL('**/messages')
-    // The packet list is up as soon as the parser finishes; DuckDB takes longer,
-    // and a filtered shot taken before it is ready photographs the in-memory
-    // answer instead of the one the manual describes.
+    // The packet list is up as soon as the parser finishes; DuckDB loads behind
+    // it. Wait for that to settle, or the header photographs its "SQL n%" gauge
+    // and a shot of the SQL console photographs a disabled editor.
     await page.waitForSelector('text=/Showing \\d+ of \\d+ packets/')
-    await page.waitForTimeout(2500)
+    // Settled, not necessarily ready: a capture with no BGP in it — a session
+    // that never got past TCP — leaves the database idle.
+    await page.waitForSelector(
+      ':is([data-database="ready"], [data-database="idle"], [data-database="failed"], [data-database="unavailable"])',
+      { timeout: 30_000 }
+    )
+    await page.waitForTimeout(500)
 
     const target = await shot.take(page)
     const path = join(OUT_DIR, `${shot.file}.png`)

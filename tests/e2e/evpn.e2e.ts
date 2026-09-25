@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, evpnCapture, loadCapture, runSql, shownCount } from './helpers'
+import { applyFilter, evpnCapture, loadCapture, runSql, shownCount, waitForDatabase } from './helpers'
 
 /**
  * EVPN end to end, on a capture of a MAC moving between two leaves.
@@ -12,6 +12,7 @@ import { applyFilter, evpnCapture, loadCapture, runSql, shownCount } from './hel
  */
 test.beforeEach(async ({ page }) => {
   await loadCapture(page, 'evpn-fabric.pcap', evpnCapture())
+  await waitForDatabase(page)
   await page.waitForURL('**/messages')
   await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
 })

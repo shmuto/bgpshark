@@ -83,7 +83,7 @@ function ScreenSpinner({ label }: { label?: string }) {
 }
 
 function AppContent() {
-  const { status, loadFile, warnings } = useApp()
+  const { status, loadFile, warnings, database } = useApp()
 
   // Enable global drag & drop (disabled during loading)
   const { isDragOver, error: dropError, clearError } = useFileDropzone({
@@ -94,7 +94,11 @@ function AppContent() {
   const isReady = status === 'ready'
 
   return (
-    <div className="h-screen flex flex-col relative overflow-hidden">
+    // `data-database` says where DuckDB is with the capture on screen. Nothing
+    // styles on it; it is there because the load now finishes after the
+    // screens appear, and a test asserting "the load worked" has to be able to
+    // wait for the answer rather than read one that has not arrived yet.
+    <div className="h-screen flex flex-col relative overflow-hidden" data-database={database.status}>
       <ErrorBoundary>
         <AppHeader />
       </ErrorBoundary>

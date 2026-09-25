@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test'
 import { announce, buildScenario, type BgpMessageSpec } from '../../src/lib/build'
-import { loadCapture } from './helpers'
+import { loadCapture, waitForDatabase } from './helpers'
 
 /**
  * A capture big enough to take more than one database batch — the loader
- * inserts 50,000 rows at a time, and this flattens to a few hundred thousand —
+ * inserts 10,000 rows at a time, and this flattens to a few hundred thousand —
  * but small enough to load in a few seconds. UPDATEs are packed into full
  * segments, the way a real table transfer arrives, which is the shape that
  * made large captures slow in the first place.
@@ -37,62 +37,81 @@ function tableTransfer(updates: number): Buffer {
 }
 
 /**
- * The gauge exists because a large capture used to sit behind a spinner for
- * minutes, indistinguishable from a hang. What it owes the user is that it
- * moves, that it moves forwards, and that it says what it is doing.
+ * The gauges exist because a large capture used to sit behind a spinner for
+ * minutes, indistinguishable from a hang. What they owe the reader is that
+ * they move, that they move forwards, and that they say what they are doing.
  *
- * Reading it with a MutationObserver installed before the app loads, rather
- * than polling from the test, is what makes this deterministic: every value
- * React commits is recorded, however quickly the load runs on the machine at
- * hand.
+ * There are two, and they are held to that separately. The capture gauge
+ * covers what the screens wait for — reading, parsing, decoding — and is gone
+ * once the packet list appears. The DuckDB gauge covers the load that now runs
+ * after that, with the list already usable, and counts rows as they go in.
+ *
+ * Both are read with a MutationObserver installed before the app loads, rather
+ * than polled from the test: every value React commits is recorded, however
+ * quickly the load runs on the machine at hand.
  */
-test('loading a capture shows a gauge that only moves forwards', async ({ page }) => {
+test('loading a capture shows gauges that only move forwards', async ({ page }) => {
   await page.addInitScript(() => {
-    const seen: Array<{ value: number; text: string; stage: string }> = []
-    ;(window as unknown as { __gauge: typeof seen }).__gauge = seen
-    new MutationObserver(() => {
-      const bar = document.querySelector('[role="progressbar"]')
+    type Entry = { value: number; text: string; stage: string }
+    const seen: Record<string, Entry[]> = { capture: [], database: [] }
+    let listShownWhileDatabaseLoading = false
+    ;(window as unknown as { __gauges: typeof seen; __overlap: () => boolean }).__gauges = seen
+    ;(window as unknown as { __overlap: () => boolean }).__overlap = () => listShownWhileDatabaseLoading
+    const record = (list: Entry[], bar: Element | null) => {
       if (!bar) return
       const entry = {
         value: Number(bar.getAttribute('aria-valuenow')),
         text: bar.getAttribute('aria-valuetext') ?? '',
         stage: bar.getAttribute('data-stage') ?? '',
       }
-      const last = seen[seen.length - 1]
-      if (!last || last.text !== entry.text || last.value !== entry.value) seen.push(entry)
-    }).observe(document, { subtree: true, childList: true, attributes: true })
+      const last = list[list.length - 1]
+      if (!last || last.text !== entry.text || last.value !== entry.value) list.push(entry)
+    }
+    new MutationObserver(() => {
+      record(seen.capture, document.querySelector('[role="progressbar"][aria-label="Loading capture"]'))
+      const database = document.querySelector('[role="progressbar"][aria-label="Loading into DuckDB"]')
+      record(seen.database, database)
+      if (database && document.body.textContent?.match(/Showing \d+ of \d+ packets/)) {
+        listShownWhileDatabaseLoading = true
+      }
+    }).observe(document, { subtree: true, childList: true, attributes: true, characterData: true })
   })
 
   await loadCapture(page, 'table-transfer.pcap', tableTransfer(40_000))
   await page.waitForURL('**/messages', { timeout: 60_000 })
-  await expect(page.getByRole('progressbar')).toBeHidden()
+  await waitForDatabase(page)
+  await expect(page.getByRole('progressbar')).toHaveCount(0)
 
-  const seen = await page.evaluate(
-    () => (window as unknown as { __gauge: Array<{ value: number; text: string; stage: string }> }).__gauge
+  const { capture, database } = await page.evaluate(
+    () => (window as unknown as { __gauges: Record<string, Array<{ value: number; text: string; stage: string }>> }).__gauges
   )
-  const stages = [...new Set(seen.map((entry) => entry.stage))]
-  const values = seen.map((entry) => entry.value)
+  const forwards = (entries: typeof capture) => {
+    for (let i = 1; i < entries.length; i++) {
+      expect(entries[i].value, `went backwards: ${entries[i - 1].text} → ${entries[i].text}`).toBeGreaterThanOrEqual(
+        entries[i - 1].value
+      )
+    }
+  }
 
-  expect(stages, 'every stage announces itself, in order').toEqual([
+  expect([...new Set(capture.map((entry) => entry.stage))], 'every stage announces itself, in order').toEqual([
     'reading',
     'parsing',
     'decoding',
-    'database',
-    'saving',
   ])
-  for (let i = 1; i < values.length; i++) {
-    expect(values[i], `the gauge went backwards: ${seen[i - 1].text} → ${seen[i].text}`).toBeGreaterThanOrEqual(
-      values[i - 1]
-    )
-  }
+  forwards(capture)
+  forwards(database)
 
-  // Moving *within* the database stage is the part a spinner could not do:
-  // at least one reading strictly between none and all of the rows.
-  const partway = seen.filter((entry) => {
+  // The point of the split: the packet list was usable while DuckDB was
+  // still going, not after.
+  expect(await page.evaluate(() => (window as unknown as { __overlap: () => boolean }).__overlap())).toBe(true)
+
+  // Moving *within* the database load is the part a spinner could not do: at
+  // least one reading strictly between none and all of the rows.
+  const partway = database.filter((entry) => {
     const counted = entry.text.match(/([\d,]+) of ([\d,]+) rows/)
     if (!counted) return false
     const [done, total] = [counted[1], counted[2]].map((n) => Number(n.replace(/,/g, '')))
     return done > 0 && done < total
   })
-  expect(partway.length, seen.map((entry) => entry.text).join('\n')).toBeGreaterThan(0)
+  expect(partway.length, database.map((entry) => entry.text).join('\n')).toBeGreaterThan(0)
 })

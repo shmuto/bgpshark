@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { buildScenario } from '../../src/lib/build'
-import { applyFilter, loadCapture, runSql, shownCount } from './helpers'
+import { applyFilter, loadCapture, runSql, shownCount, waitForDatabase } from './helpers'
 
 /**
  * Values above 2^31 - 1, in every column that holds one.
@@ -56,6 +56,7 @@ function fourByteCapture(): Buffer {
 test.describe('4-byte AS numbers and other unsigned 32-bit values', () => {
   test.beforeEach(async ({ page }) => {
     await loadCapture(page, 'four-byte-as.pcap', fourByteCapture())
+    await waitForDatabase(page)
     await page.waitForURL('**/messages')
     await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
     // A failed DuckDB load is reported as a warning and filtering quietly

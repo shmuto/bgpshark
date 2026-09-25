@@ -70,12 +70,21 @@ this container merely surfaced it early by blocking the same request.
 Its replacement, literal `VALUES`, touched no network but was the next
 memorable symptom: an 18MB capture sat on the loading spinner for nearly two
 minutes, because DuckDB spends about 0.1ms *parsing* each row of a VALUES list.
-The loader now inserts through Arrow IPC (`insertRows` in
-`src/lib/db/loader.ts`), which is core to the WASM build and loads the same
-capture in a few seconds. It lays the Arrow buffers out by hand: Arrow's builders
-(`vectorFromArray`, `tableFromArrays`, …) compile code with `new Function`,
-which the production CSP's `script-src 'self' 'wasm-unsafe-eval'` refuses — a
-second failure the dev server cannot show.
+The loader now inserts through Arrow IPC, which is core to the WASM build. It
+lays the Arrow buffers out by hand (`src/lib/db/arrow-batch.ts`): Arrow's
+builders (`vectorFromArray`, `tableFromArrays`, …) compile code with
+`new Function`, which the production CSP's `script-src 'self' 'wasm-unsafe-eval'`
+refuses — a second failure the dev server cannot show.
+
+**The DuckDB load runs after the screens appear**, in a worker
+(`load-worker.ts`), and on a 50MB capture it takes most of a minute. So "the
+packet list is showing" does not mean "SQL has the capture": the root element's
+`data-database` attribute says where it is, and `waitForDatabase` in
+`tests/e2e/helpers.ts` waits for it. A test that asserts the load worked, or that
+no warning was raised, needs that wait — without it the assertion reads an
+answer that has not arrived. Anything you run from a script needs it too.
+`offline.e2e.ts`'s eval guard does not reach into workers, so the worker code is
+covered only by the rule above and a preview-build check.
 
 `tests/e2e/offline.e2e.ts` holds both lines: no request leaves the origin while
 a capture is loaded and queried, and nothing is compiled from a string (the test

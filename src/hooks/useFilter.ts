@@ -1,11 +1,18 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import type { BgpPacket } from '../lib/bgp/types'
 import { parseQuery, matchPacket } from '../lib/filter'
-import { isDataLoaded, getMatchingFrameIndexes } from '../lib/db'
+import { getMatchingFrameIndexes } from '../lib/db'
 
 interface UseFilterOptions {
   useDuckDB?: boolean
   initialQuery?: string
+  /**
+   * Whether DuckDB holds the capture `packets` came from. Until it does, the
+   * in-memory answer is the answer; when it becomes true the query is sent to
+   * SQL, which selects the same packets (`filter-backends.e2e.ts`) and is what
+   * keeps a large capture responsive to edits after that.
+   */
+  databaseReady?: boolean
 }
 
 /**
@@ -26,7 +33,7 @@ const DUCKDB_DEBOUNCE_MS = 200
 const PARSE_ERROR_GRACE_MS = 600
 
 export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) {
-  const { useDuckDB = true, initialQuery = '' } = options
+  const { useDuckDB = true, initialQuery = '', databaseReady = false } = options
   const [query, setQuery] = useState(initialQuery)
   const [asyncFilteredPackets, setAsyncFilteredPackets] = useState<BgpPacket[] | null>(null)
   const [isFiltering, setIsFiltering] = useState(false)
@@ -54,10 +61,11 @@ export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) 
     // fall back to the synchronous pass until the new SQL query resolves.
     setAsyncFilteredPackets(null)
 
-    // Gated on the data being loaded, not on the database existing: querying a
-    // healthy connection whose load failed returns zero rows for everything,
-    // and that empty answer would replace the correct in-memory result below.
-    if (!useDuckDB || !isDataLoaded()) return
+    // Gated on this capture being loaded, not on the database existing:
+    // querying a healthy connection whose load failed — or is still running, or
+    // belongs to the previous capture — returns the wrong rows, and that answer
+    // would replace the correct in-memory result below.
+    if (!useDuckDB || !databaseReady) return
     if (!query.trim()) return
     // Don't execute if there are parse errors
     if (parsedQuery.errors.length > 0) return
@@ -93,7 +101,7 @@ export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) 
     // packets is a dependency because the matched frame indexes are resolved
     // against it; loading a different capture must re-run the query rather than
     // resolve against the previous file's packets.
-  }, [query, useDuckDB, parsedQuery.errors.length, packets])
+  }, [query, useDuckDB, parsedQuery.errors.length, packets, databaseReady])
 
   // Use DuckDB results if available, otherwise fallback to sync filtering
   const filteredPackets = asyncFilteredPackets ?? syncFilteredPackets

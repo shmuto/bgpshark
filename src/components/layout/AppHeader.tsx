@@ -1,9 +1,10 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useApp } from '../../context/AppContext'
 import { ThemeToggle } from './ThemeToggle'
+import { DatabaseProgress } from '../common/DatabaseProgress'
 
 export function AppHeader() {
-  const { status, fileName, reset } = useApp()
+  const { status, fileName, reset, database } = useApp()
   const navigate = useNavigate()
   const isReady = status === 'ready'
 
@@ -43,6 +44,9 @@ export function AppHeader() {
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        {/* The DuckDB load, while the capture is already being read. */}
+        <DatabaseProgress database={database} className="hidden sm:flex" />
+
         {/* File name */}
         {fileName && (
           <span className="hidden max-w-[16rem] truncate rounded border border-hair bg-surface-sunken px-2 py-1 font-mono text-xs text-muted md:block">

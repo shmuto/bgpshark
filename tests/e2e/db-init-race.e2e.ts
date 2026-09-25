@@ -9,7 +9,7 @@ import { evpnCapture, runSql } from './helpers'
  * long as the connection was published before those statements ran, there was a
  * window in which the database said it was ready and had no tables in it — and
  * the app asks exactly that question before handing a freshly parsed capture to
- * `loadPackets`. Losing the race meant an insert into a table that did not exist
+ * the loader. Losing the race meant an insert into a table that did not exist
  * yet, a "Catalog Error: Table with name nlri does not exist" that failed the
  * whole initialization, and an upload screen that sat on "Parsing file..."
  * forever because the state machine never reached `ready`.

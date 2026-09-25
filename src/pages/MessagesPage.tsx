@@ -176,7 +176,7 @@ const filterValuesFor = perCapture((packets: BgpPacket[]) => {
 })
 
 export function MessagesPage() {
-  const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
+  const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket, database } = useApp()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   // In the URL because a dashboard alert can point at a TCP frame, and the list
@@ -213,7 +213,7 @@ export function MessagesPage() {
     showParseErrors,
     parseErrors,
     isFiltering,
-  } = useFilter(packets, { initialQuery: initialFilter })
+  } = useFilter(packets, { initialQuery: initialFilter, databaseReady: database.status === 'ready' })
 
   // Set initial selection from URL - find the packet in filtered results by frameIndex
   useEffect(() => {
@@ -430,8 +430,6 @@ export function MessagesPage() {
     [packets, displayPackets, selectPacket]
   )
 
-  // Every value the filter dropdowns offer, gathered once per capture.
-  const dynamicValues = filterValuesFor(packets)
 
   // Convert rules to query string
   const rulesToQuery = useCallback((filterRules: FilterRule[]): string => {
@@ -478,7 +476,9 @@ export function MessagesPage() {
     if (fieldDef.values.length > 0) {
       return fieldDef.values as string[]
     }
-    // Dynamic values from packets
+    // Dynamic values from packets — asked for only when a dropdown needs them,
+    // so opening this screen on a large capture does not wait for them.
+    const dynamicValues = filterValuesFor(packets)
     const dv = dynamicValues[field as keyof typeof dynamicValues]
     if (dv) {
       // Limit to 100 items for performance

@@ -15,6 +15,25 @@ export async function loadSample(page: Page) {
   await page.getByRole('button', { name: /sample/i }).first().click()
   await page.waitForURL('**/messages')
   await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
+  await waitForDatabase(page)
+}
+
+/**
+ * Waits until DuckDB has finished with the capture on screen, and says whether
+ * it succeeded.
+ *
+ * The screens appear before the database load is done — it runs in the
+ * background, sometimes for most of a minute — so "the list is showing" no
+ * longer means "SQL has the capture". A test that asserts the load worked, or
+ * that there was nothing to warn about, has to wait for this first, or it is
+ * reading an answer that has not arrived yet.
+ */
+export async function waitForDatabase(page: Page, expected: 'ready' | 'failed' = 'ready') {
+  const root = page.locator('[data-database]')
+  // Settled first, generously — a large capture takes a while — then the
+  // specific answer, so a failed load fails here with the state it reached.
+  await expect(root).toHaveAttribute('data-database', /^(ready|failed|unavailable)$/, { timeout: 30_000 })
+  await expect(root).toHaveAttribute('data-database', expected)
 }
 
 /** Loads a capture built in memory, for the cases the sample cannot cover. */

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, bestPathCapture, loadCapture, shownCount } from './helpers'
+import { applyFilter, bestPathCapture, loadCapture, shownCount, waitForDatabase } from './helpers'
 
 /**
  * Why traffic for a prefix left by the upstream it did.
@@ -12,6 +12,7 @@ import { applyFilter, bestPathCapture, loadCapture, shownCount } from './helpers
 test.describe('the attributes a best path is settled with', () => {
   test('are columns on the route history, so two paths compare side by side', async ({ page }) => {
     await loadCapture(page, 'bestpath.pcap', bestPathCapture())
+    await waitForDatabase(page)
     await page.waitForURL('**/messages')
 
     await page.getByRole('link', { name: 'Routes', exact: true }).click()
@@ -44,6 +45,7 @@ test.describe('the attributes a best path is settled with', () => {
     // 0 is the one that loses every comparison — the opposite of the truth,
     // which is that the attribute is simply not part of that route.
     await loadCapture(page, 'bestpath.pcap', bestPathCapture())
+    await waitForDatabase(page)
     await page.waitForURL('**/messages')
 
     await page.getByRole('link', { name: 'Routes', exact: true }).click()
@@ -63,6 +65,7 @@ test.describe('the attributes a best path is settled with', () => {
     // test cannot reach: `applyFilter` waits past the debounce so what is
     // counted is the database's answer rather than the in-memory one.
     await loadCapture(page, 'bestpath.pcap', bestPathCapture())
+    await waitForDatabase(page)
     await page.waitForURL('**/messages')
 
     await applyFilter(page, 'med = 300')
@@ -83,6 +86,7 @@ test.describe('the attributes a best path is settled with', () => {
     // The trap worth a test of its own: if absent were read as 0, this would
     // select both UPDATEs and quietly answer a different question.
     await loadCapture(page, 'bestpath.pcap', bestPathCapture())
+    await waitForDatabase(page)
     await page.waitForURL('**/messages')
 
     await applyFilter(page, 'local_pref < 1000')

@@ -6,72 +6,62 @@
  * looked like when it took two minutes, and why this exists. A gauge answers
  * the question a spinner cannot: is it still moving?
  *
- * The load is a sequence of stages of very different lengths, and only one of
- * them can report progress from inside: the DuckDB insert is asynchronous and
- * goes in batches, so it can say how many rows are in. The parsers are
- * synchronous — the page cannot repaint until they return — so all they can do
- * is announce that they have started. The bar therefore steps through the
- * early stages and moves smoothly through the database one.
+ * There are two loads, and they are measured separately because the reader
+ * waits for only one of them.
  *
- * Each stage owns a slice of the bar sized by how long it actually takes. The
- * slices were measured in Chromium on two 18MB captures: 225,000 UPDATEs packed
- * into full segments, and 120,000 UPDATEs one to a frame. Parsing took well
- * under a second on both and decoding one to two; the database took everything
- * else — about three quarters of the load on the sparse capture and over nine
- * tenths on the dense one — and reading and saving next to nothing. They are
- * not exact for every capture, and do not need to be; what matters is that the
- * bar never runs backwards and does not race to a third and then crawl.
+ * The first is the capture itself — read, parse, decode — and the screens need
+ * it before they can show anything. The parsers are synchronous, so the page
+ * cannot repaint until each returns, and all they can do is announce that they
+ * have started. Each stage owns a slice of the bar sized by how long it takes:
+ * measured in Chromium on captures up to the 50MB limit, parsing the pcap is a
+ * few percent of this load and decoding BGP is nearly all of it.
+ *
+ * The second is DuckDB, which used to be the last stage of the first load and
+ * was nine tenths of the wait — 37 of 48 seconds on a 50MB capture — for
+ * something only the SQL console strictly needs. It now runs after the
+ * screens have appeared, and reports rows as they go in.
  */
 
-export type LoadStage = 'reading' | 'parsing' | 'decoding' | 'database' | 'saving'
+export type LoadStage = 'reading' | 'parsing' | 'decoding'
 
 export interface LoadProgress {
   stage: LoadStage
-  /** The whole load, 0 to 1. */
+  /** This load, 0 to 1. */
   fraction: number
-  /** What is happening, in words, e.g. "Loading into DuckDB — 420,000 of 1,600,000 rows". */
+  /** What is happening, in words. */
   label: string
 }
 
 /** Where each stage's slice of the bar starts and ends. */
 const STAGE_SPAN: Record<LoadStage, [number, number]> = {
-  reading: [0, 0.02],
-  parsing: [0.02, 0.06],
-  decoding: [0.06, 0.15],
-  database: [0.15, 0.98],
-  saving: [0.98, 1],
+  reading: [0, 0.03],
+  parsing: [0.03, 0.1],
+  decoding: [0.1, 1],
 }
 
 const STAGE_LABEL: Record<LoadStage, string> = {
   reading: 'Reading file',
   parsing: 'Parsing packets',
   decoding: 'Decoding BGP messages',
-  database: 'Loading into DuckDB',
-  saving: 'Saving for next visit',
+}
+
+/** The capture load, at the start of `stage`. */
+export function loadProgress(stage: LoadStage): LoadProgress {
+  return { stage, fraction: STAGE_SPAN[stage][0], label: STAGE_LABEL[stage] }
 }
 
 /**
- * Progress at a point inside a stage.
+ * The DuckDB load, as `fraction` and a label.
  *
- * `done` and `total` are the stage's own units — rows, for the database — and
- * are left out when the stage cannot measure itself, which places the bar at
- * the start of the stage's slice.
+ * `total` is zero until the capture has been flattened into rows — emptying
+ * the tables and building the rows is a few seconds on a large capture with
+ * nothing to count yet, and saying so beats a label that looks frozen.
  */
-export function loadProgress(stage: LoadStage, done?: number, total?: number): LoadProgress {
-  const [start, end] = STAGE_SPAN[stage]
-  const within = total && total > 0 ? Math.min(1, Math.max(0, (done ?? 0) / total)) : 0
-  // Before the database can count rows it has to empty its tables and flatten
-  // every packet into them, which on a large capture is a couple of seconds
-  // with nothing to count. Saying so beats a label that looks frozen.
-  const counted =
-    total && total > 0
-      ? ` — ${(done ?? 0).toLocaleString('en-US')} of ${total.toLocaleString('en-US')} rows`
-      : stage === 'database'
-        ? ' — preparing rows'
-        : ''
+export function databaseProgress(done: number, total: number): { fraction: number; label: string } {
+  if (total <= 0) return { fraction: 0, label: 'Loading into DuckDB — preparing rows' }
+  const fraction = Math.min(1, Math.max(0, done / total))
   return {
-    stage,
-    fraction: start + (end - start) * within,
-    label: `${STAGE_LABEL[stage]}${counted}`,
+    fraction,
+    label: `Loading into DuckDB — ${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} rows`,
   }
 }

@@ -70,6 +70,18 @@ CSP's `script-src` forbids it. And rows land in a staging table and reach the re
 one through a named-column `INSERT ... SELECT`, so columns bind by name rather than
 position and DuckDB casts each to its declared type.
 
+Then the load stopped being something the reader waits for. At the 50MB limit it was
+still 37 of the 48 seconds between dropping a file and seeing it, for tables only the
+SQL console strictly needs — the screens filter in memory and get the same answers
+(`filter-backends.e2e.ts` holds the two backends to that). So the screens appear as
+soon as the capture is decoded, and DuckDB fills behind them, with a small gauge in
+the header. Doing that on the page's thread made the page stutter for most of a
+minute, so the rows are built elsewhere: `load-worker.ts` parses the capture's bytes
+again, flattens them (`rows.ts`), encodes Arrow batches (`arrow-batch.ts`) and hands
+them over one at a time; `loader.ts` only passes each to DuckDB's worker. The app's
+state, not the database module, says whether the capture on screen is loaded — a
+superseded load can finish after the next capture appears, and must not answer for it.
+
 ## Trade-offs accepted
 
 **In favour.** Columnar storage for filtering; scale; SQL as an extension point that

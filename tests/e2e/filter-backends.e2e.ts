@@ -7,6 +7,7 @@ import {
   gracefulRestartCapture,
   loadCapture,
   routeRefreshCapture,
+  waitForDatabase,
 } from './helpers'
 
 const SAMPLE = new URL('../../public/sample.pcapng', import.meta.url).pathname
@@ -126,11 +127,7 @@ for (const [name, build] of CAPTURES) {
     await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
     // The database load finishes after the list appears; wait for it rather
     // than comparing against tables that are still being filled.
-    await page.waitForFunction(
-      async (url) => (await import(url)).isDataLoaded(),
-      '/bgpshark/src/lib/db/index.ts',
-      { timeout: 30_000 }
-    )
+    await waitForDatabase(page)
 
     const differ = await disagreements(page, bytes)
     expect(differ, differ.join('\n')).toEqual([])

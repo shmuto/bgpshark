@@ -1,7 +1,7 @@
 import { createContext, useContext, type ReactNode } from 'react'
 import type { BgpPacket } from '../lib/bgp/types'
 import type { GenericPacket } from '../lib/pcap'
-import { useBgpAnalyzer } from '../hooks/useBgpAnalyzer'
+import { useBgpAnalyzer, type DatabaseState } from '../hooks/useBgpAnalyzer'
 import type { LoadProgress } from '../lib/load-progress'
 
 interface AppContextType {
@@ -16,6 +16,8 @@ interface AppContextType {
   selectedPacketIndex: number | null
   /** How far the load in flight has got; null when nothing is loading. */
   progress: LoadProgress | null
+  /** Where DuckDB is with the capture on screen — see `DatabaseState`. */
+  database: DatabaseState
 
   // Actions
   loadFile: (file: File) => Promise<void>
@@ -38,6 +40,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     error: analyzer.state.error,
     selectedPacketIndex: analyzer.state.selectedPacketIndex,
     progress: analyzer.state.progress,
+    database: analyzer.state.database,
     loadFile: analyzer.loadFile,
     selectPacket: analyzer.selectPacket,
     reset: analyzer.reset,

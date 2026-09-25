@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { corruptCapture, evpnCapture, loadCapture, loadSample, runSql } from './helpers'
+import { corruptCapture, evpnCapture, loadCapture, loadSample, runSql, waitForDatabase } from './helpers'
 
 const SAMPLE = new URL('../../public/sample.pcapng', import.meta.url).pathname
 
@@ -51,6 +51,7 @@ test.describe('the app makes no third-party requests', () => {
     // integers, the extended-community strings — which is where a transport
     // that is not JSON is most likely to differ from one that was.
     await loadCapture(page, 'evpn-fabric.pcap', evpnCapture())
+    await waitForDatabase(page)
     await page.waitForURL('**/messages')
     await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
 
@@ -76,6 +77,7 @@ test.describe('the app makes no third-party requests', () => {
     // most between JSON and VALUES — and it is empty on a clean capture, so a
     // capture that actually warns is the only place the difference shows.
     await loadCapture(page, 'truncated.pcapng', corruptCapture(readFileSync(SAMPLE)))
+    await waitForDatabase(page)
     await expect(page.getByText(/warnings? loading this capture/)).toBeVisible()
 
     await page.getByRole('link', { name: 'SQL', exact: true }).click()

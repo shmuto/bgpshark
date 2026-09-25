@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { useApp } from '../context/AppContext'
-import { executeRawSql, isInitialized, isDataLoaded } from '../lib/db'
+import { executeRawSql } from '../lib/db'
+import { databaseProgress } from '../lib/load-progress'
 
 interface QueryResult {
   columns: string[]
@@ -97,20 +98,18 @@ ORDER BY count DESC`,
 ]
 
 export function SqlConsolePage() {
-  useApp() // Ensure context is available
+  const { database } = useApp()
   const [query, setQuery] = useState(QUERY_TEMPLATES[0].query)
   const [result, setResult] = useState<QueryResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isExecuting, setIsExecuting] = useState(false)
   const [queryHistory, setQueryHistory] = useState<string[]>([])
 
-  // Two distinct failure states: the database never came up, or it is up but
-  // the capture's packets never made it in. Querying in the second state
-  // "works" and returns zero rows for everything, so it is blocked the same
-  // way — just with a different explanation.
-  const dbReady = isInitialized()
-  const dataLoaded = isDataLoaded()
-  const sqlUsable = dbReady && dataLoaded
+  // Usable only once this capture is in. Every other state — still loading,
+  // failed, no database at all — would "work" and return rows for the wrong
+  // capture or none, which reads as an answer, so the editor is disabled and
+  // the notice says which of them it is.
+  const sqlUsable = database.status === 'ready'
 
   const handleExecute = useCallback(async () => {
     if (!query.trim() || !sqlUsable) return
@@ -195,12 +194,29 @@ export function SqlConsolePage() {
           <span>💾</span>
           <h1 className="text-lg font-semibold text-strong">SQL Console</h1>
         </div>
-        {!dbReady && (
-          <span className="text-sm text-warning">
-            ⚠️ DuckDB not initialized. Load a pcap file first.
+        {database.status === 'loading' && (
+          <span className="text-sm text-muted" role="status">
+            {databaseProgress(database.done, database.total).label} — SQL is available when it
+            finishes. The other screens already work.
           </span>
         )}
-        {dbReady && !dataLoaded && (
+        {database.status === 'starting' && (
+          <span className="text-sm text-muted" role="status">
+            DuckDB is starting up.
+          </span>
+        )}
+        {database.status === 'idle' && (
+          <span className="text-sm text-muted" role="status">
+            This capture has no BGP messages, so there is nothing to query.
+          </span>
+        )}
+        {database.status === 'unavailable' && (
+          <span className="text-sm text-warning">
+            ⚠️ DuckDB could not start in this browser, so SQL is unavailable. Filtering on the
+            other screens still works in-memory.
+          </span>
+        )}
+        {database.status === 'failed' && (
           <span className="text-sm text-warning">
             ⚠️ This capture could not be loaded into DuckDB, so SQL is unavailable. Filtering on
             the other screens still works in-memory.
