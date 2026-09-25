@@ -12,6 +12,13 @@ import { isOrderedOperator, normalizeFieldName } from '../filter/parser'
 import { bitKey, parsePrefix } from '../net/prefix'
 
 /**
+ * The operators the field helpers below are asked about. The negated two never
+ * reach them: `comparisonToSql` writes `!=` as NOT of `=`, and `not contains`
+ * as NOT of `contains`, once for every field.
+ */
+type PositiveOperator = Exclude<MatchOperator, '!=' | 'not contains'>
+
+/**
  * Convert a filter expression to SQL WHERE clause
  */
 export function expressionToSql(expr: Expression | null): string {
@@ -23,7 +30,10 @@ export function expressionToSql(expr: Expression | null): string {
     case 'or':
       return `(${expressionToSql(expr.left)} OR ${expressionToSql(expr.right)})`
     case 'not':
-      return `NOT (${expressionToSql(expr.expr)})`
+      // COALESCE because NOT NULL is NULL, which would drop the packet from
+      // both sides of a negation; in memory a comparison is only ever true or
+      // false. An address column is NULL for a family with no printable form.
+      return `NOT COALESCE((${expressionToSql(expr.expr)}), FALSE)`
     case 'comparison':
       return comparisonToSql(expr)
   }
@@ -39,6 +49,16 @@ function comparisonToSql(expr: Comparison): string {
 
   if (isOrderedOperator(operator)) {
     return orderedComparisonToSql(field, operator, value)
+  }
+
+  // A negated comparison is the complement of the positive one — the same rule
+  // `evaluateComparison` applies in memory, and for the same reason: the two
+  // backends have to select the same packets, and a per-field negation is one
+  // more place for them not to. The field helpers below are only ever asked
+  // the positive question.
+  if (operator === '!=' || operator === 'not contains') {
+    const positive = operator === '!=' ? '=' : 'contains'
+    return `NOT COALESCE((${comparisonToSql({ ...expr, operator: positive })}), FALSE)`
   }
 
   switch (field) {
@@ -106,8 +126,11 @@ function comparisonToSql(expr: Comparison): string {
     case 'evpn_type':
       return evpnNumberSql('evpn_route_type', operator, value)
 
+    // Announced or withdrawn, as the manual says and the evaluator does. This
+    // used to search `nlri` alone, so a packet that only withdrew the prefix
+    // matched in memory and not here.
     case 'prefix':
-      return prefixSql('nlri', operator, value)
+      return `(${prefixSql('nlri', operator, value)} OR ${prefixSql('withdrawn', operator, value)})`
 
     case 'withdrawn':
       return prefixSql('withdrawn', operator, value)
@@ -193,8 +216,8 @@ const EVPN_ROUTES_SUBQUERY = `(
         SELECT message_id, evpn_route_type, evpn_rd, evpn_mac, evpn_vni, evpn_vni2 FROM withdrawn
       )`
 
-function evpnExists(condition: string, negated = false): string {
-  return `${negated ? 'NOT EXISTS' : 'EXISTS'} (
+function evpnExists(condition: string): string {
+  return `EXISTS (
         SELECT 1 FROM ${EVPN_ROUTES_SUBQUERY} r
         JOIN messages m ON r.message_id = m.id
         WHERE m.frame_index = p.frame_index AND ${condition}
@@ -202,24 +225,20 @@ function evpnExists(condition: string, negated = false): string {
 }
 
 /** A text column of an EVPN route — the MAC or the Route Distinguisher. */
-function evpnTextSql(column: string, operator: MatchOperator, value: FilterValue): string {
+function evpnTextSql(column: string, operator: PositiveOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
   const exact = `LOWER(r.${column}) = LOWER('${strValue}')`
-  const loose = `LOWER(r.${column}) LIKE LOWER('%${strValue}%')`
+  const loose = `LOWER(r.${column}) LIKE LOWER('%${likeEscape(strValue)}%') ESCAPE '\\'`
 
   switch (operator) {
     case '=':
       return evpnExists(exact)
-    case '!=':
-      return evpnExists(exact, true)
     case 'contains':
       return evpnExists(loose)
-    case 'not contains':
-      return evpnExists(loose, true)
   }
 }
 
-function evpnNumberSql(column: string, operator: MatchOperator, value: FilterValue): string {
+function evpnNumberSql(column: string, operator: PositiveOperator, value: FilterValue): string {
   const numeric = coerceNumericValue(value)
   if (typeof numeric !== 'number') return '1=0'
   const equals = `r.${column} = ${numeric}`
@@ -228,14 +247,11 @@ function evpnNumberSql(column: string, operator: MatchOperator, value: FilterVal
     case '=':
     case 'contains':
       return evpnExists(equals)
-    case '!=':
-    case 'not contains':
-      return evpnExists(equals, true)
   }
 }
 
 /** Either label satisfies a VNI search; a MAC/IP route may carry an L3 VNI too. */
-function evpnVniSql(operator: MatchOperator, value: FilterValue): string {
+function evpnVniSql(operator: PositiveOperator, value: FilterValue): string {
   const numeric = coerceNumericValue(value)
   if (typeof numeric !== 'number') return '1=0'
   const equals = `(r.evpn_vni = ${numeric} OR r.evpn_vni2 = ${numeric})`
@@ -244,9 +260,6 @@ function evpnVniSql(operator: MatchOperator, value: FilterValue): string {
     case '=':
     case 'contains':
       return evpnExists(equals)
-    case '!=':
-    case 'not contains':
-      return evpnExists(equals, true)
   }
 }
 
@@ -256,39 +269,30 @@ function evpnVniSql(operator: MatchOperator, value: FilterValue): string {
  */
 function extCommunitySql(
   column: 'value' | 'formatted',
-  operator: MatchOperator,
+  operator: PositiveOperator,
   value: FilterValue,
   extraCondition?: string
 ): string {
   const strValue = escapeString(String(value))
   const kind = extraCondition ? `${extraCondition} AND ` : ''
-  const exists = (condition: string, negated: boolean) => `${negated ? 'NOT EXISTS' : 'EXISTS'} (
+  const exists = (condition: string) => `EXISTS (
         SELECT 1 FROM extended_communities ec
         JOIN messages m ON ec.message_id = m.id
         WHERE m.frame_index = p.frame_index AND ${kind}${condition}
       )`
   const exact = `LOWER(ec.${column}) = LOWER('${strValue}')`
-  const loose = `LOWER(ec.${column}) LIKE LOWER('%${strValue}%')`
+  const loose = `LOWER(ec.${column}) LIKE LOWER('%${likeEscape(strValue)}%') ESCAPE '\\'`
 
   switch (operator) {
     case '=':
-      return exists(exact, false)
-    case '!=':
-      return exists(exact, true)
+      return exists(exact)
     case 'contains':
-      return exists(loose, false)
-    case 'not contains':
-      return exists(loose, true)
+      return exists(loose)
   }
 }
 
-/**
- * SQL for integer columns on the packets table (ports, frame number).
- *
- * The loader always writes these, so the negated forms need no NULL branch to
- * stay the exact inverse of the in-memory `matchNumber`.
- */
-function numericPacketFieldSql(column: string, operator: MatchOperator, value: FilterValue): string {
+/** SQL for integer columns on the packets table (ports, frame number). */
+function numericPacketFieldSql(column: string, operator: PositiveOperator, value: FilterValue): string {
   const numeric = coerceNumericValue(value)
 
   if (typeof numeric === 'number') {
@@ -296,9 +300,6 @@ function numericPacketFieldSql(column: string, operator: MatchOperator, value: F
       case '=':
       case 'contains':
         return `p.${column} = ${numeric}`
-      case '!=':
-      case 'not contains':
-        return `p.${column} != ${numeric}`
     }
   }
 
@@ -307,31 +308,23 @@ function numericPacketFieldSql(column: string, operator: MatchOperator, value: F
   switch (operator) {
     case '=':
       return `CAST(p.${column} AS VARCHAR) = '${strValue}'`
-    case '!=':
-      return `CAST(p.${column} AS VARCHAR) != '${strValue}'`
     case 'contains':
-      return `CAST(p.${column} AS VARCHAR) LIKE '%${strValue}%'`
-    case 'not contains':
-      return `CAST(p.${column} AS VARCHAR) NOT LIKE '%${strValue}%'`
+      return `CAST(p.${column} AS VARCHAR) LIKE '%${likeEscape(strValue)}%' ESCAPE '\\'`
   }
 }
 
 /**
  * SQL for message-level fields
  */
-function messageFieldSql(column: string, operator: MatchOperator, value: FilterValue, extraCondition?: string): string {
+function messageFieldSql(column: string, operator: PositiveOperator, value: FilterValue, extraCondition?: string): string {
   const strValue = escapeString(String(value))
   const condition = extraCondition ? `${extraCondition} AND ` : ''
 
   switch (operator) {
     case '=':
       return `EXISTS (SELECT 1 FROM messages m WHERE m.frame_index = p.frame_index AND ${condition}LOWER(m.${column}) = LOWER('${strValue}'))`
-    case '!=':
-      return `NOT EXISTS (SELECT 1 FROM messages m WHERE m.frame_index = p.frame_index AND ${condition}LOWER(m.${column}) = LOWER('${strValue}'))`
     case 'contains':
-      return `EXISTS (SELECT 1 FROM messages m WHERE m.frame_index = p.frame_index AND ${condition}LOWER(m.${column}) LIKE LOWER('%${strValue}%'))`
-    case 'not contains':
-      return `NOT EXISTS (SELECT 1 FROM messages m WHERE m.frame_index = p.frame_index AND ${condition}LOWER(m.${column}) LIKE LOWER('%${strValue}%'))`
+      return `EXISTS (SELECT 1 FROM messages m WHERE m.frame_index = p.frame_index AND ${condition}LOWER(m.${column}) LIKE LOWER('%${likeEscape(strValue)}%') ESCAPE '\\')`
   }
 }
 
@@ -342,7 +335,7 @@ function messageFieldSql(column: string, operator: MatchOperator, value: FilterV
  */
 function numericMessageFieldSql(
   column: string,
-  operator: MatchOperator,
+  operator: PositiveOperator,
   value: FilterValue,
   extraCondition?: string
 ): string {
@@ -356,9 +349,6 @@ function numericMessageFieldSql(
       case '=':
       case 'contains':
         return exists(`m.${column} = ${numeric}`)
-      case '!=':
-      case 'not contains':
-        return `NOT ${exists(`m.${column} = ${numeric}`)}`
     }
   }
 
@@ -367,12 +357,8 @@ function numericMessageFieldSql(
   switch (operator) {
     case '=':
       return exists(`CAST(m.${column} AS VARCHAR) = '${strValue}'`)
-    case '!=':
-      return `NOT ${exists(`CAST(m.${column} AS VARCHAR) = '${strValue}'`)}`
     case 'contains':
-      return exists(`CAST(m.${column} AS VARCHAR) LIKE '%${strValue}%'`)
-    case 'not contains':
-      return `NOT ${exists(`CAST(m.${column} AS VARCHAR) LIKE '%${strValue}%'`)}`
+      return exists(`CAST(m.${column} AS VARCHAR) LIKE '%${likeEscape(strValue)}%' ESCAPE '\\'`)
   }
 }
 
@@ -396,7 +382,7 @@ function coerceNumericValue(value: FilterValue): FilterValue {
 /**
  * SQL for IP address fields (supports prefix matching)
  */
-function ipFieldSql(column: string, operator: MatchOperator, value: FilterValue): string {
+function ipFieldSql(column: string, operator: PositiveOperator, value: FilterValue): string {
   const strValue = String(value)
   const query = parsePrefix(strValue)
 
@@ -410,9 +396,6 @@ function ipFieldSql(column: string, operator: MatchOperator, value: FilterValue)
       case '=':
       case 'contains':
         return `p.${column}_bits LIKE '${key}%'`
-      case '!=':
-      case 'not contains':
-        return `(p.${column}_bits IS NULL OR p.${column}_bits NOT LIKE '${key}%')`
     }
   }
 
@@ -421,19 +404,15 @@ function ipFieldSql(column: string, operator: MatchOperator, value: FilterValue)
   switch (operator) {
     case '=':
       return `p.${column} = '${escaped}'`
-    case '!=':
-      return `p.${column} != '${escaped}'`
     case 'contains':
-      return `p.${column} LIKE '%${escaped}%'`
-    case 'not contains':
-      return `p.${column} NOT LIKE '%${escaped}%'`
+      return `p.${column} LIKE '%${likeEscape(escaped)}%' ESCAPE '\\'`
   }
 }
 
 /**
  * SQL for capability search
  */
-function capabilitySql(operator: MatchOperator, value: FilterValue): string {
+function capabilitySql(operator: PositiveOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
   switch (operator) {
@@ -443,23 +422,11 @@ function capabilitySql(operator: MatchOperator, value: FilterValue): string {
         JOIN messages m ON c.message_id = m.id
         WHERE m.frame_index = p.frame_index AND LOWER(c.name) = LOWER('${strValue}')
       )`
-    case '!=':
-      return `NOT EXISTS (
-        SELECT 1 FROM capabilities c
-        JOIN messages m ON c.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND LOWER(c.name) = LOWER('${strValue}')
-      )`
     case 'contains':
       return `EXISTS (
         SELECT 1 FROM capabilities c
         JOIN messages m ON c.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND LOWER(c.name) LIKE LOWER('%${strValue}%')
-      )`
-    case 'not contains':
-      return `NOT EXISTS (
-        SELECT 1 FROM capabilities c
-        JOIN messages m ON c.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND LOWER(c.name) LIKE LOWER('%${strValue}%')
+        WHERE m.frame_index = p.frame_index AND LOWER(c.name) LIKE LOWER('%${likeEscape(strValue)}%') ESCAPE '\\'
       )`
   }
 }
@@ -467,7 +434,7 @@ function capabilitySql(operator: MatchOperator, value: FilterValue): string {
 /**
  * SQL for AS_PATH search
  */
-function asPathSql(operator: MatchOperator, value: FilterValue): string {
+function asPathSql(operator: PositiveOperator, value: FilterValue): string {
   // A quoted numeric value ("65001") is equivalent to the bare number
   value = coerceNumericValue(value)
 
@@ -477,13 +444,6 @@ function asPathSql(operator: MatchOperator, value: FilterValue): string {
       case '=':
       case 'contains':
         return `EXISTS (
-          SELECT 1 FROM as_path ap
-          JOIN messages m ON ap.message_id = m.id
-          WHERE m.frame_index = p.frame_index AND ap.asn = ${value}
-        )`
-      case '!=':
-      case 'not contains':
-        return `NOT EXISTS (
           SELECT 1 FROM as_path ap
           JOIN messages m ON ap.message_id = m.id
           WHERE m.frame_index = p.frame_index AND ap.asn = ${value}
@@ -518,14 +478,6 @@ function asPathSql(operator: MatchOperator, value: FilterValue): string {
           ${joins}
           WHERE m.frame_index = p.frame_index AND ${conditions}
         )`
-      case '!=':
-      case 'not contains':
-        return `NOT EXISTS (
-          SELECT 1 FROM as_path ap0
-          JOIN messages m ON ap0.message_id = m.id
-          ${joins}
-          WHERE m.frame_index = p.frame_index AND ${conditions}
-        )`
     }
   }
 
@@ -535,7 +487,7 @@ function asPathSql(operator: MatchOperator, value: FilterValue): string {
 /**
  * SQL for path attribute fields
  */
-function pathAttrSql(column: string, operator: MatchOperator, value: FilterValue): string {
+function pathAttrSql(column: string, operator: PositiveOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
   switch (operator) {
@@ -545,44 +497,29 @@ function pathAttrSql(column: string, operator: MatchOperator, value: FilterValue
         JOIN messages m ON pa.message_id = m.id
         WHERE m.frame_index = p.frame_index AND LOWER(pa.${column}) = LOWER('${strValue}')
       )`
-    case '!=':
-      return `NOT EXISTS (
-        SELECT 1 FROM path_attributes pa
-        JOIN messages m ON pa.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND LOWER(pa.${column}) = LOWER('${strValue}')
-      )`
     case 'contains':
       return `EXISTS (
         SELECT 1 FROM path_attributes pa
         JOIN messages m ON pa.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND LOWER(pa.${column}) LIKE LOWER('%${strValue}%')
-      )`
-    case 'not contains':
-      return `NOT EXISTS (
-        SELECT 1 FROM path_attributes pa
-        JOIN messages m ON pa.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND LOWER(pa.${column}) LIKE LOWER('%${strValue}%')
+        WHERE m.frame_index = p.frame_index AND LOWER(pa.${column}) LIKE LOWER('%${likeEscape(strValue)}%') ESCAPE '\\'
       )`
   }
 }
 
 /**
- * SQL for an integer path attribute under `=` and `!=`.
+ * SQL for an integer path attribute.
  *
  * `contains` on a number is meaningless, and `matchNumber` in the in-memory
  * evaluator resolves it to plain equality rather than rejecting it. This does
  * the same, deliberately: the two backends disagreeing about a filter is the
- * failure mode this codebase already carries one example of, and it is not
- * worth a second.
+ * failure mode `filter-backends.e2e.ts` exists to catch.
  *
- * `!=` is the interesting one: `NOT EXISTS (... = v)` is true for a packet that
- * carried no such attribute at all, which is the same answer the in-memory side
- * gives for a non-UPDATE packet, and is the reading the existing negated
- * fields already have.
+ * Its negation, `med != v`, is true for a packet that carried no MED at all —
+ * an OPEN, say — because it is NOT of `med = v`; see `comparisonToSql`.
  */
 function numericPathAttrSql(
   column: string,
-  operator: MatchOperator,
+  operator: PositiveOperator,
   value: FilterValue
 ): string {
   const numeric = coerceNumericValue(value)
@@ -597,23 +534,19 @@ function numericPathAttrSql(
   switch (operator) {
     case '=':
       return exists
-    case '!=':
-      return `NOT ${exists}`
     case 'contains':
       return exists
-    case 'not contains':
-      return `NOT ${exists}`
   }
 }
 
 /**
  * SQL for next hop (both NEXT_HOP attribute and MP_REACH_NLRI)
  */
-function nextHopSql(operator: MatchOperator, value: FilterValue): string {
+function nextHopSql(operator: PositiveOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
-  // Check both path_attributes.next_hop and path_attributes for MP_REACH_NLRI
-  // For simplicity, we only check next_hop column
+  // The loader writes MP_REACH_NLRI's next hop into its own row's `next_hop`,
+  // so this one column answers for both attributes.
   switch (operator) {
     case '=':
       return `EXISTS (
@@ -621,23 +554,11 @@ function nextHopSql(operator: MatchOperator, value: FilterValue): string {
         JOIN messages m ON pa.message_id = m.id
         WHERE m.frame_index = p.frame_index AND pa.next_hop = '${strValue}'
       )`
-    case '!=':
-      return `NOT EXISTS (
-        SELECT 1 FROM path_attributes pa
-        JOIN messages m ON pa.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND pa.next_hop = '${strValue}'
-      )`
     case 'contains':
       return `EXISTS (
         SELECT 1 FROM path_attributes pa
         JOIN messages m ON pa.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND pa.next_hop LIKE '%${strValue}%'
-      )`
-    case 'not contains':
-      return `NOT EXISTS (
-        SELECT 1 FROM path_attributes pa
-        JOIN messages m ON pa.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND pa.next_hop LIKE '%${strValue}%'
+        WHERE m.frame_index = p.frame_index AND pa.next_hop LIKE '%${likeEscape(strValue)}%' ESCAPE '\\'
       )`
   }
 }
@@ -645,7 +566,7 @@ function nextHopSql(operator: MatchOperator, value: FilterValue): string {
 /**
  * SQL for community search
  */
-function communitySql(operator: MatchOperator, value: FilterValue): string {
+function communitySql(operator: PositiveOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
   switch (operator) {
@@ -655,23 +576,11 @@ function communitySql(operator: MatchOperator, value: FilterValue): string {
         JOIN messages m ON c.message_id = m.id
         WHERE m.frame_index = p.frame_index AND c.formatted = '${strValue}'
       )`
-    case '!=':
-      return `NOT EXISTS (
-        SELECT 1 FROM communities c
-        JOIN messages m ON c.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND c.formatted = '${strValue}'
-      )`
     case 'contains':
       return `EXISTS (
         SELECT 1 FROM communities c
         JOIN messages m ON c.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND c.formatted LIKE '%${strValue}%'
-      )`
-    case 'not contains':
-      return `NOT EXISTS (
-        SELECT 1 FROM communities c
-        JOIN messages m ON c.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND c.formatted LIKE '%${strValue}%'
+        WHERE m.frame_index = p.frame_index AND c.formatted LIKE '%${likeEscape(strValue)}%' ESCAPE '\\'
       )`
   }
 }
@@ -679,7 +588,7 @@ function communitySql(operator: MatchOperator, value: FilterValue): string {
 /**
  * SQL for large community search
  */
-function largeCommunitySql(operator: MatchOperator, value: FilterValue): string {
+function largeCommunitySql(operator: PositiveOperator, value: FilterValue): string {
   const strValue = escapeString(String(value))
 
   switch (operator) {
@@ -689,23 +598,11 @@ function largeCommunitySql(operator: MatchOperator, value: FilterValue): string 
         JOIN messages m ON lc.message_id = m.id
         WHERE m.frame_index = p.frame_index AND lc.formatted = '${strValue}'
       )`
-    case '!=':
-      return `NOT EXISTS (
-        SELECT 1 FROM large_communities lc
-        JOIN messages m ON lc.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND lc.formatted = '${strValue}'
-      )`
     case 'contains':
       return `EXISTS (
         SELECT 1 FROM large_communities lc
         JOIN messages m ON lc.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND lc.formatted LIKE '%${strValue}%'
-      )`
-    case 'not contains':
-      return `NOT EXISTS (
-        SELECT 1 FROM large_communities lc
-        JOIN messages m ON lc.message_id = m.id
-        WHERE m.frame_index = p.frame_index AND lc.formatted LIKE '%${strValue}%'
+        WHERE m.frame_index = p.frame_index AND lc.formatted LIKE '%${likeEscape(strValue)}%' ESCAPE '\\'
       )`
   }
 }
@@ -718,7 +615,7 @@ function largeCommunitySql(operator: MatchOperator, value: FilterValue): string 
  * `10.0.0.0/8` selects the routes inside it, and a bare address selects the
  * routes that cover it.
  */
-function prefixSql(table: 'nlri' | 'withdrawn', operator: MatchOperator, value: FilterValue): string {
+function prefixSql(table: 'nlri' | 'withdrawn', operator: PositiveOperator, value: FilterValue): string {
   const strValue = String(value)
   const query = parsePrefix(strValue)
 
@@ -732,7 +629,7 @@ function prefixSql(table: 'nlri' | 'withdrawn', operator: MatchOperator, value: 
     condition = `'${bitKey(query)}' LIKE t.prefix_bits || '%'`
   } else {
     // Not an address — a half-typed one, say. Fall back to searching the text.
-    condition = `t.prefix || '/' || t.prefix_length LIKE '%${escapeString(strValue)}%'`
+    condition = `t.prefix || '/' || t.prefix_length LIKE '%${likeEscape(escapeString(strValue))}%' ESCAPE '\\'`
   }
 
   const exists = `EXISTS (
@@ -746,10 +643,21 @@ function prefixSql(table: 'nlri' | 'withdrawn', operator: MatchOperator, value: 
     case '=':
     case 'contains':
       return exists
-    case '!=':
-    case 'not contains':
-      return `NOT ${exists}`
   }
+}
+
+/**
+ * A value made safe to sit between the `%`s of a `contains` pattern.
+ *
+ * `%` and `_` are wildcards to LIKE, and they turn up in what people search
+ * for: capability names are stored as "Route Refresh" but written
+ * `ROUTE_REFRESH` in a filter, and the `_` matched the space, so SQL found
+ * capabilities the in-memory evaluator — a plain substring search — did not.
+ * Escaped, the pattern means what `String.includes` means. Every use is
+ * followed by `ESCAPE '\'` in the SQL, since DuckDB has no default escape character.
+ */
+function likeEscape(str: string): string {
+  return str.replace(/[\\%_]/g, (c) => `\\${c}`)
 }
 
 /**

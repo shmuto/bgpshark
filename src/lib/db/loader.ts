@@ -841,6 +841,11 @@ function extractPathAttribute(
       case 'NEXT_HOP':
         data.next_hop = attr.parsed.address
         break
+      // `next_hop` means NEXT_HOP or MP_REACH's next hop — every other family,
+      // IPv6 and EVPN included, names its next hop here and only here.
+      case 'MP_REACH_NLRI':
+        data.next_hop = attr.parsed.nextHop
+        break
       case 'MULTI_EXIT_DISC':
         data.med_value = attr.parsed.value
         break

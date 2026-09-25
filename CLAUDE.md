@@ -46,7 +46,7 @@ Same for a one-off script:
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
 ```
 
-Expect **132 passing**. If more than a couple fail, something is actually wrong.
+Expect **138 passing**. If more than a couple fail, something is actually wrong.
 
 One test is flaky *in this container* and nowhere else:
 `navigation.e2e.ts:21` ("reloading keeps the screen you were on") waits on an
@@ -148,7 +148,7 @@ looking for pcaps to download.
 - **Filters have two backends.** A filter expression is parsed to an AST once,
   then either evaluated in memory (`src/lib/filter/parser.ts`) or compiled to SQL
   (`src/lib/db/filter-to-sql.ts`). A change to filter semantics has to land in
-  both, and the e2e suite only covers the SQL path when DuckDB is up.
+  both, and `filter-backends.e2e.ts` checks that they agree.
 - **`tsconfig.json` includes `src`, `tests` and `testlab`**, so `bun run build`
   typechecks scripts too.
 - **Dashboard alert rules are specified, not just implemented.** `design.md`
@@ -173,15 +173,19 @@ looking for pcaps to download.
   prefixes the base path, reads the PNG's dimensions so lazy loading does not
   shift the page under a `#anchor`, and turns the alt text into a caption.
 
-### Known inconsistency
+### The two filter backends agree, and a test holds them to it
 
-The two filter backends disagree on negation. In memory, `prefix != 10.0.0.0/8`
-only ever matches UPDATE packets — the evaluator loops over UPDATE messages and
-returns false when there are none (`parser.ts`, the `prefix` case) — while the
-SQL backend also returns OPENs and KEEPALIVEs, which carry no prefix and
-therefore do not match the negated condition. `prefix-matching.e2e.ts:34` pins
-the SQL answer; the in-memory answer is only visible when DuckDB is unavailable.
-Worth knowing before concluding a filter is broken.
+They used to disagree on negation: in memory `prefix != 10.0.0.0/8` meant "some
+UPDATE in this packet lacks it" and skipped OPENs and KEEPALIVEs, while SQL meant
+"no message has it". A negated comparison is now the complement of the positive
+one in both (`evaluateComparison` in `parser.ts`, `comparisonToSql` in
+`filter-to-sql.ts`), and the field helpers only ever see `=` and `contains`.
+
+`tests/e2e/filter-backends.e2e.ts` asks both backends a few hundred expressions
+over six captures and requires the same frames back. It found more than
+negation — SQL treated `_` in `contains` as a wildcard, searched `nlri` but not
+`withdrawn` for `prefix`, and ignored MP_REACH next hops. **When you add a filter
+field, add it to that test's list.** It is the only thing that compares the two.
 
 ## Git
 

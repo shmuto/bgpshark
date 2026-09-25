@@ -474,7 +474,21 @@ describe('port and frame SQL', () => {
     expect(sql('src_port = 179')).toBe('p.src_port = 179')
     expect(sql('dst_port = 50000')).toBe('p.dst_port = 50000')
     expect(sql('frame = 12')).toBe('p.frame_index = 12')
-    expect(sql('src_port != 179')).toBe('p.src_port != 179')
+    // Negation is the complement of equality, written as such so that a NULL
+    // column cannot drop a packet out of both answers.
+    expect(sql('src_port != 179')).toBe('NOT COALESCE((p.src_port = 179), FALSE)')
+  })
+
+  test('contains escapes the LIKE wildcards in what was typed', () => {
+    // `_` is a LIKE wildcard; unescaped, ROUTE_REFRESH matched "Route Refresh".
+    const compiled = sql('capability contains ROUTE_REFRESH')
+    expect(compiled).toContain("LIKE LOWER('%ROUTE\\_REFRESH%') ESCAPE '\\'")
+  })
+
+  test('prefix searches announced and withdrawn routes alike', () => {
+    const compiled = sql('prefix = 10.0.0.0/8')
+    expect(compiled).toContain('FROM nlri')
+    expect(compiled).toContain('FROM withdrawn')
   })
 
   test('ordered comparisons compile to the same comparison in SQL', () => {
@@ -697,9 +711,17 @@ describe('EVPN filters compile to SQL that asks the same question', () => {
     expect(sql).toContain('evpn_vni2 = 10100')
   })
 
-  test('the negated forms are NOT EXISTS, matching "no route says so"', () => {
-    expect(expressionToSql(parseQuery('mac != 00:0c:29:aa:bb:cc').expression)).toContain('NOT EXISTS')
-    expect(expressionToSql(parseQuery('rt != 65002:100').expression)).toContain('NOT EXISTS')
+  test('the negated forms are the complement of the positive ones, matching "no route says so"', () => {
+    for (const [negated, positive] of [
+      ['mac != 00:0c:29:aa:bb:cc', 'mac = 00:0c:29:aa:bb:cc'],
+      ['rt != 65002:100', 'rt = 65002:100'],
+    ]) {
+      const positiveSql = expressionToSql(parseQuery(positive).expression)
+      expect(positiveSql).toContain('EXISTS')
+      expect(expressionToSql(parseQuery(negated).expression)).toBe(
+        `NOT COALESCE((${positiveSql}), FALSE)`
+      )
+    }
   })
 
   test('ordered comparisons work on vni and evpn_type', () => {

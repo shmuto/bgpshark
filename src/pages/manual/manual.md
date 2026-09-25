@@ -608,6 +608,10 @@ Combine conditions with `and`, `or`, `not` and parentheses. The operators are
 `=`, `!=`, `contains` and `not contains`; numeric fields also take `<`, `<=`,
 `>`, `>=`.
 
+`!=` and `not contains` select every packet the positive form does not. So
+`asn != 65001` includes OPENs and KEEPALIVEs, which carry no AS_PATH at all. To
+ask about UPDATEs only, say so: `type = UPDATE and asn != 65001`.
+
 ### Fields
 
 | Field | Matches |

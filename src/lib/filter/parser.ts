@@ -671,6 +671,19 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
     return evaluateOrderedComparison(field, operator, value, packet)
   }
 
+  // A negated comparison is the complement of the positive one, and nothing
+  // else: `asn != 65001` selects every packet `asn = 65001` does not, OPENs and
+  // KEEPALIVEs included. Evaluating negation field by field instead read as
+  // "some UPDATE in this packet lacks it", which is a different question — it
+  // skipped every non-UPDATE packet and kept any packet holding one matching
+  // message and one not. The SQL compiler says the same thing the same way
+  // (`comparisonToSql`), and the list switching between their answers while a
+  // capture loads is what made the difference visible.
+  if (operator === '!=' || operator === 'not contains') {
+    const positive = operator === '!=' ? '=' : 'contains'
+    return !evaluateComparison({ ...expr, operator: positive }, packet)
+  }
+
   switch (field) {
     case 'type':
       // Match if any message matches the type
@@ -750,8 +763,7 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
     case 'next_hop':
       for (const msg of packet.messages) {
         if (msg.type !== 'UPDATE') continue
-        const nexthop = getNextHop(msg as BgpUpdateMessage)
-        if (nexthop && matchString(nexthop, operator, value)) return true
+        if (matchStringArray(getNextHops(msg as BgpUpdateMessage), operator, value)) return true
       }
       return false
 
@@ -969,18 +981,21 @@ function getLocalPref(msg: BgpUpdateMessage): number | null {
   return (attr.parsed as LocalPrefAttribute).value
 }
 
-function getNextHop(msg: BgpUpdateMessage): string | null {
-  // Check NEXT_HOP attribute first
-  const nhAttr = msg.pathAttributes.find((a) => a.parsed?.type === 'NEXT_HOP')
-  if (nhAttr?.parsed && nhAttr.parsed.type === 'NEXT_HOP') {
-    return (nhAttr.parsed as NextHopAttribute).address
+/**
+ * Every next hop an UPDATE names: the NEXT_HOP attribute's, and MP_REACH_NLRI's.
+ *
+ * Both, not the first one found. An UPDATE can carry IPv4 routes under NEXT_HOP
+ * and another family under MP_REACH at once, and `next_hop = x` asks whether
+ * either is x — which is also all the SQL side can ask, since each attribute is
+ * its own row there.
+ */
+function getNextHops(msg: BgpUpdateMessage): string[] {
+  const hops: string[] = []
+  for (const attr of msg.pathAttributes) {
+    if (attr.parsed?.type === 'NEXT_HOP') hops.push((attr.parsed as NextHopAttribute).address)
+    if (attr.parsed?.type === 'MP_REACH_NLRI') hops.push((attr.parsed as MpReachNlriAttribute).nextHop)
   }
-  // Check MP_REACH_NLRI for IPv6
-  const mpAttr = msg.pathAttributes.find((a) => a.parsed?.type === 'MP_REACH_NLRI')
-  if (mpAttr?.parsed && mpAttr.parsed.type === 'MP_REACH_NLRI') {
-    return (mpAttr.parsed as MpReachNlriAttribute).nextHop
-  }
-  return null
+  return hops
 }
 
 function getCommunities(msg: BgpUpdateMessage): string[] {
@@ -1461,8 +1476,7 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
         }
         const origin = getOrigin(updateMsg)
         if (origin) values.origin.add(origin)
-        const nexthop = getNextHop(updateMsg)
-        if (nexthop) values.next_hop.add(nexthop)
+        for (const nexthop of getNextHops(updateMsg)) values.next_hop.add(nexthop)
         for (const c of getCommunities(updateMsg)) {
           values.community.add(c)
         }
