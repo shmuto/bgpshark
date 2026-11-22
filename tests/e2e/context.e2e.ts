@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, loadSample, shownCount } from './helpers'
+import { applyFilter, goToDashboard, loadSample, shownCount } from './helpers'
 
 /**
  * The small things that made every packet and every screen change a fresh
@@ -60,5 +60,46 @@ test.describe('moving between screens', () => {
     await page.waitForURL('**/messages**')
     expect(new URL(page.url()).searchParams.get('filter')).toMatch(/^prefix = [\d.]+\/\d+$/)
     await expect(page.getByText(/^Packet #\d+$/)).toBeVisible()
+  })
+})
+
+test.describe('a withdrawal opened from elsewhere', () => {
+  // The links filter by the route's prefix; DuckDB used to read `prefix` as
+  // announcements only, so the withdrawal the link selected was filtered out.
+  test.beforeEach(async ({ page }) => {
+    await loadSample(page)
+  })
+
+  test('a Withdraw row in Route History opens that withdrawal', async ({ page }) => {
+    await page.getByRole('link', { name: 'Routes', exact: true }).click()
+    await page.getByText('1.1.1.1/32').first().click()
+    await expect(page.getByRole('heading', { name: 'Route History: 1.1.1.1/32' })).toBeVisible()
+    await page.getByRole('row').filter({ hasText: '🔴 Withdraw' }).first().click()
+
+    await page.waitForURL('**/messages**')
+    // Past the DuckDB debounce, so the answer is the database's.
+    await page.waitForTimeout(1200)
+    await expect(page.getByText(/^Packet #\d+$/)).toBeVisible()
+    await expect(page.getByText('Withdrawn').first()).toBeVisible()
+  })
+
+  test('a Route flapping alert opens the withdrawal it names', async ({ page }) => {
+    await goToDashboard(page)
+    await page
+      .getByRole('listitem')
+      .filter({ hasText: 'Route flapping: 1.1.1.1/32' })
+      .getByRole('button', { name: 'View →' })
+      .click()
+
+    await page.waitForURL('**/messages**')
+    await page.waitForTimeout(1200)
+    await expect(page.getByText(/^Packet #\d+$/)).toBeVisible()
+  })
+
+  test('nlri still means announcements only', async ({ page }) => {
+    await applyFilter(page, 'prefix = 1.1.1.1/32')
+    const both = await shownCount(page)
+    await applyFilter(page, 'nlri = 1.1.1.1/32')
+    expect(await shownCount(page)).toBeLessThan(both)
   })
 })
