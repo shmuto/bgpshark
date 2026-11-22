@@ -505,8 +505,12 @@ export function RoutesPage() {
         )}
 
         {/* Route History and the paths it arrived over */}
+        {/* min-w-0: a flex item defaults to min-width:auto, so without it the
+            Route History table's width propagated up and pushed this pane —
+            AS_PATH Analysis included — past the right edge of the window,
+            instead of scrolling inside the table's own container. */}
         {showDetail && (
-        <div className="w-full flex-1 flex flex-col min-h-0 gap-4 lg:ml-2">
+        <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 gap-4 lg:ml-2">
         <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 flex-1">
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <BackToList onClick={() => setSelectedPrefix(null)} />
@@ -595,20 +599,20 @@ export function RoutesPage() {
                       onClick={() => handleHistoryClick(event)}
                       className="cursor-pointer hover:bg-surface-sunken"
                     >
-                      <td className="px-3 py-2 font-mono text-muted">
+                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
                         {formatTimeOfDayUtc(event.timestamp)}
                       </td>
                       <td className="px-3 py-2 font-mono text-dim whitespace-nowrap">
                         {earlier ? formatDelta(event.timestamp.getTime() - earlier.timestamp.getTime()) : '-'}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 whitespace-nowrap">
                         {event.action === 'announce' ? (
                           <span className="text-ok">🟢 Announce</span>
                         ) : (
                           <span className="text-critical">🔴 Withdraw</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 font-mono text-muted">
+                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
                         {event.asPath ? formatAsPath(event.asPath) : '-'}
                       </td>
                       {showPathIdColumn && (
@@ -617,8 +621,8 @@ export function RoutesPage() {
                       {showRdColumn && (
                         <td className="px-3 py-2 font-mono text-muted">{event.rd ?? '-'}</td>
                       )}
-                      <td className="px-3 py-2 font-mono text-muted">{event.source}</td>
-                      <td className="px-3 py-2 font-mono text-muted">
+                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">{event.source}</td>
+                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
                         {event.nextHop || '-'}
                       </td>
                       {/* `-` means the attribute was not on the UPDATE, which is

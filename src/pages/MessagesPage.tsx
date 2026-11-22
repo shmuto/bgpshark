@@ -2,7 +2,8 @@ import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useFilter } from '../hooks/useFilter'
-import { BackToList, PacketList, PaneDivider, QueryInput, type DisplayPacket } from '../components/common'
+import { BackToList, ColumnPicker, PacketList, PaneDivider, QueryInput, type DisplayPacket } from '../components/common'
+import { usePacketColumns } from '../hooks/usePacketColumns'
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { useSplitPane } from '../hooks/useSplitPane'
 import { PacketDetail } from '../components/message/PacketDetail'
@@ -57,7 +58,11 @@ export function MessagesPage() {
     () => (new URLSearchParams(window.location.search).get('filter') ? 'advanced' : 'simple')
   )
   const [rules, setRules] = useState<FilterRule[]>([])
-  const split = useSplitPane('messages')
+  // The list gets the larger share by default: its default columns need about
+  // 720px to sit side by side, which a 50:50 split of a 1280–1440px window
+  // does not leave, while the detail pane reads fine at 40%.
+  const split = useSplitPane('messages', 60)
+  const packetColumns = usePacketColumns()
 
   // Too narrow for two columns: show the list, or the detail, but not halves of
   // both.
@@ -787,15 +792,24 @@ export function MessagesPage() {
               {parseErrors[0]?.message}
             </span>
           )}
-          {displayPackets.length > 0 && linkType !== null && (
-            <button
-              onClick={exportPcap}
-              title="Save the packets listed here as a pcap file"
-              className="ml-auto text-accent hover:text-accent-hover hover:underline"
-            >
-              ⬇ Export {displayPackets.length} packets as pcap
-            </button>
-          )}
+          <div className="ml-auto flex items-center gap-3">
+            {displayPackets.length > 0 && linkType !== null && (
+              <button
+                onClick={exportPcap}
+                title="Save the packets listed here as a pcap file"
+                className="text-accent hover:text-accent-hover hover:underline"
+              >
+                ⬇ Export {displayPackets.length} packets as pcap
+              </button>
+            )}
+            {/* Out here rather than in the table's header row, which scrolled
+                it out of reach whenever the table was wider than its pane. */}
+            <ColumnPicker
+              visibleColumns={packetColumns.visibleColumns}
+              onToggle={packetColumns.toggleColumn}
+              onReset={packetColumns.resetColumns}
+            />
+          </div>
         </div>
       </div>
 
@@ -818,6 +832,7 @@ export function MessagesPage() {
               selectedIndex={selectedPacketIndex}
               onSelect={selectPacket}
               highlightedIndex={highlightedIndex}
+              visibleColumns={packetColumns.visibleColumns}
             />
           </div>
         </div>
@@ -835,7 +850,7 @@ export function MessagesPage() {
 
         {/* Packet Detail */}
         {showDetail && (
-        <div className="w-full flex-1 flex flex-col min-h-0 bg-surface">
+        <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 bg-surface">
           <div className="px-4 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between gap-2 shrink-0">
             <BackToList onClick={() => selectPacket(null)} />
             <span className="text-sm font-semibold text-strong truncate">

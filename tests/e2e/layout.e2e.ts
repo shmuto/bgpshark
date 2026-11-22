@@ -44,8 +44,9 @@ test.describe('resizable panes', () => {
     expect(await packetListWidth(page)).toBeLessThan(before)
 
     await divider.dblclick()
-    const half = await page.evaluate(() => Math.round(window.innerWidth / 2))
-    expect(Math.abs((await packetListWidth(page)) - half)).toBeLessThan(40)
+    // The packet list's default share is 60%, so its default columns fit.
+    const initial = await page.evaluate(() => Math.round(window.innerWidth * 0.6))
+    expect(Math.abs((await packetListWidth(page)) - initial)).toBeLessThan(40)
   })
 
   test('there is no divider when only one pane is on screen', async ({ page }) => {
@@ -126,4 +127,36 @@ test.describe('crossing the breakpoint', () => {
     await expect(page.getByRole('heading', { name: 'Prefix Statistics' })).toBeVisible()
     await expect(page.getByRole('heading', { name: /Route History/ })).toBeVisible()
   })
+})
+
+test.describe('standard laptop widths', () => {
+  for (const width of [1440, 1280]) {
+    test(`at ${width}px the packet list fits its pane and Columns stays reachable`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 })
+      await loadSample(page)
+
+      const { table, pane } = await page.evaluate(() => {
+        const grid = document.querySelector('table[role="grid"]') as HTMLElement
+        return { table: grid.scrollWidth, pane: grid.parentElement!.clientWidth }
+      })
+      expect(table).toBeLessThanOrEqual(pane)
+
+      const columns = page.getByRole('button', { name: 'Configure columns' })
+      await expect(columns).toBeInViewport()
+      await columns.click()
+      await expect(page.getByText('Visible Columns')).toBeVisible()
+    })
+
+    test(`at ${width}px the route history stays inside the window`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 })
+      await loadSample(page)
+      await page.getByRole('link', { name: 'Routes', exact: true }).click()
+      await page.locator('tbody tr').first().click()
+      await expect(page.getByRole('heading', { name: 'AS_PATH Analysis' })).toBeVisible()
+
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+      expect(overflow).toBeLessThanOrEqual(0)
+      await expect(page.getByText(/distinct paths?/)).toBeInViewport()
+    })
+  }
 })

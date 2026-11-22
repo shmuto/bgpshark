@@ -7,6 +7,7 @@ import {
 } from '../../lib/packet-columns'
 import type { GenericPacket } from '../../lib/pcap'
 import { formatDelta } from '../../lib/format-time'
+import type { PacketColumnId } from '../../hooks/usePacketColumns'
 
 /**
  * A row in the packet list: either a packet the BGP parser understood, or a
@@ -16,10 +17,7 @@ export type DisplayPacket =
   | { kind: 'bgp'; packet: BgpPacket; timestamp: Date }
   | { kind: 'generic'; packet: GenericPacket; timestamp: Date }
 
-// Column definitions
-type ColumnId = 'index' | 'time' | 'delta' | 'absTime' | 'src' | 'dst' | 'srcPort' | 'dstPort' | 'protocol' | 'type' | 'info' | 'prefix' | 'asPath' | 'nlriCount' | 'withdrawnCount' | 'length'
-
-const STORAGE_KEY = 'bgpshark-visible-columns'
+type ColumnId = PacketColumnId
 
 interface ColumnDef {
   id: ColumnId
@@ -141,7 +139,7 @@ const ALL_COLUMNS: ColumnDef[] = [
         if (messages.length === 1) {
           const typeClass = messageTypeColors[messages[0].type] ?? 'bg-surface-sunken text-muted'
           return (
-            <span className={`px-2 py-0.5 rounded text-xs font-medium ${typeClass}`}>
+            <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${typeClass}`}>
               {messages[0].type}
             </span>
           )
@@ -150,7 +148,7 @@ const ALL_COLUMNS: ColumnDef[] = [
         const primaryType = messages[0].type
         const typeClass = messageTypeColors[primaryType] ?? 'bg-surface-sunken text-muted'
         return (
-          <span className={`px-2 py-0.5 rounded text-xs font-medium ${typeClass}`}>
+          <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${typeClass}`}>
             {primaryType} +{messages.length - 1}
           </span>
         )
@@ -277,15 +275,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
 ]
 
-/**
- * `prefix` is on by default because the question people open a BGP capture
- * with — which routes moved — otherwise needs the column picker found first
- * and then a click into every UPDATE. The rest of the defaults are the frame
- * identity columns, and together they still leave the flexible columns room at
- * 1440px: only `index` (w-12), `time` (w-20) and `type` (w-28) claim a fixed
- * width, so `src`, `dst`, `info` and `prefix` share what is left.
- */
-const DEFAULT_COLUMNS: ColumnId[] = ['index', 'time', 'src', 'dst', 'type', 'info', 'prefix']
 
 /**
  * Withdrawn prefixes are struck through as well as tinted red: the tint alone
@@ -311,6 +300,8 @@ interface PacketListProps {
   onSelect: (index: number) => void
   baseTimestamp?: Date
   highlightedIndex?: number | null
+  /** From usePacketColumns; the picker that changes it lives with the caller. */
+  visibleColumns: ColumnId[]
 }
 
 // Message-type badges use a tinted background derived from the message colour
@@ -374,37 +365,18 @@ function getMessageSummary(message: BgpMessage): string {
   }
 }
 
-/**
- * A saved set is dropped only for ids that no longer exist, never for ids it
- * is missing: adding a column to `ALL_COLUMNS` (or to `DEFAULT_COLUMNS`) must
- * leave everyone who has already arranged their columns exactly as they were.
- */
-function loadSavedColumns(): ColumnId[] {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      const parsed = JSON.parse(saved) as string[]
-      const validColumns = parsed.filter((id): id is ColumnId =>
-        ALL_COLUMNS.some((col) => col.id === id)
-      )
-      if (validColumns.length > 0) {
-        return validColumns
-      }
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return DEFAULT_COLUMNS
-}
-
-export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, highlightedIndex }: PacketListProps) {
+export function PacketList({
+  packets,
+  selectedIndex,
+  onSelect,
+  baseTimestamp,
+  highlightedIndex,
+  visibleColumns,
+}: PacketListProps) {
   const listRef = useRef<HTMLDivElement>(null)
   // The scroll container (listRef) and the grid (gridRef) are separate elements:
   // scrolling happens on the div, focus and grid semantics live on the table.
   const gridRef = useRef<HTMLTableElement>(null)
-  const columnPickerRef = useRef<HTMLDivElement>(null)
-  const [visibleColumns, setVisibleColumns] = useState<ColumnId[]>(loadSavedColumns)
-  const [showColumnPicker, setShowColumnPicker] = useState(false)
   const [rowHeight, setRowHeight] = useState(ESTIMATED_ROW_HEIGHT)
   const [headerHeight, setHeaderHeight] = useState(ESTIMATED_HEADER_HEIGHT)
   const [scrollTop, setScrollTop] = useState(0)
@@ -412,28 +384,9 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
   const base = baseTimestamp ?? packets[0]?.timestamp
   const totalCount = packets.length
 
-  // Save columns to localStorage when they change
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleColumns))
-  }, [visibleColumns])
-
   const columns = visibleColumns
     .map((id) => ALL_COLUMNS.find((c) => c.id === id))
     .filter((c): c is ColumnDef => c !== undefined)
-
-  const toggleColumn = useCallback((columnId: ColumnId) => {
-    setVisibleColumns((prev) => {
-      if (prev.includes(columnId)) {
-        // Don't allow removing all columns
-        if (prev.length <= 1) return prev
-        return prev.filter((id) => id !== columnId)
-      } else {
-        // Add in the order defined in ALL_COLUMNS
-        const newColumns = [...prev, columnId]
-        return ALL_COLUMNS.filter((c) => newColumns.includes(c.id)).map((c) => c.id)
-      }
-    })
-  }, [])
 
   // Track the scrollable viewport's height synchronously (before paint) so the
   // very first windowed render already covers the visible area, then keep it
@@ -512,34 +465,10 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
         e.preventDefault()
         const prev = Math.max(current - 1, 0)
         onSelect(prev)
-      } else if (e.key === 'Escape') {
-        e.preventDefault()
-        setShowColumnPicker(false)
       }
     },
     [packets.length, selectedIndex, onSelect]
   )
-
-  // Close column picker when clicking outside
-  useEffect(() => {
-    if (!showColumnPicker) return
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (columnPickerRef.current && !columnPickerRef.current.contains(e.target as Node)) {
-        setShowColumnPicker(false)
-      }
-    }
-
-    // Add listener with a small delay to avoid closing immediately on the same click that opened it
-    const timer = setTimeout(() => {
-      document.addEventListener('click', handleClickOutside)
-    }, 0)
-
-    return () => {
-      clearTimeout(timer)
-      document.removeEventListener('click', handleClickOutside)
-    }
-  }, [showColumnPicker])
 
   // Keep the selected row scrolled into view, whether it moved via keyboard
   // navigation or an external prop change (e.g. jumping to a packet from
@@ -582,7 +511,7 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
   return (
     <div
       ref={listRef}
-      className="h-full overflow-auto relative focus-within:ring-2 focus-within:ring-accent focus-within:ring-inset"
+      className="h-full overflow-auto relative"
       onScroll={handleScroll}
     >
       {/* The grid role belongs on the table itself: a role="grid" wrapper around a
@@ -590,11 +519,14 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
           aria-activedescendant would refer to nothing. The div is scroll-only. */}
       <table
         ref={gridRef}
-        className="w-full text-sm focus:outline-none"
+        // Keyboard focus is marked, mouse focus is not: a click keeps the grid
+        // focused for arrow keys, and a heavy ring round the whole pane on
+        // every click was noise. The selected row already says where you are.
+        className="w-full text-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent/60"
         tabIndex={0}
         role="grid"
         aria-rowcount={totalCount}
-        aria-colcount={columns.length + 1}
+        aria-colcount={columns.length}
         aria-multiselectable="false"
         aria-activedescendant={selectedIndex !== null ? `packet-row-${selectedIndex}` : undefined}
         onKeyDown={handleKeyDown}
@@ -611,33 +543,12 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
                 {col.label}
               </th>
             ))}
-            {/* The gear carries a word: which columns exist is the whole
-                answer to "where are the prefixes / the AS path", and an
-                unlabelled icon at the end of a header row does not offer it. */}
-            <th role="columnheader" className="px-2 py-2 w-24">
-              <button
-                onClick={() => setShowColumnPicker(!showColumnPicker)}
-                className="flex items-center gap-1 text-dim hover:text-muted px-1 py-0.5 rounded hover:bg-surface-sunken"
-                title="Configure columns"
-                aria-label="Configure columns"
-              >
-                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
-                  />
-                </svg>
-                <span className="text-xs font-medium">Columns</span>
-              </button>
-            </th>
           </tr>
         </thead>
         <tbody role="rowgroup">
           {topSpacerHeight > 0 && (
             <tr role="presentation" aria-hidden="true" style={{ height: topSpacerHeight }}>
-              <td colSpan={columns.length + 1} style={{ padding: 0, border: 0 }} />
+              <td colSpan={columns.length} style={{ padding: 0, border: 0 }} />
             </tr>
           )}
           {packets.slice(startIndex, endIndex).map((dp, i) => {
@@ -667,51 +578,17 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
                     {col.getValue(dp, index, base, packets[index - 1]?.timestamp)}
                   </td>
                 ))}
-                <td role="gridcell" className="px-2 py-1.5 w-24" />
               </tr>
             )
           })}
           {bottomSpacerHeight > 0 && (
             <tr role="presentation" aria-hidden="true" style={{ height: bottomSpacerHeight }}>
-              <td colSpan={columns.length + 1} style={{ padding: 0, border: 0 }} />
+              <td colSpan={columns.length} style={{ padding: 0, border: 0 }} />
             </tr>
           )}
         </tbody>
       </table>
 
-      {/* Column Picker Dropdown */}
-      {showColumnPicker && (
-        <div
-          ref={columnPickerRef}
-          className="absolute top-8 right-2 bg-surface-raised border border-hair rounded-lg shadow-lg p-2 z-20 min-w-48"
-        >
-          <div className="text-xs font-medium text-dim uppercase tracking-wide mb-2 px-2">
-            Visible Columns
-          </div>
-          {ALL_COLUMNS.map((col) => (
-            <label
-              key={col.id}
-              className="flex items-center gap-2 px-2 py-1.5 hover:bg-surface-sunken rounded cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                checked={visibleColumns.includes(col.id)}
-                onChange={() => toggleColumn(col.id)}
-                className="rounded border-hair-strong text-accent focus:ring-accent"
-              />
-              <span className="text-sm text-body">{col.label}</span>
-            </label>
-          ))}
-          <div className="border-t border-hair mt-2 pt-2 px-2">
-            <button
-              onClick={() => setVisibleColumns(DEFAULT_COLUMNS)}
-              className="text-xs text-accent hover:text-accent-hover"
-            >
-              Reset to default
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
