@@ -1,3 +1,4 @@
+import { useI18n } from '../../i18n'
 import type { TimelineData } from './types'
 
 interface MessageTimelineProps {
@@ -11,15 +12,16 @@ const BASELINE_Y = 140
 const BAR_AREA_HEIGHT = 120
 
 export function MessageTimeline({ data, onSelectNotification }: MessageTimelineProps) {
+  const { t } = useI18n()
   const { buckets, notifications, start, end, maxUpdateCount } = data
 
   if (buckets.length === 0 || !start || !end) {
     return (
       <div className="bg-surface rounded-lg shadow-sm border border-hair">
         <div className="px-4 py-3 border-b border-hair flex items-center gap-2">
-          <h2 className="font-semibold text-strong">Timeline</h2>
+          <h2 className="font-semibold text-strong">{t.dashboard.timelineHeading}</h2>
         </div>
-        <div className="text-center text-dim text-sm py-8">No timeline data</div>
+        <div className="text-center text-dim text-sm py-8">{t.dashboard.noTimelineData}</div>
       </div>
     )
   }
@@ -30,7 +32,7 @@ export function MessageTimeline({ data, onSelectNotification }: MessageTimelineP
   return (
     <div className="bg-surface rounded-lg shadow-sm border border-hair">
       <div className="px-4 py-3 border-b border-hair flex items-center gap-2">
-        <h2 className="font-semibold text-strong">Timeline</h2>
+        <h2 className="font-semibold text-strong">{t.dashboard.timelineHeading}</h2>
       </div>
       <div className="p-4">
         <svg
@@ -38,7 +40,7 @@ export function MessageTimeline({ data, onSelectNotification }: MessageTimelineP
           className="w-full h-40"
           preserveAspectRatio="none"
           role="img"
-          aria-label="BGP message volume over the capture duration"
+          aria-label={t.dashboard.timelineAria}
         >
           <line x1={0} y1={BASELINE_Y} x2={VIEW_WIDTH} y2={BASELINE_Y} stroke="rgb(var(--hair))" strokeWidth={1} />
 
@@ -71,7 +73,7 @@ export function MessageTimeline({ data, onSelectNotification }: MessageTimelineP
               >
                 <line x1={cx} y1={26} x2={cx} y2={BASELINE_Y} stroke="rgb(var(--critical))" strokeWidth={1} strokeDasharray="4 3" opacity={0.5} />
                 <circle cx={cx} cy={16} r={6} fill="rgb(var(--critical))">
-                  <title>{`NOTIFICATION at ${formatElapsed(n.timestamp.getTime() - start.getTime())}`}</title>
+                  <title>{t.dashboard.timelineNotificationAt(formatElapsed(n.timestamp.getTime() - start.getTime()))}</title>
                 </circle>
               </g>
             )

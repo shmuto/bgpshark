@@ -1,10 +1,12 @@
 import { useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useI18n } from '../i18n'
 import { FileDropzone } from '../components'
 
 export function FileUploadPage() {
   const { status, loadFile, error, reset, progress } = useApp()
+  const { t } = useI18n()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -29,13 +31,13 @@ export function FileUploadPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </div>
-          <div className="text-critical text-lg font-medium mb-2">Error</div>
+          <div className="text-critical text-lg font-medium mb-2">{t.common.error}</div>
           <div className="text-muted mb-4 max-w-md">{error}</div>
           <button
             onClick={reset}
             className="px-4 py-2 bg-accent text-accent-fg rounded hover:bg-accent-hover"
           >
-            Try Again
+            {t.common.tryAgain}
           </button>
         </div>
       ) : (
@@ -49,30 +51,24 @@ export function FileUploadPage() {
           {/* Not everyone arrives with a capture. Reproducing a session failure
               normally means a lab; the builder writes the file instead. */}
           <p className="mt-6 text-sm text-muted">
-            No capture to hand?{' '}
+            {t.upload.noCapturePrefix}{' '}
             <Link to="/builder" className="text-accent underline-offset-2 hover:underline">
-              Build one
+              {t.upload.buildOne}
             </Link>{' '}
-            from a described BGP session.
+            {t.upload.noCaptureSuffix}
           </p>
 
           {/* Features section */}
           <div className="mt-12 max-w-2xl w-full">
             <div className="border-t border-hair pt-8">
-              <h2 className="text-sm font-semibold text-dim uppercase tracking-wide mb-4">Features</h2>
+              <h2 className="text-sm font-semibold text-dim uppercase tracking-wide mb-4">
+                {t.upload.featuresHeading}
+              </h2>
               <ul className="grid gap-3 text-sm text-muted">
-                <FeatureItem>
-                  Analyze BGP OPEN, UPDATE, NOTIFICATION, KEEPALIVE messages
-                </FeatureItem>
-                <FeatureItem>
-                  Troubleshoot BGP session issues with detailed error hints
-                </FeatureItem>
-                <FeatureItem>
-                  Filter and search with SQL-powered queries
-                </FeatureItem>
-                <FeatureItem>
-                  100% client-side - your data never leaves your browser
-                </FeatureItem>
+                <FeatureItem>{t.upload.feature1}</FeatureItem>
+                <FeatureItem>{t.upload.feature2}</FeatureItem>
+                <FeatureItem>{t.upload.feature3}</FeatureItem>
+                <FeatureItem>{t.upload.feature4}</FeatureItem>
               </ul>
 
               {/* The one place every visitor passes through, which makes it the
@@ -80,12 +76,12 @@ export function FileUploadPage() {
                   so the fonts and libraries are redistributed by this app and
                   their notices travel with it. */}
               <p className="mt-8 text-xs text-dim">
-                Built on open source fonts and libraries —{' '}
+                {t.upload.ossPrefix}{' '}
                 <a
                   href={`${import.meta.env.BASE_URL}THIRD-PARTY-LICENSES.txt`}
                   className="underline underline-offset-2 hover:text-muted"
                 >
-                  licenses
+                  {t.upload.ossLink}
                 </a>
                 .
               </p>

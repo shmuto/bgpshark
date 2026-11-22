@@ -23,6 +23,8 @@
  * bar never runs backwards and does not race to a third and then crawl.
  */
 
+import { getMessages, type Locale } from '../i18n/locale'
+
 export type LoadStage = 'reading' | 'parsing' | 'decoding' | 'database' | 'saving'
 
 export interface LoadProgress {
@@ -31,6 +33,8 @@ export interface LoadProgress {
   fraction: number
   /** What is happening, in words, e.g. "Loading into DuckDB — 420,000 of 1,600,000 rows". */
   label: string
+  done?: number
+  total?: number
 }
 
 /** Where each stage's slice of the bar starts and ends. */
@@ -42,12 +46,30 @@ const STAGE_SPAN: Record<LoadStage, [number, number]> = {
   saving: [0.98, 1],
 }
 
-const STAGE_LABEL: Record<LoadStage, string> = {
-  reading: 'Reading file',
-  parsing: 'Parsing packets',
-  decoding: 'Decoding BGP messages',
-  database: 'Loading into DuckDB',
-  saving: 'Saving for next visit',
+export function formatLoadProgressLabel(
+  stage: LoadStage,
+  done?: number,
+  total?: number,
+  locale: Locale = 'en'
+): string {
+  const t = getMessages(locale).progress
+  const stageLabel: Record<LoadStage, string> = {
+    reading: t.reading,
+    parsing: t.parsing,
+    decoding: t.decoding,
+    database: t.database,
+    saving: t.saving,
+  }
+  // Before the database can count rows it has to empty its tables and flatten
+  // every packet into them, which on a large capture is a couple of seconds
+  // with nothing to count. Saying so beats a label that looks frozen.
+  const counted =
+    total && total > 0
+      ? t.countedRows(done ?? 0, total)
+      : stage === 'database'
+        ? t.preparingRows
+        : ''
+  return `${stageLabel[stage]}${counted}`
 }
 
 /**
@@ -57,21 +79,19 @@ const STAGE_LABEL: Record<LoadStage, string> = {
  * are left out when the stage cannot measure itself, which places the bar at
  * the start of the stage's slice.
  */
-export function loadProgress(stage: LoadStage, done?: number, total?: number): LoadProgress {
+export function loadProgress(
+  stage: LoadStage,
+  done?: number,
+  total?: number,
+  locale: Locale = 'en'
+): LoadProgress {
   const [start, end] = STAGE_SPAN[stage]
   const within = total && total > 0 ? Math.min(1, Math.max(0, (done ?? 0) / total)) : 0
-  // Before the database can count rows it has to empty its tables and flatten
-  // every packet into them, which on a large capture is a couple of seconds
-  // with nothing to count. Saying so beats a label that looks frozen.
-  const counted =
-    total && total > 0
-      ? ` — ${(done ?? 0).toLocaleString('en-US')} of ${total.toLocaleString('en-US')} rows`
-      : stage === 'database'
-        ? ' — preparing rows'
-        : ''
   return {
     stage,
     fraction: start + (end - start) * within,
-    label: `${STAGE_LABEL[stage]}${counted}`,
+    label: formatLoadProgressLabel(stage, done, total, locale),
+    done,
+    total,
   }
 }

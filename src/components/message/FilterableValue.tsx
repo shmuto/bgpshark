@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useFilterActions } from '../../context/filter-actions'
 import { formatCondition } from '../../lib/filter/compose'
+import { useI18n } from '../../i18n'
 
 interface FilterableValueProps {
   field: string
@@ -23,6 +24,7 @@ interface FilterableValueProps {
  */
 export function FilterableValue({ field, value, children, align = 'right' }: FilterableValueProps) {
   const actions = useFilterActions()
+  const { t } = useI18n()
   if (!actions) return <>{children ?? value}</>
 
   const condition = formatCondition(field, '=', value)
@@ -44,8 +46,8 @@ export function FilterableValue({ field, value, children, align = 'right' }: Fil
         <button
           type="button"
           onClick={act('and')}
-          title={`Add to filter: and ${condition}`}
-          aria-label={`Add to filter: ${condition}`}
+          title={t.packetDetail.addToFilterTitle(condition)}
+          aria-label={t.packetDetail.addToFilterAria(condition)}
           // The glyph is CSS content so it is not part of the value's text:
           // copying "10.1.0.0/24" must not pick up "＋=".
           className="px-1 leading-4 text-[10px] font-sans rounded bg-surface-raised border border-hair text-muted hover:text-accent hover:border-accent before:content-['＋']"
@@ -53,8 +55,8 @@ export function FilterableValue({ field, value, children, align = 'right' }: Fil
         <button
           type="button"
           onClick={act('replace')}
-          title={`Filter on: ${condition}`}
-          aria-label={`Filter on: ${condition}`}
+          title={t.packetDetail.filterOnTitle(condition)}
+          aria-label={t.packetDetail.filterOnAria(condition)}
           className="px-1 leading-4 text-[10px] font-sans rounded bg-surface-raised border border-hair text-muted hover:text-accent hover:border-accent before:content-['=']"
         />
       </span>

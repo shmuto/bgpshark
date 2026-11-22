@@ -47,6 +47,9 @@ export default defineConfig({
   },
   use: {
     baseURL,
+    // Pin English by default so existing specs stay deterministic on Japanese
+    // host OSes; tests/e2e/i18n.e2e.ts overrides this to 'ja-JP' explicitly.
+    locale: 'en-US',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },

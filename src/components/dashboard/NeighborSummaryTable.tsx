@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import { useI18n } from '../../i18n'
 import type { NeighborRow } from './types'
 
 interface NeighborSummaryTableProps {
@@ -6,6 +7,7 @@ interface NeighborSummaryTableProps {
 }
 
 export function NeighborSummaryTable({ rows }: NeighborSummaryTableProps) {
+  const { t } = useI18n()
   const navigate = useNavigate()
 
   const handleRowClick = (row: NeighborRow) => {
@@ -16,28 +18,30 @@ export function NeighborSummaryTable({ rows }: NeighborSummaryTableProps) {
     <div className="bg-surface rounded-lg shadow-sm border border-hair">
       <div className="px-4 py-3 border-b border-hair flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h2 className="font-semibold text-strong">BGP Neighbors</h2>
+          <h2 className="font-semibold text-strong">{t.dashboard.neighborsHeading}</h2>
         </div>
         <button
           onClick={() => navigate('/neighbors')}
           className="text-xs text-accent hover:text-accent-hover"
         >
-          View All Neighbors →
+          {t.dashboard.viewAllNeighbors}
         </button>
       </div>
       {rows.length === 0 ? (
-        <div className="px-4 py-6 text-center text-dim text-sm">No neighbor pairs observed</div>
+        <div className="px-4 py-6 text-center text-dim text-sm">{t.dashboard.noNeighborPairs}</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-surface-sunken">
               <tr className="text-left text-muted">
-                <th className="px-4 py-2 font-medium">Neighbor Pair</th>
-                <th className="px-3 py-2 font-medium text-right" title="BGP messages exchanged by the pair">Msgs</th>
+                <th className="px-4 py-2 font-medium">{t.dashboard.colNeighborPair}</th>
+                <th className="px-3 py-2 font-medium text-right" title={t.dashboard.colMsgsTitle}>
+                  {t.dashboard.colMsgs}
+                </th>
                 <th className="px-3 py-2 font-medium text-right">OPEN</th>
                 <th className="px-3 py-2 font-medium text-right">UPD</th>
                 <th className="px-3 py-2 font-medium text-right">NOTIF</th>
-                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">{t.dashboard.colStatus}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-hair">
@@ -54,11 +58,11 @@ export function NeighborSummaryTable({ rows }: NeighborSummaryTableProps) {
                   <td className="px-3 py-2 text-right text-muted">{row.counts.NOTIFICATION}</td>
                   <td className="px-4 py-2 whitespace-nowrap">
                     {row.neverEstablished ? (
-                      <span className="text-critical">⚠ Never up</span>
+                      <span className="text-critical">{t.dashboard.statusNeverUp}</span>
                     ) : row.hasNotification ? (
-                      <span className="text-critical">⚠ Alert</span>
+                      <span className="text-critical">{t.dashboard.statusAlert}</span>
                     ) : (
-                      <span className="text-ok">✓ OK</span>
+                      <span className="text-ok">{t.dashboard.statusOk}</span>
                     )}
                   </td>
                 </tr>

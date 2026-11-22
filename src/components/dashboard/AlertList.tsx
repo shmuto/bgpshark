@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { DashboardAlert } from './types'
 import { formatTimeOfDayUtc } from '../../lib/format-time'
+import { useI18n } from '../../i18n'
 
 interface AlertListProps {
   alerts: DashboardAlert[]
@@ -18,6 +19,7 @@ interface AlertListProps {
 const COLLAPSED_ALERT_COUNT = 5
 
 export function AlertList({ alerts }: AlertListProps) {
+  const { t } = useI18n()
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState(false)
   const hidden = Math.max(0, alerts.length - COLLAPSED_ALERT_COUNT)
@@ -37,12 +39,12 @@ export function AlertList({ alerts }: AlertListProps) {
   return (
     <div className="bg-surface rounded-lg shadow-sm border border-hair">
       <div className="px-4 py-3 border-b border-hair flex items-center gap-2">
-        <h2 className="font-semibold text-strong">Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}</h2>
+        <h2 className="font-semibold text-strong">{t.dashboard.alertsHeading(alerts.length)}</h2>
       </div>
       {alerts.length === 0 ? (
         <div className="px-4 py-6 text-center text-ok text-sm flex items-center justify-center gap-2">
           <span>✓</span>
-          <span>No issues detected — every session looks healthy.</span>
+          <span>{t.dashboard.noIssues}</span>
         </div>
       ) : (
         <ul className="divide-y divide-hair">
@@ -71,7 +73,7 @@ export function AlertList({ alerts }: AlertListProps) {
                 onClick={() => handleView(alert)}
                 className="shrink-0 text-xs text-accent hover:text-accent-hover whitespace-nowrap"
               >
-                View →
+                {t.dashboard.viewAlert}
               </button>
             </li>
           ))}
@@ -83,7 +85,7 @@ export function AlertList({ alerts }: AlertListProps) {
                 aria-expanded={expanded}
                 className="text-xs text-accent hover:text-accent-hover"
               >
-                {expanded ? 'Show fewer' : `Show ${hidden} more alert${hidden === 1 ? '' : 's'}`}
+                {expanded ? t.dashboard.showFewer : t.dashboard.showMoreAlerts(hidden)}
               </button>
             </li>
           )}

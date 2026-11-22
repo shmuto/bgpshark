@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { BgpOpenMessage } from '../../lib/bgp/types'
 import { addPathDirections, type AddPathDirection } from '../../lib/bgp/session'
 import { getAfiName, getSafiName } from '../../lib/bgp/constants'
+import { useI18n, type Messages } from '../../i18n'
 
 export interface CapabilityDiffProps {
   localLabel: string
@@ -33,14 +34,16 @@ const AS_TRANS = 23456
  * for "why won't this session come up" sees the differences first.
  */
 export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen }: CapabilityDiffProps) {
-  const rows = useMemo(() => buildCapabilityRows(localOpen, remoteOpen), [localOpen, remoteOpen])
+  const { t } = useI18n()
+  const ct = t.capabilityDiff
+  const rows = useMemo(() => buildCapabilityRows(localOpen, remoteOpen, t), [localOpen, remoteOpen, t])
   const mismatchRows = rows.filter((row) => row.presence !== 'both')
   const matchedRows = rows.filter((row) => row.presence === 'both')
 
   if (!localOpen && !remoteOpen) {
     return (
       <div className="text-sm text-dim text-center py-6">
-        No OPEN message captured for either side of this session
+        {ct.noOpenEither}
       </div>
     )
   }
@@ -51,14 +54,14 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
         <div className="flex items-center gap-2 rounded-lg bg-warning-subtle border border-hair px-3 py-2 text-xs text-warning">
           <span aria-hidden="true">⚠</span>
           <span>
-            No OPEN captured from {!localOpen ? localLabel : remoteLabel} — this is a one-sided comparison.
+            {ct.oneSidedWarning(!localOpen ? localLabel : remoteLabel)}
           </span>
         </div>
       )}
 
       <section>
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">
-          Session Fields
+          {ct.sessionFields}
         </h4>
         <SessionFieldsTable
           localLabel={localLabel}
@@ -71,7 +74,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
       <section>
         <div className="flex items-center justify-between mb-2">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Capability Mismatches {mismatchRows.length > 0 ? `(${mismatchRows.length})` : ''}
+            {ct.mismatches(mismatchRows.length)}
           </h4>
           <Legend />
         </div>
@@ -79,7 +82,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
           <CapabilityTable rows={mismatchRows} localLabel={localLabel} remoteLabel={remoteLabel} />
         ) : (
           <div className="text-xs text-muted rounded-lg border border-hair bg-ok-subtle px-3 py-2">
-            ✓ No capability mismatches detected
+            {ct.noMismatches}
           </div>
         )}
       </section>
@@ -96,7 +99,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
       {matchedRows.length > 0 && (
         <details>
           <summary className="text-xs font-semibold uppercase tracking-wide text-muted cursor-pointer select-none">
-            Matching Capabilities ({matchedRows.length})
+            {ct.matchingCapabilities(matchedRows.length)}
           </summary>
           <div className="mt-2">
             <CapabilityTable rows={matchedRows} localLabel={localLabel} remoteLabel={remoteLabel} />
@@ -133,6 +136,8 @@ function AddPathOutcome({
   localOpen: BgpOpenMessage
   remoteOpen: BgpOpenMessage
 }) {
+  const { t } = useI18n()
+  const ct = t.capabilityDiff
   const outward = useMemo(() => addPathDirections(localOpen, remoteOpen), [localOpen, remoteOpen])
   const inward = useMemo(() => addPathDirections(remoteOpen, localOpen), [localOpen, remoteOpen])
 
@@ -141,14 +146,14 @@ function AddPathOutcome({
   return (
     <section>
       <h4 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">
-        ADD-PATH Result
+        {ct.addPathResult}
       </h4>
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-muted">
-            <th className="py-1 pr-3 font-medium">Address Family</th>
-            <th className="py-1 pr-3 font-medium">Direction</th>
-            <th className="py-1 font-medium">Path Identifiers</th>
+            <th className="py-1 pr-3 font-medium">{ct.colAddressFamily}</th>
+            <th className="py-1 pr-3 font-medium">{ct.colDirection}</th>
+            <th className="py-1 font-medium">{ct.colPathIdentifiers}</th>
           </tr>
         </thead>
         <tbody>
@@ -183,16 +188,18 @@ function AddPathRow({
   from: string
   to: string
 }) {
+  const { t } = useI18n()
+  const ct = t.capabilityDiff
   // Which half is missing is the whole diagnosis, so the reason names it rather
   // than saying "not negotiated" and leaving the reader to diff two rows of the
   // table above.
   const reason = family.negotiated
     ? null
     : !family.senderSends && !family.receiverReceives
-      ? `${from} does not send them and ${to} does not accept them`
+      ? ct.addPathNeither(from, to)
       : !family.senderSends
-        ? `${from} did not advertise send for this family`
-        : `${to} did not advertise receive for this family`
+        ? ct.addPathNoSend(from)
+        : ct.addPathNoReceive(to)
 
   return (
     <tr>
@@ -208,7 +215,7 @@ function AddPathRow({
             TONE_CLASSES[family.negotiated ? 'ok' : 'neutral']
           }`}
         >
-          {family.negotiated ? 'Sent' : 'Not sent'}
+          {family.negotiated ? ct.addPathSent : ct.addPathNotSent}
         </span>
         {reason && <div className="text-xs text-dim mt-0.5">{reason}</div>}
       </td>
@@ -217,11 +224,13 @@ function AddPathRow({
 }
 
 function Legend() {
+  const { t } = useI18n()
+  const ct = t.capabilityDiff
   return (
     <span className="text-xs text-dim">
-      <span className="text-muted">✓</span> advertised &nbsp;
-      <span className="text-dim">✗</span> not advertised &nbsp;
-      <span className="text-warning">⚠</span> mismatch
+      <span className="text-muted">✓</span> {ct.legendAdvertised} &nbsp;
+      <span className="text-dim">✗</span> {ct.legendNotAdvertised} &nbsp;
+      <span className="text-warning">⚠</span> {ct.legendMismatch}
     </span>
   )
 }
@@ -246,71 +255,73 @@ function SessionFieldsTable({
   localOpen: BgpOpenMessage | null
   remoteOpen: BgpOpenMessage | null
 }) {
-  const localAs = localOpen ? effectiveAs(localOpen) : null
-  const remoteAs = remoteOpen ? effectiveAs(remoteOpen) : null
+  const { t } = useI18n()
+  const ct = t.capabilityDiff
+  const localAs = localOpen ? effectiveAs(localOpen, t) : null
+  const remoteAs = remoteOpen ? effectiveAs(remoteOpen, t) : null
 
   const versionStatus: FieldStatus | null =
     !localOpen || !remoteOpen
       ? null
       : localOpen.version === remoteOpen.version
-        ? { tone: 'ok', text: '✓ Match' }
-        : { tone: 'error', text: '⚠ Mismatch' }
+        ? { tone: 'ok', text: ct.statusMatch }
+        : { tone: 'error', text: ct.statusMismatch }
 
   const asInconsistency = localAs?.note ?? remoteAs?.note ?? null
   const asStatus: FieldStatus | null = asInconsistency
-    ? { tone: 'error', text: '⚠ AS field inconsistent' }
+    ? { tone: 'error', text: ct.statusAsInconsistent }
     : !localOpen || !remoteOpen || !localAs || !remoteAs
       ? null
       : localAs.as === remoteAs.as
-        ? { tone: 'neutral', text: 'Same AS on both sides' }
-        : { tone: 'neutral', text: 'Differs — normal for eBGP' }
+        ? { tone: 'neutral', text: ct.statusSameAs }
+        : { tone: 'neutral', text: ct.statusDiffersEbgp }
 
   const holdTimeStatus: FieldStatus | null =
     !localOpen || !remoteOpen
       ? null
       : localOpen.holdTime === remoteOpen.holdTime
-        ? { tone: 'ok', text: '✓ Match' }
-        : { tone: 'neutral', text: 'Differs — not an error, the lower value is negotiated' }
+        ? { tone: 'ok', text: ct.statusMatch }
+        : { tone: 'neutral', text: ct.statusHoldDiffers }
 
   const routerIdStatus: FieldStatus | null =
     !localOpen || !remoteOpen
       ? null
       : localOpen.bgpIdentifier === remoteOpen.bgpIdentifier
-        ? { tone: 'error', text: '⚠ Collision — same Router ID on both sides' }
-        : { tone: 'ok', text: '✓ Unique' }
+        ? { tone: 'error', text: ct.statusIdCollision }
+        : { tone: 'ok', text: ct.statusIdUnique }
 
   return (
     <table className="w-full text-sm border-collapse">
       <thead>
         <tr className="border-b border-hair text-left text-muted">
-          <th className="py-1.5 pr-3 font-medium">Field</th>
+          <th className="py-1.5 pr-3 font-medium">{ct.colField}</th>
           <th className="py-1.5 pr-3 font-medium">{localLabel}</th>
           <th className="py-1.5 pr-3 font-medium">{remoteLabel}</th>
-          <th className="py-1.5 font-medium">Status</th>
+          <th className="py-1.5 font-medium">{ct.colStatus}</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-hair">
         <FieldRow
-          label="BGP Version"
+          label={ct.fieldBgpVersion}
           localValue={localOpen ? String(localOpen.version) : null}
           remoteValue={remoteOpen ? String(remoteOpen.version) : null}
           status={versionStatus}
         />
         <FieldRow
-          label="My AS"
-          localValue={localOpen && localAs ? formatAs(localOpen, localAs) : null}
-          remoteValue={remoteOpen && remoteAs ? formatAs(remoteOpen, remoteAs) : null}
+          label={ct.fieldMyAs}
+          localValue={localOpen && localAs ? formatAs(localOpen, localAs, t) : null}
+          remoteValue={remoteOpen && remoteAs ? formatAs(remoteOpen, remoteAs, t) : null}
           status={asStatus}
           caption={asInconsistency ?? undefined}
         />
         <FieldRow
-          label="Hold Time"
+          label={ct.fieldHoldTime}
           localValue={localOpen ? `${localOpen.holdTime}s` : null}
           remoteValue={remoteOpen ? `${remoteOpen.holdTime}s` : null}
           status={holdTimeStatus}
         />
         <FieldRow
-          label="BGP Identifier"
+          label={ct.fieldBgpIdentifier}
           localValue={localOpen?.bgpIdentifier ?? null}
           remoteValue={remoteOpen?.bgpIdentifier ?? null}
           status={routerIdStatus}
@@ -333,14 +344,15 @@ function FieldRow({
   status: FieldStatus | null
   caption?: string
 }) {
+  const { t } = useI18n()
   return (
     <tr>
       <td className="py-1.5 pr-3 text-muted align-top">{label}</td>
       <td className="py-1.5 pr-3 font-mono align-top">
-        {localValue ?? <span className="text-dim italic font-sans">not captured</span>}
+        {localValue ?? <span className="text-dim italic font-sans">{t.capabilityDiff.notCaptured}</span>}
       </td>
       <td className="py-1.5 pr-3 font-mono align-top">
-        {remoteValue ?? <span className="text-dim italic font-sans">not captured</span>}
+        {remoteValue ?? <span className="text-dim italic font-sans">{t.capabilityDiff.notCaptured}</span>}
       </td>
       <td className="py-1.5 align-top">
         {status && (
@@ -354,7 +366,7 @@ function FieldRow({
   )
 }
 
-function effectiveAs(open: BgpOpenMessage): { as: number; note: string | null } {
+function effectiveAs(open: BgpOpenMessage, t: Messages): { as: number; note: string | null } {
   if (open.fourByteAs !== undefined) {
     const expected2Byte = open.fourByteAs > 0xffff ? AS_TRANS : open.fourByteAs
     const consistent = open.myAs === expected2Byte
@@ -362,15 +374,15 @@ function effectiveAs(open: BgpOpenMessage): { as: number; note: string | null } 
       as: open.fourByteAs,
       note: consistent
         ? null
-        : `2-byte My AS field is ${open.myAs}, expected ${expected2Byte} given the 4-byte AS capability`,
+        : t.capabilityDiff.asMismatchNote(open.myAs, expected2Byte),
     }
   }
   return { as: open.myAs, note: null }
 }
 
-function formatAs(open: BgpOpenMessage, as: { as: number; note: string | null }): string {
+function formatAs(open: BgpOpenMessage, as: { as: number; note: string | null }, t: Messages): string {
   return open.fourByteAs !== undefined && open.fourByteAs !== open.myAs
-    ? `${as.as} (2-byte field: ${open.myAs})`
+    ? t.capabilityDiff.twoByteField(as.as, open.myAs)
     : String(as.as)
 }
 
@@ -417,7 +429,8 @@ function hex(bytes: Uint8Array): string {
  * capability (or the same AFI/SAFI entry inside it) within one OPEN dedupe
  * via `seen`.
  */
-function extractEntries(open: BgpOpenMessage): ExtractedEntry[] {
+function extractEntries(open: BgpOpenMessage, t: Messages): ExtractedEntry[] {
+  const ct = t.capabilityDiff
   const entries: ExtractedEntry[] = []
   const seen = new Set<string>()
 
@@ -431,7 +444,7 @@ function extractEntries(open: BgpOpenMessage): ExtractedEntry[] {
     const parsed = cap.parsed
 
     if (!parsed || parsed.type === 'UNKNOWN') {
-      push(`UNKNOWN:${cap.code}:${hex(cap.rawValue)}`, cap.name, `Code ${cap.code}`, `${cap.length} byte payload`)
+      push(`UNKNOWN:${cap.code}:${hex(cap.rawValue)}`, cap.name, `Code ${cap.code}`, ct.capBytePayload(cap.length))
       continue
     }
 
@@ -441,30 +454,30 @@ function extractEntries(open: BgpOpenMessage): ExtractedEntry[] {
         break
 
       case 'FOUR_OCTET_AS':
-        push('FOUR_OCTET_AS', '4-byte AS Number', 'Support', `AS ${parsed.asNumber}`)
+        push('FOUR_OCTET_AS', '4-byte AS Number', ct.capSupport, `AS ${parsed.asNumber}`)
         break
 
       case 'ROUTE_REFRESH':
-        push('ROUTE_REFRESH', 'Route Refresh', 'Support')
+        push('ROUTE_REFRESH', 'Route Refresh', ct.capSupport)
         break
 
       case 'ENHANCED_ROUTE_REFRESH':
-        push('ENHANCED_ROUTE_REFRESH', 'Enhanced Route Refresh', 'Support')
+        push('ENHANCED_ROUTE_REFRESH', 'Enhanced Route Refresh', ct.capSupport)
         break
 
       case 'GRACEFUL_RESTART':
         push(
           'GRACEFUL_RESTART',
           'Graceful Restart',
-          'Support',
-          `restart time ${parsed.restartTime}s, flags 0x${parsed.restartFlags.toString(16).padStart(2, '0')}`
+          ct.capSupport,
+          ct.capGrDetail(parsed.restartTime, parsed.restartFlags.toString(16).padStart(2, '0'))
         )
         for (const af of parsed.addressFamilies) {
           push(
             `GR:${af.afi}:${af.safi}`,
             'Graceful Restart',
-            `${af.afiName} / ${af.safiName} forwarding state`,
-            `flags 0x${af.flags.toString(16).padStart(2, '0')}`
+            ct.capGrAfLabel(af.afiName, af.safiName),
+            ct.capGrFlags(af.flags.toString(16).padStart(2, '0'))
           )
         }
         break
@@ -480,7 +493,7 @@ function extractEntries(open: BgpOpenMessage): ExtractedEntry[] {
           push(
             `ENH:${entry.nlriAfi}:${entry.nlriSafi}:${entry.nexthopAfi}`,
             'Extended Next Hop Encoding',
-            `${entry.nlriAfiName}/${entry.nlriSafiName} via ${entry.nexthopAfiName} next-hop`
+            ct.capEnhLabel(entry.nlriAfiName, entry.nlriSafiName, entry.nexthopAfiName)
           )
         }
         break
@@ -492,10 +505,11 @@ function extractEntries(open: BgpOpenMessage): ExtractedEntry[] {
 
 function buildCapabilityRows(
   localOpen: BgpOpenMessage | null,
-  remoteOpen: BgpOpenMessage | null
+  remoteOpen: BgpOpenMessage | null,
+  t: Messages
 ): CapabilityRow[] {
-  const localEntries = localOpen ? extractEntries(localOpen) : []
-  const remoteEntries = remoteOpen ? extractEntries(remoteOpen) : []
+  const localEntries = localOpen ? extractEntries(localOpen, t) : []
+  const remoteEntries = remoteOpen ? extractEntries(remoteOpen, t) : []
 
   const byId = new Map<string, Omit<CapabilityRow, 'id' | 'presence'>>()
 
@@ -546,24 +560,27 @@ function CapabilityTable({
   localLabel: string
   remoteLabel: string
 }) {
+  const { t } = useI18n()
+  const ct = t.capabilityDiff
+
   return (
     <table className="w-full text-sm border-collapse">
       <thead>
         <tr className="border-b border-hair text-left text-muted">
-          <th className="py-1.5 pr-3 font-medium">Capability</th>
+          <th className="py-1.5 pr-3 font-medium">{ct.colCapability}</th>
           <th className="py-1.5 pr-3 font-medium">{localLabel}</th>
           <th className="py-1.5 pr-3 font-medium">{remoteLabel}</th>
-          <th className="py-1.5 font-medium">Status</th>
+          <th className="py-1.5 font-medium">{ct.colStatus}</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-hair">
         {rows.map((row) => {
           const status: FieldStatus =
             row.presence === 'both'
-              ? { tone: 'ok', text: '✓ Both' }
+              ? { tone: 'ok', text: ct.statusBoth }
               : row.presence === 'local-only'
-                ? { tone: 'warn', text: `⚠ Only ${localLabel}` }
-                : { tone: 'warn', text: `⚠ Only ${remoteLabel}` }
+                ? { tone: 'warn', text: ct.statusOnly(localLabel) }
+                : { tone: 'warn', text: ct.statusOnly(remoteLabel) }
 
           return (
             <tr key={row.id}>
@@ -587,10 +604,11 @@ function CapabilityTable({
 }
 
 function CapabilitySideCell({ side }: { side: CapabilitySide }) {
+  const { t } = useI18n()
   return (
     <td className="py-1.5 pr-3 align-top font-mono text-xs">
       {side.present ? (
-        <span className="text-body">✓ {side.detail ?? 'Supported'}</span>
+        <span className="text-body">✓ {side.detail ?? t.capabilityDiff.supported}</span>
       ) : (
         <span className="text-dim">✗ —</span>
       )}

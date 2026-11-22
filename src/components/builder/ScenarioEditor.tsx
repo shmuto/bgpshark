@@ -1,5 +1,6 @@
 import type { Scenario, ScenarioPeer, Side } from '../../lib/build'
 import { LinkLayerType } from '../../lib/pcap/types'
+import { useI18n } from '../../i18n'
 import {
   MESSAGE_LABELS,
   STEP_LABELS,
@@ -26,6 +27,8 @@ export function ScenarioEditor({
   onScenarioChange,
   onStepsChange,
 }: ScenarioEditorProps) {
+  const { t } = useI18n()
+
   const updatePeer = (side: Side, changes: Partial<ScenarioPeer>) => {
     onScenarioChange({ ...scenario, [side]: { ...scenario[side], ...changes } })
   }
@@ -33,7 +36,7 @@ export function ScenarioEditor({
   return (
     <div className="flex flex-col gap-6">
       <section>
-        <SectionHeading>Peers</SectionHeading>
+        <SectionHeading>{t.builder.sectionPeers}</SectionHeading>
         <div className="grid gap-3 sm:grid-cols-2">
           <PeerFields side="a" peer={scenario.a} onChange={(c) => updatePeer('a', c)} />
           <PeerFields side="b" peer={scenario.b} onChange={(c) => updatePeer('b', c)} />
@@ -41,12 +44,12 @@ export function ScenarioEditor({
       </section>
 
       <section>
-        <SectionHeading>Capture</SectionHeading>
+        <SectionHeading>{t.builder.sectionCapture}</SectionHeading>
         <CaptureFields scenario={scenario} onChange={onScenarioChange} />
       </section>
 
       <section>
-        <SectionHeading>Sequence</SectionHeading>
+        <SectionHeading>{t.builder.sectionSequence}</SectionHeading>
         <StepList scenario={scenario} steps={steps} onChange={onStepsChange} />
       </section>
     </div>
@@ -87,17 +90,19 @@ function PeerFields({
   peer: ScenarioPeer
   onChange: (changes: Partial<ScenarioPeer>) => void
 }) {
+  const { t } = useI18n()
+
   return (
     <div className="rounded border border-hair bg-surface p-3">
       <div className="mb-2 flex items-center gap-2">
         <SideBadge side={side} />
         <span className="text-xs text-muted">
-          {side === 'a' ? 'connects' : 'listens on 179'}
+          {side === 'a' ? t.builder.peerConnects : t.builder.peerListens}
         </span>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <Field label="IP address">
+        <Field label={t.builder.fieldIp}>
           <input
             type="text"
             className={`${CONTROL} font-mono`}
@@ -105,7 +110,7 @@ function PeerFields({
             onChange={(e) => onChange({ ip: e.target.value })}
           />
         </Field>
-        <Field label="AS number">
+        <Field label={t.builder.fieldAs}>
           <input
             type="text"
             inputMode="numeric"
@@ -114,7 +119,7 @@ function PeerFields({
             onChange={(e) => onChange({ as: Number(e.target.value) || 0 })}
           />
         </Field>
-        <Field label="Router ID">
+        <Field label={t.builder.fieldRouterId}>
           <input
             type="text"
             className={`${CONTROL} font-mono`}
@@ -122,7 +127,7 @@ function PeerFields({
             onChange={(e) => onChange({ routerId: e.target.value })}
           />
         </Field>
-        <Field label="Hold time (s)">
+        <Field label={t.builder.fieldHoldTime}>
           <input
             type="text"
             inputMode="numeric"
@@ -131,7 +136,7 @@ function PeerFields({
             onChange={(e) => onChange({ holdTime: Number(e.target.value) || 0 })}
           />
         </Field>
-        <Field label="TCP port" hint="Set both peers' ports to separate two sessions between one pair of addresses">
+        <Field label={t.builder.fieldTcpPort} hint={t.builder.fieldTcpPortHint}>
           <input
             type="text"
             inputMode="numeric"
@@ -152,9 +157,11 @@ function CaptureFields({
   scenario: Scenario
   onChange: (scenario: Scenario) => void
 }) {
+  const { t } = useI18n()
+
   return (
     <div className="grid grid-cols-2 gap-2 rounded border border-hair bg-surface p-3 sm:grid-cols-4">
-      <Field label="Link type">
+      <Field label={t.builder.fieldLinkType}>
         <select
           className={CONTROL}
           value={scenario.linkType ?? LinkLayerType.ETHERNET}
@@ -165,11 +172,11 @@ function CaptureFields({
         </select>
       </Field>
 
-      <Field label="VLAN IDs" hint="Outermost first. Two of them make a QinQ capture.">
+      <Field label={t.builder.fieldVlanIds} hint={t.builder.fieldVlanIdsHint}>
         <input
           type="text"
           className={`${CONTROL} font-mono`}
-          placeholder="none"
+          placeholder={t.common.none}
           value={(scenario.vlanIds ?? []).join(' ')}
           onChange={(e) => {
             const ids = e.target.value
@@ -182,7 +189,7 @@ function CaptureFields({
         />
       </Field>
 
-      <Field label="MTU" hint="Lower it to split BGP messages across TCP segments">
+      <Field label={t.builder.fieldMtu} hint={t.builder.fieldMtuHint}>
         <input
           type="text"
           inputMode="numeric"
@@ -192,7 +199,7 @@ function CaptureFields({
         />
       </Field>
 
-      <Field label="Default gap (ms)">
+      <Field label={t.builder.fieldDefaultGap}>
         <input
           type="text"
           inputMode="numeric"
@@ -218,6 +225,8 @@ function StepList({
   steps: EditorStep[]
   onChange: (steps: EditorStep[]) => void
 }) {
+  const { t } = useI18n()
+
   const replace = (index: number, step: EditorStep) => {
     onChange(steps.map((existing, i) => (i === index ? step : existing)))
   }
@@ -238,7 +247,7 @@ function StepList({
     <div className="flex flex-col gap-2">
       {steps.length === 0 && (
         <p className="rounded border border-dashed border-hair px-3 py-6 text-center text-xs text-dim">
-          No steps yet. Add a TCP handshake to start a session.
+          {t.builder.noStepsYet}
         </p>
       )}
 
@@ -260,11 +269,12 @@ function StepList({
 }
 
 function AddStep({ onAdd }: { onAdd: (kind: EditorStepKind) => void }) {
+  const { t } = useI18n()
   const kinds = Object.keys(STEP_LABELS) as EditorStepKind[]
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 pt-1">
-      <span className="text-[11px] text-dim">Add:</span>
+      <span className="text-[11px] text-dim">{t.builder.addLabel}</span>
       {kinds.map((kind) => (
         <button
           key={kind}
@@ -272,7 +282,7 @@ function AddStep({ onAdd }: { onAdd: (kind: EditorStepKind) => void }) {
           onClick={() => onAdd(kind)}
           className="rounded border border-hair px-2 py-1 text-[11px] text-muted transition-colors hover:border-hair-strong hover:text-strong"
         >
-          + {STEP_LABELS[kind]}
+          + {t.builder.steps[kind]}
         </button>
       ))}
     </div>
@@ -294,27 +304,28 @@ function StepCard({
   onMoveUp?: () => void
   onMoveDown?: () => void
 }) {
+  const { t } = useI18n()
   const hasSide = step.kind !== 'handshake' && step.kind !== 'delay'
 
   return (
     <div className="rounded border border-hair bg-surface">
       <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-        <span className="text-xs font-medium text-strong">{STEP_LABELS[step.kind]}</span>
+        <span className="text-xs font-medium text-strong">{t.builder.steps[step.kind]}</span>
 
         {hasSide && (
           <select
             className={CONTROL}
             value={step.from}
             onChange={(e) => onChange({ ...step, from: e.target.value as Side })}
-            aria-label="Sent by"
+            aria-label={t.builder.sentByAria}
           >
-            <option value="a">from A ({scenario.a.ip})</option>
-            <option value="b">from B ({scenario.b.ip})</option>
+            <option value="a">{t.builder.fromA(scenario.a.ip)}</option>
+            <option value="b">{t.builder.fromB(scenario.b.ip)}</option>
           </select>
         )}
 
         <label className="flex items-center gap-1 text-[11px] text-dim">
-          {step.kind === 'delay' ? 'for' : 'after'}
+          {step.kind === 'delay' ? t.builder.delayFor : t.builder.stepAfter}
           <input
             type="text"
             inputMode="numeric"
@@ -336,13 +347,13 @@ function StepCard({
         </label>
 
         <div className="ml-auto flex items-center gap-1">
-          <IconButton label="Move up" onClick={onMoveUp}>
+          <IconButton label={t.builder.moveUp} onClick={onMoveUp}>
             ↑
           </IconButton>
-          <IconButton label="Move down" onClick={onMoveDown}>
+          <IconButton label={t.builder.moveDown} onClick={onMoveDown}>
             ↓
           </IconButton>
-          <IconButton label="Remove step" onClick={onRemove}>
+          <IconButton label={t.builder.removeStep} onClick={onRemove}>
             ✕
           </IconButton>
         </div>
@@ -391,14 +402,13 @@ function MessageList({
   step: Extract<EditorStep, { kind: 'send' }>
   onChange: (messages: MessageEditor[]) => void
 }) {
+  const { t } = useI18n()
   const peer = scenario[step.from]
   const kinds = (Object.keys(MESSAGE_LABELS) as MessageEditor['kind'][]).filter((k) => k !== 'raw')
 
   return (
     <div className="border-t border-hair bg-surface-sunken px-3 py-2">
-      <p className="mb-2 text-[11px] text-dim">
-        Sent as one write — messages that fit share a TCP segment.
-      </p>
+      <p className="mb-2 text-[11px] text-dim">{t.builder.sendHint}</p>
 
       <div className="flex flex-col gap-2">
         {step.messages.map((message, index) => (
@@ -412,7 +422,7 @@ function MessageList({
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] text-dim">Add:</span>
+        <span className="text-[11px] text-dim">{t.builder.addLabel}</span>
         {kinds.map((kind) => (
           <button
             key={kind}
@@ -420,7 +430,7 @@ function MessageList({
             onClick={() => onChange([...step.messages, newMessage(kind, peer.ip, peer.as)])}
             className="rounded border border-hair px-2 py-0.5 text-[11px] text-muted transition-colors hover:border-hair-strong hover:text-strong"
           >
-            + {MESSAGE_LABELS[kind]}
+            + {t.builder.messages[kind]}
           </button>
         ))}
       </div>
@@ -437,14 +447,16 @@ function MessageRow({
   onChange: (message: MessageEditor) => void
   onRemove: () => void
 }) {
+  const { t } = useI18n()
+
   return (
     <div className="rounded border border-hair bg-surface p-2">
       <div className="mb-1.5 flex items-center gap-2">
         <span className="text-[11px] font-medium text-strong">
-          {message.kind === 'raw' ? message.label : MESSAGE_LABELS[message.kind]}
+          {message.kind === 'raw' ? message.label : t.builder.messages[message.kind]}
         </span>
         <div className="ml-auto">
-          <IconButton label="Remove message" onClick={onRemove}>
+          <IconButton label={t.builder.removeMessage} onClick={onRemove}>
             ✕
           </IconButton>
         </div>
@@ -453,7 +465,7 @@ function MessageRow({
       {message.kind === 'announce' && (
         <div className="grid gap-2 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <Field label="Prefixes">
+            <Field label={t.builder.fieldPrefixes}>
               <textarea
                 rows={2}
                 className={`${CONTROL} font-mono`}
@@ -462,7 +474,7 @@ function MessageRow({
               />
             </Field>
           </div>
-          <Field label="Next hop">
+          <Field label={t.builder.fieldNextHop}>
             <input
               type="text"
               className={`${CONTROL} font-mono`}
@@ -470,7 +482,7 @@ function MessageRow({
               onChange={(e) => onChange({ ...message, nextHop: e.target.value })}
             />
           </Field>
-          <Field label="AS path" hint="Left to right, nearest AS first">
+          <Field label={t.builder.fieldAsPath} hint={t.builder.fieldAsPathHint}>
             <input
               type="text"
               className={`${CONTROL} font-mono`}
@@ -478,7 +490,7 @@ function MessageRow({
               onChange={(e) => onChange({ ...message, asPath: e.target.value })}
             />
           </Field>
-          <Field label="Origin">
+          <Field label={t.builder.fieldOrigin}>
             <select
               className={CONTROL}
               value={message.origin}
@@ -491,22 +503,22 @@ function MessageRow({
               <option value="INCOMPLETE">INCOMPLETE</option>
             </select>
           </Field>
-          <Field label="MED">
+          <Field label={t.builder.fieldMed}>
             <input
               type="text"
               inputMode="numeric"
               className={`${CONTROL} font-mono`}
-              placeholder="none"
+              placeholder={t.common.none}
               value={message.med}
               onChange={(e) => onChange({ ...message, med: e.target.value })}
             />
           </Field>
           <div className="sm:col-span-2">
-            <Field label="Communities" hint="65000:100, NO_EXPORT, …">
+            <Field label={t.builder.fieldCommunities} hint={t.builder.fieldCommunitiesHint}>
               <input
                 type="text"
                 className={`${CONTROL} font-mono`}
-                placeholder="none"
+                placeholder={t.common.none}
                 value={message.communities}
                 onChange={(e) => onChange({ ...message, communities: e.target.value })}
               />
@@ -516,7 +528,7 @@ function MessageRow({
       )}
 
       {message.kind === 'withdraw' && (
-        <Field label="Prefixes">
+        <Field label={t.builder.fieldPrefixes}>
           <textarea
             rows={2}
             className={`${CONTROL} font-mono`}
@@ -527,14 +539,12 @@ function MessageRow({
       )}
 
       {message.kind === 'end-of-rib' && (
-        <p className="text-[11px] text-dim">
-          An empty UPDATE — the marker that the initial advertisement is complete (RFC 4724).
-        </p>
+        <p className="text-[11px] text-dim">{t.builder.endOfRibNote}</p>
       )}
 
       {message.kind === 'notification' && (
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Error code">
+          <Field label={t.builder.fieldErrorCode}>
             <input
               type="text"
               inputMode="numeric"
@@ -543,7 +553,7 @@ function MessageRow({
               onChange={(e) => onChange({ ...message, errorCode: e.target.value })}
             />
           </Field>
-          <Field label="Subcode">
+          <Field label={t.builder.fieldSubcode}>
             <input
               type="text"
               inputMode="numeric"
@@ -578,19 +588,17 @@ function MessageRow({
         </div>
       )}
 
-      {message.kind === 'raw' && (
-        <p className="text-[11px] text-dim">
-          Built as specified. This message has no form here, so it is kept as it was.
-        </p>
-      )}
+      {message.kind === 'raw' && <p className="text-[11px] text-dim">{t.builder.rawNote}</p>}
     </div>
   )
 }
 
 function SideBadge({ side }: { side: Side }) {
+  const { t } = useI18n()
+
   return (
     <span className="rounded bg-accent-subtle px-1.5 py-0.5 font-mono text-[11px] font-semibold uppercase text-accent">
-      Peer {side}
+      {t.builder.peerBadge(side)}
     </span>
   )
 }

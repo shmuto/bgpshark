@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useI18n } from '../../i18n'
 
 interface WarningBannerProps {
   warnings: string[]
@@ -12,6 +13,7 @@ interface WarningBannerProps {
 const MAX_LISTED = 100
 
 export function WarningBanner({ warnings }: WarningBannerProps) {
+  const { t } = useI18n()
   const [isExpanded, setIsExpanded] = useState(false)
 
   if (warnings.length === 0) {
@@ -42,7 +44,7 @@ export function WarningBanner({ warnings }: WarningBannerProps) {
               could not take warns here too — so the label says what they are
               rather than where they came from. */}
           <span className="font-medium">
-            {warnings.length} warning{warnings.length > 1 ? 's' : ''} loading this capture
+            {t.warnings.bannerCount(warnings.length)}
           </span>
           <svg
             className={`w-4 h-4 ml-auto transition-transform ${isExpanded ? 'rotate-180' : ''}`}
@@ -63,7 +65,7 @@ export function WarningBanner({ warnings }: WarningBannerProps) {
             ))}
             {warnings.length > MAX_LISTED && (
               <div className="pl-6 text-sm text-muted">
-                …and {warnings.length - MAX_LISTED} more
+                {t.warnings.more(warnings.length - MAX_LISTED)}
               </div>
             )}
           </div>

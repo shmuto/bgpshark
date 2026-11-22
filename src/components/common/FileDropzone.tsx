@@ -2,10 +2,15 @@ import { useCallback, useState, useRef } from 'react'
 import {
   ACCEPT_ATTRIBUTE,
   MAX_FILE_SIZE_LABEL,
-  validateCaptureFile,
+  checkCaptureFile,
+  formatCaptureFileIssue,
+  type CaptureFileIssue,
 } from '../../lib/file-constraints'
 import type { LoadProgress } from '../../lib/load-progress'
+import { useI18n } from '../../i18n'
 import { LoadProgressBar } from './LoadProgressBar'
+
+type DropzoneError = { kind: 'file'; issue: CaptureFileIssue } | { kind: 'sample' }
 
 interface FileDropzoneProps {
   onFileLoad: (file: File) => void
@@ -15,20 +20,27 @@ interface FileDropzoneProps {
 }
 
 export function FileDropzone({ onFileLoad, isLoading, progress }: FileDropzoneProps) {
+  const { locale, t } = useI18n()
   const [isDragOver, setIsDragOver] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [errorState, setErrorState] = useState<DropzoneError | null>(null)
   const [isSampleLoading, setIsSampleLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const busy = isLoading || isSampleLoading
+  const error =
+    errorState === null
+      ? null
+      : errorState.kind === 'sample'
+        ? t.upload.sampleError
+        : formatCaptureFileIssue(errorState.issue, locale)
 
   const validateAndLoad = useCallback(
     (file: File) => {
-      setError(null)
+      setErrorState(null)
 
-      const validationError = validateCaptureFile(file)
-      if (validationError) {
-        setError(validationError)
+      const fileIssue = checkCaptureFile(file)
+      if (fileIssue) {
+        setErrorState({ kind: 'file', issue: fileIssue })
         return
       }
 
@@ -38,7 +50,7 @@ export function FileDropzone({ onFileLoad, isLoading, progress }: FileDropzonePr
   )
 
   const handleSampleClick = useCallback(async () => {
-    setError(null)
+    setErrorState(null)
     setIsSampleLoading(true)
 
     try {
@@ -54,7 +66,7 @@ export function FileDropzone({ onFileLoad, isLoading, progress }: FileDropzonePr
       // never bypass the limits the rest of the app enforces.
       validateAndLoad(file)
     } catch {
-      setError('Could not load the sample capture. Check your connection and try again.')
+      setErrorState({ kind: 'sample' })
     } finally {
       setIsSampleLoading(false)
     }
@@ -134,7 +146,9 @@ export function FileDropzone({ onFileLoad, isLoading, progress }: FileDropzonePr
           // Fetching the sample, or DuckDB still starting up: nothing to count yet.
           <div className="flex flex-col items-center gap-4">
             <div className="animate-spin w-8 h-8 border-4 border-accent border-t-transparent rounded-full" />
-            <p className="text-muted">{isSampleLoading ? 'Loading sample...' : 'Preparing...'}</p>
+            <p className="text-muted">
+              {isSampleLoading ? t.upload.loadingSample : t.upload.preparing}
+            </p>
           </div>
         ) : (
           <>
@@ -154,10 +168,10 @@ export function FileDropzone({ onFileLoad, isLoading, progress }: FileDropzonePr
               </svg>
             </div>
             <p className="text-muted mb-2">
-              <span className="font-medium text-strong">Drop pcap file here</span> or click to select
+              <span className="font-medium text-strong">{t.upload.dropHere}</span> {t.upload.orClick}
             </p>
             <p className="text-sm text-dim">
-              Supports .pcap and .pcapng files up to {MAX_FILE_SIZE_LABEL}
+              {t.upload.supports(MAX_FILE_SIZE_LABEL)}
             </p>
           </>
         )}
@@ -170,10 +184,10 @@ export function FileDropzone({ onFileLoad, isLoading, progress }: FileDropzonePr
           disabled={busy}
           className="text-sm text-accent hover:text-accent-hover hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline disabled:text-dim"
         >
-          {isSampleLoading ? 'Loading sample.pcapng...' : 'Try with sample.pcapng'}
+          {isSampleLoading ? t.upload.loadingSampleFile : t.upload.trySample}
         </button>
         <p className="mt-1 text-xs text-dim">
-          Includes session resets and NOTIFICATION messages between two BGP peers
+          {t.upload.sampleDescription}
         </p>
       </div>
 

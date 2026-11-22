@@ -24,6 +24,7 @@ import { writePcap, sliceFileName, type GenericPacket } from '../lib/pcap'
 import { FILTER_FIELDS, matchTransportFrame, type FilterFieldName } from '../lib/filter/parser'
 import { appendCondition, formatCondition } from '../lib/filter/compose'
 import { FilterActionsContext } from '../context/filter-actions'
+import { useI18n } from '../i18n'
 
 const MESSAGE_TYPE_BADGE_COLORS: Record<string, string> = {
   OPEN: 'bg-bgp-open/15 text-bgp-open',
@@ -98,6 +99,7 @@ export function MessagesPage() {
 
 function MessagesView() {
   const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
+  const { locale, t } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   // In the URL because a dashboard alert can point at a TCP frame, and the list
@@ -398,8 +400,8 @@ function MessagesView() {
   const refreshDiff = useMemo(() => {
     if (!selectedBgpPacket) return null
     const index = packets.indexOf(selectedBgpPacket)
-    return index >= 0 ? routeRefreshDiff(packets, index) : null
-  }, [selectedBgpPacket, packets])
+    return index >= 0 ? routeRefreshDiff(packets, index, locale) : null
+  }, [selectedBgpPacket, packets, locale])
 
   /**
    * The BGP packet before the selected one between the same two addresses.
@@ -608,8 +610,8 @@ function MessagesView() {
               packets={packets}
               hasError={showParseErrors}
               inputRef={filterInputRef}
-              ariaLabel="Filter"
-              placeholder="Filter — type = UPDATE, ip = 192.0.2.1, 198.51.100.0/24, AS65001   ( / to focus)"
+              ariaLabel={t.messages.filterAria}
+              placeholder={t.messages.filterPlaceholder}
             />
           </div>
           <AddFilterPopover valuesFor={valuesFor} onAdd={addCondition} />
@@ -619,7 +621,7 @@ function MessagesView() {
 
           {/* Packet display toggle */}
           <div className="flex items-center gap-1 shrink-0">
-            <span className="text-xs text-muted">Show:</span>
+            <span className="text-xs text-muted">{t.messages.showLabel}</span>
             <button
               onClick={() => { setShowAllPackets(false); selectPacket(null) }}
               className={`px-2 py-1 text-xs rounded transition-colors ${
@@ -628,7 +630,7 @@ function MessagesView() {
                   : 'bg-surface-sunken text-muted hover:bg-surface-raised'
               }`}
             >
-              BGP Only
+              {t.messages.bgpOnly}
             </button>
             <button
               onClick={() => { setShowAllPackets(true); selectPacket(null) }}
@@ -638,7 +640,7 @@ function MessagesView() {
                   : 'bg-surface-sunken text-muted hover:bg-surface-raised'
               }`}
             >
-              All Packets
+              {t.messages.allPackets}
             </button>
           </div>
         </div>
@@ -657,7 +659,7 @@ function MessagesView() {
                   <button
                     key={type}
                     onClick={() => setQuery(active ? '' : `type = ${type}`)}
-                    title={active ? 'Clear filter' : `Filter to ${type} messages`}
+                    title={active ? t.messages.clearFilterTitle : t.messages.filterToTypeTitle(type)}
                     className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
                       MESSAGE_TYPE_BADGE_COLORS[type] ?? 'bg-surface-sunken text-muted'
                     } ${active ? 'ring-1 ring-accent' : 'hover:opacity-75'}`}
@@ -674,15 +676,12 @@ function MessagesView() {
             that actually has the evidence. */}
         {!showAllPackets && packets.length === 0 && allPackets.length > 0 && (
           <div className="text-xs text-warning flex items-center gap-2">
-            <span>
-              ⚠ No BGP messages in this capture, but it contains {allPackets.length} other packets
-              (TCP handshakes, resets, …).
-            </span>
+            <span>{t.messages.noBgpBanner(allPackets.length)}</span>
             <button
               onClick={() => setShowAllPackets(true)}
               className="text-accent hover:text-accent-hover underline"
             >
-              Show all packets
+              {t.messages.showAllPackets}
             </button>
           </div>
         )}
@@ -691,19 +690,23 @@ function MessagesView() {
             from the packet count ("…of 50 packetsExpected operator…"). */}
         <div className="flex items-center justify-between gap-3 text-xs text-muted">
           <span>
-            Showing {displayPackets.length} of {showAllPackets ? allPackets.length : packets.length} packets
-            {showAllPackets && !filterActive && ` (${packets.length} BGP)`}
+            {t.messages.showingPackets(
+              displayPackets.length,
+              showAllPackets ? allPackets.length : packets.length
+            )}
+            {showAllPackets && !filterActive && t.messages.bgpSubcount(packets.length)}
             {/* Say how the filter was applied to frames that carry no BGP, so
                 a short list is not mistaken for a short capture. */}
             {showAllPackets && filterActive && (
-              <span title="Non-BGP frames (SYN, ACK, FIN, RST) are matched on src_ip, dst_ip, src_port, dst_port and frame; BGP-only conditions never match them.">
-                {` (${displayPackets.filter((p) => p.kind === 'bgp').length} BGP + ${
+              <span title={t.messages.nonBgpMatchTooltip}>
+                {t.messages.nonBgpMatchCount(
+                  displayPackets.filter((p) => p.kind === 'bgp').length,
                   displayPackets.filter((p) => p.kind === 'generic').length
-                } non-BGP matched by address/port)`}
+                )}
               </span>
             )}
           </span>
-          {isFiltering && <span>filtering...</span>}
+          {isFiltering && <span>{t.messages.filtering}</span>}
           {showParseErrors && (
             <span className="text-critical" title={parseErrors.map(e => e.message).join('; ')}>
               {parseErrors[0]?.message}
@@ -713,10 +716,10 @@ function MessagesView() {
             {displayPackets.length > 0 && linkType !== null && (
               <button
                 onClick={exportPcap}
-                title="Save the packets listed here as a pcap file"
+                title={t.messages.exportTitle}
                 className="text-accent hover:text-accent-hover hover:underline"
               >
-                ⬇ Export {displayPackets.length} packets as pcap
+                {t.messages.exportButton(displayPackets.length)}
               </button>
             )}
             {/* Out here rather than in the table's header row, which scrolled
@@ -761,7 +764,7 @@ function MessagesView() {
             onDragStart={split.startDrag}
             onReset={split.reset}
             onNudge={split.nudge}
-            label="Resize the packet list"
+            label={t.messages.resizeList}
           />
         )}
 
@@ -771,7 +774,9 @@ function MessagesView() {
           <div className="px-4 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between gap-2 shrink-0">
             <BackToList onClick={() => selectPacket(null)} />
             <span className="text-sm font-semibold text-strong truncate">
-              {selectedPacketIndex !== null ? `Packet #${displayPackets[selectedPacketIndex]?.packet.frameIndex}` : 'Packet Detail'}
+              {selectedPacketIndex !== null
+                ? t.messages.packetNumber(displayPackets[selectedPacketIndex]?.packet.frameIndex)
+                : t.messages.packetDetail}
             </span>
             {selectedBgpPacket && (
               <span className="text-xs text-muted">
@@ -801,7 +806,7 @@ function MessagesView() {
               <GenericPacketDetail packet={selectedGenericPacket} />
             ) : (
               <div className="flex items-center justify-center h-full text-dim text-sm">
-                Select a packet to view details
+                {t.messages.selectPacket}
               </div>
             )}
           </div>
@@ -813,6 +818,8 @@ function MessagesView() {
 }
 
 function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
+  const { t } = useI18n()
+
   const formatTcpFlags = (flags: GenericPacket['tcpFlags']) => {
     if (!flags) return null
     const flagList: string[] = []
@@ -822,30 +829,30 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
     if (flags.rst) flagList.push('RST')
     if (flags.psh) flagList.push('PSH')
     if (flags.urg) flagList.push('URG')
-    return flagList.join(', ') || 'none'
+    return flagList.join(', ') || t.common.none
   }
 
   return (
     <div className="p-4 space-y-4">
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-strong">Network Layer</h3>
+        <h3 className="text-sm font-semibold text-strong">{t.messages.networkLayer}</h3>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-muted">Source IP:</span>
+            <span className="text-muted">{t.messages.sourceIp}</span>
             <span className="ml-2 font-mono">{packet.srcIp}</span>
           </div>
           <div>
-            <span className="text-muted">Destination IP:</span>
+            <span className="text-muted">{t.messages.destinationIp}</span>
             <span className="ml-2 font-mono">{packet.dstIp}</span>
           </div>
         </div>
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-strong">Transport Layer</h3>
+        <h3 className="text-sm font-semibold text-strong">{t.messages.transportLayer}</h3>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-muted">Protocol:</span>
+            <span className="text-muted">{t.messages.protocol}</span>
             {/* Neutral on purpose: protocol is a category, and the severity
                 palette has to keep meaning severity. */}
             <span className="ml-2 rounded bg-surface-sunken px-2 py-0.5 font-mono text-xs font-medium text-body">
@@ -854,42 +861,42 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
           </div>
           {packet.srcPort !== undefined && (
             <div>
-              <span className="text-muted">Source Port:</span>
+              <span className="text-muted">{t.messages.sourcePort}</span>
               <span className="ml-2 font-mono">{packet.srcPort}</span>
             </div>
           )}
           {packet.dstPort !== undefined && (
             <div>
-              <span className="text-muted">Destination Port:</span>
+              <span className="text-muted">{t.messages.destinationPort}</span>
               <span className="ml-2 font-mono">{packet.dstPort}</span>
             </div>
           )}
           <div>
-            <span className="text-muted">Payload Length:</span>
-            <span className="ml-2 font-mono">{packet.payloadLength} bytes</span>
+            <span className="text-muted">{t.messages.payloadLength}</span>
+            <span className="ml-2 font-mono">{t.common.bytes(packet.payloadLength)}</span>
           </div>
         </div>
         {packet.tcpFlags && (
           <div className="text-sm">
-            <span className="text-muted">TCP Flags:</span>
+            <span className="text-muted">{t.messages.tcpFlags}</span>
             <span className="ml-2 font-mono">{formatTcpFlags(packet.tcpFlags)}</span>
           </div>
         )}
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-strong">Frame Info</h3>
+        <h3 className="text-sm font-semibold text-strong">{t.messages.frameInfo}</h3>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div>
-            <span className="text-muted">Captured:</span>
-            <span className="ml-2 font-mono">{packet.capturedLength} bytes</span>
+            <span className="text-muted">{t.messages.captured}</span>
+            <span className="ml-2 font-mono">{t.common.bytes(packet.capturedLength)}</span>
           </div>
           <div>
-            <span className="text-muted">Original:</span>
-            <span className="ml-2 font-mono">{packet.originalLength} bytes</span>
+            <span className="text-muted">{t.messages.original}</span>
+            <span className="ml-2 font-mono">{t.common.bytes(packet.originalLength)}</span>
           </div>
           <div className="col-span-2">
-            <span className="text-muted">Timestamp (UTC):</span>
+            <span className="text-muted">{t.messages.timestampUtc}</span>
             <span className="ml-2 font-mono">{packet.timestamp.toISOString()}</span>
           </div>
         </div>

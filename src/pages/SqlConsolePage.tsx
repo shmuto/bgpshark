@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { executeRawSql, isInitialized, isDataLoaded } from '../lib/db'
 import { describeSchema, type SchemaTableInfo } from '../lib/db/schema'
+import { useI18n, type Messages } from '../i18n'
 
 /** Read once: the schema is fixed for the life of the app. */
 const SCHEMA = describeSchema()
@@ -13,9 +14,11 @@ interface QueryResult {
   executionTime: number
 }
 
-const QUERY_TEMPLATES = [
+type TemplateKey = keyof Messages['sql']['templates']
+
+const QUERY_TEMPLATES: { key: TemplateKey; query: string }[] = [
   {
-    name: 'Neighbor Summary',
+    key: 'neighborSummary',
     query: `SELECT
   src_ip,
   dst_ip,
@@ -25,7 +28,7 @@ GROUP BY src_ip, dst_ip
 ORDER BY packet_count DESC`,
   },
   {
-    name: 'AS_PATH Stats',
+    key: 'asPathStats',
     query: `SELECT
   asn,
   COUNT(*) as occurrence
@@ -37,7 +40,7 @@ LIMIT 20`,
   {
     // Grouped by prefix *and* length: 10.0.12.0/24 and 10.0.12.0/23 are two
     // routes. Returned as CIDR, so the cell links straight to the route.
-    name: 'Prefix Flapping',
+    key: 'prefixFlapping',
     query: `SELECT
   prefix,
   COUNT(*) as flap_count
@@ -54,7 +57,7 @@ ORDER BY flap_count DESC`,
     // The question a fabric raises most often: which host is being claimed by
     // more than one leaf. Two RDs for one MAC is a move if it settled, and a
     // loop if it did not.
-    name: 'EVPN MAC Moves',
+    key: 'evpnMacMoves',
     query: `SELECT
   evpn_mac,
   COUNT(*) AS locations,
@@ -72,7 +75,7 @@ HAVING COUNT(*) > 1
 ORDER BY locations DESC`,
   },
   {
-    name: 'EVPN Route Targets',
+    key: 'evpnRouteTargets',
     query: `SELECT
   value AS route_target,
   COUNT(*) AS routes
@@ -82,7 +85,7 @@ GROUP BY value
 ORDER BY routes DESC`,
   },
   {
-    name: 'Error Analysis',
+    key: 'errorAnalysis',
     query: `SELECT
   error_code_name,
   error_subcode_name,
@@ -93,7 +96,7 @@ GROUP BY error_code_name, error_subcode_name
 ORDER BY count DESC`,
   },
   {
-    name: 'Message Types',
+    key: 'messageTypes',
     query: `SELECT
   type,
   COUNT(*) as count
@@ -105,6 +108,8 @@ ORDER BY count DESC`,
 
 export function SqlConsolePage() {
   useApp() // Ensure context is available
+  const { t } = useI18n()
+  const st = t.sql
   const [query, setQuery] = useState(QUERY_TEMPLATES[0].query)
   const [result, setResult] = useState<QueryResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -171,12 +176,12 @@ export function SqlConsolePage() {
         return newHistory
       })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Query execution failed')
+      setError(err instanceof Error ? err.message : st.queryFailed)
       setResult(null)
     } finally {
       setIsExecuting(false)
     }
-  }, [query, sqlUsable])
+  }, [query, sqlUsable, st.queryFailed])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -220,17 +225,16 @@ export function SqlConsolePage() {
     <div className="flex-1 flex flex-col min-h-0 bg-canvas p-4 gap-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold text-strong">SQL Console</h1>
+          <h1 className="text-lg font-semibold text-strong">{st.title}</h1>
         </div>
         {!dbReady && (
           <span className="text-sm text-warning">
-            ⚠ DuckDB not initialized. Load a pcap file first.
+            {st.duckdbNotInitialized}
           </span>
         )}
         {dbReady && !dataLoaded && (
           <span className="text-sm text-warning">
-            ⚠ This capture could not be loaded into DuckDB, so SQL is unavailable. Filtering on
-            the other screens still works in-memory.
+            {st.duckdbUnavailable}
           </span>
         )}
       </div>
@@ -241,15 +245,15 @@ export function SqlConsolePage() {
           {/* SQL Editor */}
           <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col shrink-0">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
-              <span className="text-sm font-medium text-strong">Query</span>
-              <span className="text-xs text-muted">Ctrl+Enter to execute</span>
+              <span className="text-sm font-medium text-strong">{st.queryHeading}</span>
+              <span className="text-xs text-muted">{st.shortcutHint}</span>
             </div>
             {/* Ten rows by default, so the opening template is readable without
                 scrolling; the handle in the corner makes it taller. */}
             <textarea
               ref={editorRef}
               rows={10}
-              aria-label="SQL query"
+              aria-label={st.editorAria}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -264,17 +268,17 @@ export function SqlConsolePage() {
                 className="px-4 py-1.5 bg-accent text-accent-fg text-sm rounded hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <span>▶</span>
-                {isExecuting ? 'Running...' : 'Run'}
+                {isExecuting ? st.running : st.run}
               </button>
               <button
                 onClick={() => setQuery('')}
                 className="px-3 py-1.5 text-sm text-muted hover:bg-surface-raised rounded"
               >
-                Clear
+                {st.clear}
               </button>
               {result && (
                 <span className="text-xs text-muted ml-auto">
-                  Execution: {result.executionTime.toFixed(0)}ms
+                  {st.executionTime(result.executionTime.toFixed(0))}
                 </span>
               )}
             </div>
@@ -284,21 +288,21 @@ export function SqlConsolePage() {
           <div className="flex-1 bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-[12rem]">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between shrink-0">
               <span className="text-sm font-medium text-strong">
-                Results {result ? `(${result.rows.length} rows)` : ''}
+                {st.resultsHeading(result?.rows.length)}
               </span>
               {result && result.rows.length > 0 && (
                 <button
                   onClick={exportCsv}
                   className="text-xs text-accent hover:text-accent-hover flex items-center gap-1"
                 >
-                  Export CSV ↓
+                  {st.exportCsv}
                 </button>
               )}
             </div>
             <div className="flex-1 overflow-auto">
               {error ? (
                 <div className="p-4 text-critical text-sm">
-                  <div className="font-medium mb-1">Error:</div>
+                  <div className="font-medium mb-1">{st.errorPrefix}</div>
                   <pre className="whitespace-pre-wrap font-mono text-xs">{error}</pre>
                 </div>
               ) : result ? (
@@ -327,17 +331,17 @@ export function SqlConsolePage() {
                   </table>
                 ) : (
                   <div className="text-center text-dim py-8">
-                    Query returned no results
+                    {st.noResults}
                   </div>
                 )
               ) : (
                 <div className="text-center text-dim py-8">
-                  Run a query to see results
+                  {st.runPrompt}
                 </div>
               )}
               {result && result.rows.length > 100 && (
                 <div className="text-center text-muted text-xs py-2 border-t border-hair">
-                  Showing first 100 of {result.rows.length} rows
+                  {st.showingFirst100(result.rows.length)}
                 </div>
               )}
             </div>
@@ -351,16 +355,16 @@ export function SqlConsolePage() {
           {/* Templates */}
           <div className="bg-surface rounded-lg shadow-sm border border-hair shrink-0">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
-              <span className="text-sm font-medium text-strong">Query Templates</span>
+              <span className="text-sm font-medium text-strong">{st.templatesHeading}</span>
             </div>
             <div className="p-2" data-testid="query-templates">
               {QUERY_TEMPLATES.map((template) => (
                 <button
-                  key={template.name}
+                  key={template.key}
                   onClick={() => handleTemplateClick(template)}
                   className="w-full text-left px-3 py-2 text-sm text-body hover:bg-surface-sunken rounded"
                 >
-                  {template.name}
+                  {st.templates[template.key]}
                 </button>
               ))}
             </div>
@@ -370,7 +374,7 @@ export function SqlConsolePage() {
           {queryHistory.length > 0 && (
             <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col shrink-0">
               <div className="px-4 py-2 border-b border-hair bg-surface-sunken shrink-0">
-                <span className="text-sm font-medium text-strong">Query History</span>
+                <span className="text-sm font-medium text-strong">{st.historyHeading}</span>
               </div>
               <div className="max-h-48 overflow-auto p-2">
                 {queryHistory.map((q, idx) => (
@@ -390,8 +394,8 @@ export function SqlConsolePage() {
           {/* Schema */}
           <div className="bg-surface rounded-lg shadow-sm border border-hair shrink-0">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-baseline justify-between gap-2">
-              <span className="text-sm font-medium text-strong">Schema</span>
-              <span className="text-xs text-dim">click a name to insert it</span>
+              <span className="text-sm font-medium text-strong">{st.schemaHeading}</span>
+              <span className="text-xs text-dim">{st.schemaHint}</span>
             </div>
             <div className="p-2 text-xs text-muted space-y-1" data-testid="schema">
               {SCHEMA.map((table) => (
@@ -406,6 +410,8 @@ export function SqlConsolePage() {
 }
 
 function SchemaTable({ table, onInsert }: { table: SchemaTableInfo; onInsert: (text: string) => void }) {
+  const { t } = useI18n()
+  const st = t.sql
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -415,7 +421,7 @@ function SchemaTable({ table, onInsert }: { table: SchemaTableInfo; onInsert: (t
           type="button"
           onClick={() => setExpanded(!expanded)}
           aria-expanded={expanded}
-          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${table.name}`}
+          aria-label={expanded ? st.collapseTableAria(table.name) : st.expandTableAria(table.name)}
           className="w-4 text-dim hover:text-accent"
         >
           {expanded ? '▼' : '▶'}
@@ -423,7 +429,7 @@ function SchemaTable({ table, onInsert }: { table: SchemaTableInfo; onInsert: (t
         <button
           type="button"
           onClick={() => onInsert(table.name)}
-          title={`Insert ${table.name}`}
+          title={st.insertTitle(table.name)}
           className="font-medium font-mono text-body hover:text-accent"
         >
           {table.name}
@@ -437,7 +443,7 @@ function SchemaTable({ table, onInsert }: { table: SchemaTableInfo; onInsert: (t
               key={column.name}
               type="button"
               onClick={() => onInsert(column.name)}
-              title={`Insert ${column.name}`}
+              title={st.insertTitle(column.name)}
               className="w-full flex items-baseline justify-between gap-2 px-1 rounded hover:bg-surface-sunken"
             >
               <span className="font-mono text-body">{column.name}</span>
@@ -458,6 +464,7 @@ function SchemaTable({ table, onInsert }: { table: SchemaTableInfo; onInsert: (t
  * point of a query here.
  */
 function ResultCell({ column, row }: { column: string; row: Record<string, unknown> }) {
+  const { t } = useI18n()
   const value = row[column]
   const text = formatValue(value)
   if (value === null || value === undefined) return <>{text}</>
@@ -466,7 +473,7 @@ function ResultCell({ column, row }: { column: string; row: Record<string, unkno
     return (
       <Link
         to={`/messages?frame=${text}&all=1`}
-        title={`Open frame ${text} in Messages`}
+        title={t.sql.openFrameTitle(text)}
         className="text-accent hover:text-accent-hover hover:underline"
       >
         {text}
@@ -487,7 +494,7 @@ function ResultCell({ column, row }: { column: string; row: Record<string, unkno
     return (
       <Link
         to={to}
-        title={`Open the route history of ${text}`}
+        title={t.sql.openRouteTitle(text)}
         className="text-accent hover:text-accent-hover hover:underline"
       >
         {text}

@@ -21,6 +21,7 @@
 import type { BgpPacket, BgpUpdateMessage, BgpRouteRefreshMessage } from './types'
 import { formatPrefix } from '../net/prefix'
 import { endOfRibMarker } from './update'
+import { getMessages, type Locale } from '../../i18n/locale'
 
 /** One route as the comparison sees it: an identity and the attributes on it. */
 interface RouteState {
@@ -152,27 +153,48 @@ function ribFrom(
 }
 
 /** The attribute differences between two announcements of one route. */
-function describeChange(before: RouteState, after: RouteState): string | null {
+function describeChange(before: RouteState, after: RouteState, locale: Locale): string | null {
+  const t = getMessages(locale).packetDetail.routeRefresh
   const parts: string[] = []
 
   const communitiesBefore = (before.communities ?? []).join(' ')
   const communitiesAfter = (after.communities ?? []).join(' ')
   if (communitiesBefore !== communitiesAfter) {
-    if (communitiesBefore === '') parts.push(`community ${communitiesAfter} added`)
-    else if (communitiesAfter === '') parts.push(`community ${communitiesBefore} removed`)
-    else parts.push(`community ${communitiesBefore} → ${communitiesAfter}`)
+    if (communitiesBefore === '') parts.push(t.detailCommAdded(communitiesAfter))
+    else if (communitiesAfter === '') parts.push(t.detailCommRemoved(communitiesBefore))
+    else parts.push(t.detailCommChanged(communitiesBefore, communitiesAfter))
   }
   if (before.asPath !== after.asPath) {
-    parts.push(`AS_PATH ${before.asPath || '(none)'} → ${after.asPath || '(none)'}`)
+    parts.push(
+      t.detailAttrChanged('AS_PATH', before.asPath || t.detailNone, after.asPath || t.detailNone)
+    )
   }
   if (before.med !== after.med) {
-    parts.push(`MED ${before.med ?? '(none)'} → ${after.med ?? '(none)'}`)
+    parts.push(
+      t.detailAttrChanged(
+        'MED',
+        before.med !== undefined ? String(before.med) : t.detailNone,
+        after.med !== undefined ? String(after.med) : t.detailNone
+      )
+    )
   }
   if (before.localPref !== after.localPref) {
-    parts.push(`LOCAL_PREF ${before.localPref ?? '(none)'} → ${after.localPref ?? '(none)'}`)
+    parts.push(
+      t.detailAttrChanged(
+        'LOCAL_PREF',
+        before.localPref !== undefined ? String(before.localPref) : t.detailNone,
+        after.localPref !== undefined ? String(after.localPref) : t.detailNone
+      )
+    )
   }
   if (before.nextHop !== after.nextHop) {
-    parts.push(`next hop ${before.nextHop || '(none)'} → ${after.nextHop || '(none)'}`)
+    parts.push(
+      t.detailAttrChanged(
+        'next hop',
+        before.nextHop || t.detailNone,
+        after.nextHop || t.detailNone
+      )
+    )
   }
 
   return parts.length > 0 ? parts.join(', ') : null
@@ -187,7 +209,12 @@ function describeChange(before: RouteState, after: RouteState): string | null {
  * comes first. Each of those endings means something different about how much
  * of the answer the capture holds, which is why `afterIncomplete` exists.
  */
-export function routeRefreshDiff(packets: BgpPacket[], index: number): RouteRefreshDiff | null {
+export function routeRefreshDiff(
+  packets: BgpPacket[],
+  index: number,
+  locale: Locale = 'en'
+): RouteRefreshDiff | null {
+  const t = getMessages(locale).packetDetail.routeRefresh
   const packet = packets[index]
   if (!packet) return null
 
@@ -235,13 +262,13 @@ export function routeRefreshDiff(packets: BgpPacket[], index: number): RouteRefr
       added.push({
         key,
         detail: state.communities?.length
-          ? `announced with community ${state.communities.join(' ')}`
-          : 'announced',
+          ? t.detailAnnouncedWithComm(state.communities.join(' '))
+          : t.detailAnnounced,
         packetIndex: state.packetIndex,
       })
       continue
     }
-    const difference = describeChange(previous, state)
+    const difference = describeChange(previous, state, locale)
     if (difference) changed.push({ key, detail: difference, packetIndex: state.packetIndex })
     else unchanged++
   }
@@ -250,7 +277,7 @@ export function routeRefreshDiff(packets: BgpPacket[], index: number): RouteRefr
     if (after.has(key)) continue
     removed.push({
       key,
-      detail: 'was not re-advertised',
+      detail: t.detailNotReAdvertised,
       // The packet that last announced it, which is the only place the capture
       // can show a route that has since stopped existing.
       packetIndex: state.packetIndex,

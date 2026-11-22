@@ -18,6 +18,7 @@ import type { EvpnRoute } from '../bgp/evpn'
 import type { ExtendedCommunity } from '../bgp/extended-communities'
 import { formatExtendedCommunity } from '../bgp/extended-communities'
 import { contains, formatPrefix, parseBgpPrefix, parsePrefix } from '../net/prefix'
+import { getMessages, type Locale } from '../../i18n/locale'
 
 // =============================================================================
 // Token Types
@@ -1384,7 +1385,13 @@ export interface Suggestion {
   insertText: string
 }
 
-export function getSuggestions(query: string, cursorPosition: number, packets: BgpPacket[]): Suggestion[] {
+export function getSuggestions(
+  query: string,
+  cursorPosition: number,
+  packets: BgpPacket[],
+  locale: Locale = 'en'
+): Suggestion[] {
+  const s = getMessages(locale).filterSuggestions
   const beforeCursor = query.slice(0, cursorPosition)
   const tokens = tokenize(beforeCursor).filter((t) => t.type !== 'eof')
   const lastToken = tokens[tokens.length - 1]
@@ -1401,8 +1408,8 @@ export function getSuggestions(query: string, cursorPosition: number, packets: B
     secondLastToken?.type === 'operator'
   ) {
     return [
-      { text: 'and', description: 'AND condition', insertText: 'and ' },
-      { text: 'or', description: 'OR condition', insertText: 'or ' },
+      { text: 'and', description: s.andDesc, insertText: 'and ' },
+      { text: 'or', description: s.orDesc, insertText: 'or ' },
     ]
   }
 
@@ -1455,39 +1462,39 @@ export function getSuggestions(query: string, cursorPosition: number, packets: B
   // After field - suggest operators
   if (lastToken?.type === 'field') {
     const suggestions: Suggestion[] = [
-      { text: '=', description: 'Equals', insertText: '=' },
-      { text: '!=', description: 'Not equals', insertText: '!=' },
+      { text: '=', description: s.opEq, insertText: '=' },
+      { text: '!=', description: s.opNeq, insertText: '!=' },
     ]
     if (isNumericField(lastToken.value)) {
       suggestions.push(
-        { text: '<', description: 'Less than', insertText: '<' },
-        { text: '<=', description: 'Less than or equal', insertText: '<=' },
-        { text: '>', description: 'Greater than', insertText: '>' },
-        { text: '>=', description: 'Greater than or equal', insertText: '>=' }
+        { text: '<', description: s.opLt, insertText: '<' },
+        { text: '<=', description: s.opLte, insertText: '<=' },
+        { text: '>', description: s.opGt, insertText: '>' },
+        { text: '>=', description: s.opGte, insertText: '>=' }
       )
     }
-    suggestions.push({ text: 'contains', description: 'Contains', insertText: 'contains ' })
+    suggestions.push({ text: 'contains', description: s.opContains, insertText: 'contains ' })
     return suggestions
   }
 
   // After logical operator with space - suggest fields
   if (endsWithSpace && (lastToken?.type === 'and' || lastToken?.type === 'or')) {
-    return getFieldSuggestions('')
+    return getFieldSuggestions('', locale)
   }
 
   // After logical operator (no space) - suggest fields
   if (lastToken?.type === 'and' || lastToken?.type === 'or') {
-    return getFieldSuggestions('')
+    return getFieldSuggestions('', locale)
   }
 
   // Typing something - filter fields
   if (lastToken?.type === 'string') {
     const currentWord = lastToken.value.toLowerCase()
-    return getFieldSuggestions(currentWord)
+    return getFieldSuggestions(currentWord, locale)
   }
 
   // Empty or start - show all fields
-  return getFieldSuggestions('')
+  return getFieldSuggestions('', locale)
 }
 
 /**
@@ -1509,7 +1516,8 @@ export function suggestionsAreSettled(beforeCursor: string, suggestions: Suggest
 }
 
 // Get field suggestions, including common examples
-function getFieldSuggestions(filter: string): Suggestion[] {
+function getFieldSuggestions(filter: string, locale: Locale = 'en'): Suggestion[] {
+  const s = getMessages(locale).filterSuggestions
   const suggestions: Suggestion[] = []
 
   // Add canonical field names with examples
@@ -1520,26 +1528,43 @@ function getFieldSuggestions(filter: string): Suggestion[] {
         : ''
       suggestions.push({
         text: key,
-        description: examples || info.description,
+        description: examples || s.fields[key] || info.description,
         insertText: key,
       })
     }
   }
 
-  for (const [field, desc] of Object.entries(BIDIRECTIONAL_FIELDS)) {
+  const bidirectionalDescriptions: Record<string, string> =
+    locale === 'ja'
+      ? {
+          ip: '送受信どちらかの IP（src_ip または dst_ip。例: ip = 10.0.13.1）',
+          peer: 'ip の別名（1 ピアの双方向）',
+        }
+      : BIDIRECTIONAL_FIELDS
+
+  for (const [field, desc] of Object.entries(bidirectionalDescriptions)) {
     if (!filter || field.includes(filter)) {
       suggestions.push({ text: field, description: desc, insertText: field })
     }
   }
 
   // Add common aliases
-  const aliasDescriptions: Record<string, string> = {
-    src: 'Source IP (alias for src_ip)',
-    dst: 'Destination IP (alias for dst_ip)',
-    as: 'Source AS (alias for src_as)',
-    aspath: 'AS in path (alias for asn)',
-    nexthop: 'Next hop (alias for next_hop)',
-  }
+  const aliasDescriptions: Record<string, string> =
+    locale === 'ja'
+      ? {
+          src: '送信元 IP（src_ip の別名）',
+          dst: '宛先 IP（dst_ip の別名）',
+          as: '送信元 AS（src_as の別名）',
+          aspath: 'AS_PATH 内の AS（asn の別名）',
+          nexthop: 'Next Hop（next_hop の別名）',
+        }
+      : {
+          src: 'Source IP (alias for src_ip)',
+          dst: 'Destination IP (alias for dst_ip)',
+          as: 'Source AS (alias for src_as)',
+          aspath: 'AS in path (alias for asn)',
+          nexthop: 'Next hop (alias for next_hop)',
+        }
 
   for (const [alias, desc] of Object.entries(aliasDescriptions)) {
     if (!filter || alias.toLowerCase().includes(filter)) {

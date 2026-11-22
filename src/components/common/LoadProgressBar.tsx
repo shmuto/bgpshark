@@ -1,4 +1,5 @@
-import type { LoadProgress } from '../../lib/load-progress'
+import { formatLoadProgressLabel, type LoadProgress } from '../../lib/load-progress'
+import { useI18n } from '../../i18n'
 
 /**
  * The gauge shown while a capture loads.
@@ -13,17 +14,19 @@ import type { LoadProgress } from '../../lib/load-progress'
  * does.
  */
 export function LoadProgressBar({ progress }: { progress: LoadProgress }) {
+  const { locale, t } = useI18n()
   const percent = Math.round(progress.fraction * 100)
+  const label = formatLoadProgressLabel(progress.stage, progress.done, progress.total, locale)
 
   return (
     <div className="w-full max-w-sm flex flex-col gap-2">
       <div
         role="progressbar"
-        aria-label="Loading capture"
+        aria-label={t.progress.ariaLabel}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent}
-        aria-valuetext={progress.label}
+        aria-valuetext={label}
         data-stage={progress.stage}
         className="h-2 w-full overflow-hidden rounded-full bg-surface-sunken border border-hair"
       >
@@ -33,7 +36,7 @@ export function LoadProgressBar({ progress }: { progress: LoadProgress }) {
         />
       </div>
       <div className="flex justify-between gap-4 text-xs text-muted">
-        <span>{progress.label}</span>
+        <span>{label}</span>
         <span className="font-mono tabular-nums">{percent}%</span>
       </div>
     </div>

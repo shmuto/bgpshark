@@ -1,5 +1,6 @@
 import type { BgpRouteRefreshMessage } from '../../lib/bgp/types'
 import type { RouteChange, RouteRefreshDiff } from '../../lib/bgp/route-refresh'
+import { useI18n } from '../../i18n'
 
 interface RouteRefreshMessageViewProps {
   message: BgpRouteRefreshMessage
@@ -22,46 +23,38 @@ function RefreshDiff({
   diff: RouteRefreshDiff
   onSelectPacket?: (packetIndex: number) => void
 }) {
+  const { t } = useI18n()
+  const rt = t.packetDetail.routeRefresh
   const total = diff.added.length + diff.removed.length + diff.changed.length
 
   return (
     <div className="rounded-lg border border-hair bg-surface-sunken p-3">
       <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-dim">
-        What the refresh changed
+        {rt.heading}
       </h4>
 
       <p className="text-sm text-body">
-        <span className="font-mono">{diff.peer}</span> re-advertised {diff.afiName}{' '}
+        <span className="font-mono">{diff.peer}</span> {rt.reAdvertisedVerb} {diff.afiName}{' '}
         {diff.safiName}
-        {total === 0 ? (
-          <>
-            {' '}
-            and nothing changed: {diff.unchanged} route{diff.unchanged === 1 ? '' : 's'} came
-            back exactly as before.
-          </>
-        ) : (
-          <>
-            . {diff.unchanged} route{diff.unchanged === 1 ? '' : 's'} came back unchanged.
-          </>
-        )}
+        {total === 0 ? rt.nothingChanged(diff.unchanged) : rt.someChanged(diff.unchanged)}
       </p>
 
       {total > 0 && (
         <div className="mt-2 space-y-2">
           <ChangeList
-            title="Added"
+            title={rt.added}
             tone="text-ok"
             changes={diff.added}
             onSelectPacket={onSelectPacket}
           />
           <ChangeList
-            title="No longer advertised"
+            title={rt.removed}
             tone="text-critical"
             changes={diff.removed}
             onSelectPacket={onSelectPacket}
           />
           <ChangeList
-            title="Attributes changed"
+            title={rt.changed}
             tone="text-warning"
             changes={diff.changed}
             onSelectPacket={onSelectPacket}
@@ -73,18 +66,10 @@ function RefreshDiff({
           from a partial window is still worth showing — it is the only one
           available — but not without saying which half is partial. */}
       {diff.beforeIncomplete && (
-        <p className="mt-2 text-sm text-muted">
-          The capture does not hold this session starting, so the &ldquo;before&rdquo; side is
-          only what it happened to catch. A route listed as no longer advertised may be one
-          that was announced before the capture began — or one that was never there.
-        </p>
+        <p className="mt-2 text-sm text-muted">{rt.beforeIncomplete}</p>
       )}
       {diff.afterIncomplete && (
-        <p className="mt-2 text-sm text-muted">
-          No End-of-RIB closed the re-advertisement in this capture, so the answer may be
-          incomplete: anything not re-sent before the capture ended is listed as no longer
-          advertised whether or not it was on its way.
-        </p>
+        <p className="mt-2 text-sm text-muted">{rt.afterIncomplete}</p>
       )}
     </div>
   )

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { FILTER_FIELDS, type FilterFieldName } from '../../lib/filter/parser'
 import { formatCondition } from '../../lib/filter/compose'
+import { useI18n } from '../../i18n'
 
 interface AddFilterPopoverProps {
   /** Values seen in the capture for a field, offered as a list where they exist. */
@@ -21,6 +22,7 @@ const OPERATORS = ['=', '!=', 'contains', 'not contains', '<', '<=', '>', '>='] 
  * there is only ever one filter, and it is always the text on screen.
  */
 export function AddFilterPopover({ valuesFor, onAdd }: AddFilterPopoverProps) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const [field, setField] = useState<FilterFieldName | 'ip'>('ip')
   const [operator, setOperator] = useState<(typeof OPERATORS)[number]>('=')
@@ -63,20 +65,20 @@ export function AddFilterPopover({ valuesFor, onAdd }: AddFilterPopoverProps) {
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
-        title="Build a condition from menus and add it to the filter"
+        title={t.messages.addFilterTitle}
         className="px-2 py-1.5 text-xs rounded border border-hair-strong text-muted hover:text-accent hover:border-accent"
       >
-        + Filter
+        {t.messages.addFilterButton}
       </button>
       {open && (
         <form
           onSubmit={submit}
-          aria-label="Add a filter condition"
+          aria-label={t.messages.addFilterFormAria}
           className="absolute right-0 top-full mt-1 z-30 bg-surface-raised border border-hair rounded-lg shadow-lg p-3 flex flex-col gap-2 w-72"
         >
           <div className="flex items-center gap-2">
             <select
-              aria-label="Field"
+              aria-label={t.messages.addFilterFieldAria}
               value={field}
               onChange={(e) => {
                 setField(e.target.value as FilterFieldName | 'ip')
@@ -92,7 +94,7 @@ export function AddFilterPopover({ valuesFor, onAdd }: AddFilterPopoverProps) {
               ))}
             </select>
             <select
-              aria-label="Operator"
+              aria-label={t.messages.addFilterOperatorAria}
               value={operator}
               onChange={(e) => setOperator(e.target.value as (typeof OPERATORS)[number])}
               className={control}
@@ -105,12 +107,14 @@ export function AddFilterPopover({ valuesFor, onAdd }: AddFilterPopoverProps) {
             </select>
           </div>
           <input
-            aria-label="Value"
+            aria-label={t.messages.addFilterValueAria}
             list="add-filter-values"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             inputMode={numeric ? 'numeric' : undefined}
-            placeholder={values.length > 0 ? 'Pick or type a value…' : 'Type a value…'}
+            placeholder={
+              values.length > 0 ? t.messages.addFilterPickOrType : t.messages.addFilterType
+            }
             className={`${control} w-full placeholder:text-dim`}
             autoFocus
           />
@@ -124,7 +128,7 @@ export function AddFilterPopover({ valuesFor, onAdd }: AddFilterPopoverProps) {
             disabled={!value.trim()}
             className="self-end px-3 py-1 text-xs bg-accent text-accent-fg rounded hover:bg-accent-hover disabled:opacity-50"
           >
-            Add (and)
+            {t.messages.addFilterSubmit}
           </button>
         </form>
       )}

@@ -11,6 +11,7 @@ import { extractSessionEvents, groupEventsBySession, type SessionState } from '.
 import { CapabilityDiff } from '../components/neighbor'
 import { countUpdatePrefixes, endOfRibMarker } from '../lib/bgp/update'
 import { formatDelta, formatTimeOfDayUtc } from '../lib/format-time'
+import { useI18n } from '../i18n'
 
 const SESSION_EVENT_TYPES = new Set(['OPEN', 'NOTIFICATION'])
 
@@ -73,6 +74,8 @@ interface SessionDetail {
 
 export function NeighborsPage() {
   const { packets } = useApp()
+  const { t } = useI18n()
+  const nt = t.neighbors
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -335,15 +338,15 @@ export function NeighborsPage() {
           const { announced, withdrawn } = countUpdatePrefixes(msg as BgpUpdateMessage)
           const eor = endOfRibMarker(msg as BgpUpdateMessage)
           const parts = []
-          if (announced > 0) parts.push(`${announced} announced`)
-          if (withdrawn > 0) parts.push(`${withdrawn} withdrawn`)
+          if (announced > 0) parts.push(t.messages.updateAnnouncedCount(announced))
+          if (withdrawn > 0) parts.push(t.messages.updateWithdrawnCount(withdrawn))
           result.push({
             timestamp: packet.timestamp,
             srcIp: packet.srcIp,
             dstIp: packet.dstIp,
             peerIp,
             type: 'UPDATE',
-            detail: eor ? `End-of-RIB (${eor})` : parts.join(', ') || 'empty',
+            detail: eor ? `End-of-RIB (${eor})` : parts.join(', ') || t.messages.updateEmpty,
             packetIndex: index,
           })
         } else if (msg.type === 'KEEPALIVE' || msg.type === 'ROUTE_REFRESH') {
@@ -372,7 +375,7 @@ export function NeighborsPage() {
     })
 
     return result.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
-  }, [selectedIps, packets])
+  }, [selectedIps, packets, t])
 
   // With a session selected, the list is that session's alone: one list with
   // the Δ column, rather than the router-wide list plus a second, narrower
@@ -567,9 +570,9 @@ export function NeighborsPage() {
       <div className="p-4 bg-surface border-b border-hair">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold text-strong">Neighbors Overview</h1>
+            <h1 className="text-lg font-semibold text-strong">{nt.title}</h1>
           </div>
-          <span className="text-sm text-muted">{routers.length} routers detected</span>
+          <span className="text-sm text-muted">{nt.routersDetected(routers.length)}</span>
         </div>
 
         {/* Search and Filter */}
@@ -579,12 +582,12 @@ export function NeighborsPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by IP, Router ID, or AS number..."
+              placeholder={nt.searchPlaceholder}
               className="w-full px-3 py-2 border border-hair rounded-lg text-sm focus:ring-2 focus:ring-accent focus:border-accent"
             />
           </div>
           <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1">
-            <span className="shrink-0 text-xs text-muted">Filter:</span>
+            <span className="shrink-0 text-xs text-muted">{nt.filterLabel}</span>
             {(['all', 'alerts', 'open'] as const).map((type) => (
               <button
                 key={type}
@@ -595,8 +598,8 @@ export function NeighborsPage() {
                     : 'bg-surface-sunken text-muted hover:bg-surface-raised'
                 }`}
               >
-                {type === 'all' ? 'All' :
-                 type === 'alerts' ? 'With NOTIFICATION' : 'OPEN Received'}
+                {type === 'all' ? nt.filterAll :
+                 type === 'alerts' ? nt.filterAlerts : nt.filterOpen}
               </button>
             ))}
           </div>
@@ -615,10 +618,12 @@ export function NeighborsPage() {
             <table className="w-full text-sm">
               <thead className="bg-surface-sunken sticky top-0">
                 <tr className="text-left text-muted">
-                  <th className="px-4 py-2 font-medium">Router ID / IP</th>
-                  <th className="px-4 py-2 font-medium">AS</th>
-                  <th className="px-4 py-2 font-medium text-right" title="Messages sent by this router (the detail pane's Message Summary counts both directions)">Sent</th>
-                  <th className="px-4 py-2 font-medium">Message Types</th>
+                  <th className="px-4 py-2 font-medium">{nt.colRouterId}</th>
+                  <th className="px-4 py-2 font-medium">{nt.colAs}</th>
+                  <th className="px-4 py-2 font-medium text-right" title={nt.colSentTitle}>
+                    {nt.colSent}
+                  </th>
+                  <th className="px-4 py-2 font-medium">{nt.colMessageTypes}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-hair">
@@ -634,7 +639,7 @@ export function NeighborsPage() {
                       <div className="font-mono text-strong">{router.displayName}</div>
                       {router.ips.length > 1 && (
                         <div className="text-xs text-muted">
-                          {router.ips.length} IPs
+                          {nt.ipsCount(router.ips.length)}
                         </div>
                       )}
                       {router.ips.length === 1 && router.displayName !== router.ips[0] && (
@@ -682,7 +687,7 @@ export function NeighborsPage() {
             </table>
             {filteredRouters.length === 0 && (
               <div className="text-center text-dim py-8">
-                No routers found
+                {nt.noRoutersFound}
               </div>
             )}
           </div>
@@ -696,7 +701,7 @@ export function NeighborsPage() {
             onDragStart={split.startDrag}
             onReset={split.reset}
             onNudge={split.nudge}
-            label="Resize the router list"
+            label={nt.resizeRouterList}
           />
         )}
 
@@ -705,7 +710,7 @@ export function NeighborsPage() {
         <div className="flex-1 overflow-auto p-4">
           {isCompact && selectedRouterInfo && (
             <div className="mb-3">
-              <BackToList onClick={() => setSelectedRouter(null)} label="Back to routers" />
+              <BackToList onClick={() => setSelectedRouter(null)} label={t.common.backToRouters} />
             </div>
           )}
           {selectedRouterInfo ? (
@@ -732,7 +737,7 @@ export function NeighborsPage() {
                     </div>
                     <button
                       onClick={() => setSelectedRouter(null)}
-                      aria-label="Close router details"
+                      aria-label={nt.closeRouterDetails}
                       className="text-dim hover:text-strong"
                     >
                       ✕
@@ -748,7 +753,7 @@ export function NeighborsPage() {
                       its messages — instead of being appended below the
                       router overview where nothing on screen changed. */}
                   <nav
-                    aria-label="Breadcrumb"
+                    aria-label={nt.breadcrumbAria}
                     className="bg-surface rounded-lg shadow-sm border border-hair px-4 py-2 flex items-center gap-2 text-sm flex-wrap"
                   >
                     <button
@@ -756,7 +761,7 @@ export function NeighborsPage() {
                       onClick={() => setSelectedPeer(null)}
                       className="text-accent hover:text-accent-hover"
                     >
-                      ← Router overview
+                      {nt.backToOverview}
                     </button>
                     <span className="text-dim">/</span>
                     <span className="text-muted">
@@ -774,7 +779,7 @@ export function NeighborsPage() {
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
                     <span className="text-sm font-medium text-strong">
-                      Capability Diff
+                      {nt.capabilityDiff}
                     </span>
                   </div>
                   <div className="p-4">
@@ -802,21 +807,25 @@ export function NeighborsPage() {
                   className="bg-surface rounded-lg shadow-sm border border-hair px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
                 >
                   <span className="font-medium text-strong">
-                    Prefix Activity ({selectedRouterInfo?.displayName} → {selectedPeer})
+                    {nt.prefixActivity(selectedRouterInfo?.displayName ?? '', selectedPeer)}
                   </span>
                   <span
                     className="font-mono text-xs text-muted"
-                    title="NLRI entries sent in UPDATEs, in this direction only; a prefix re-announced with new attributes counts again"
+                    title={nt.prefixActivityTitle}
                   >
-                    <span className="text-ok">{prefixActivity.announced} announced</span>
+                    <span className="text-ok">
+                      {t.messages.updateAnnouncedCount(prefixActivity.announced)}
+                    </span>
                     <span className="mx-1.5 text-dim">·</span>
-                    <span className="text-critical">{prefixActivity.withdrawn} withdrawn</span>
+                    <span className="text-critical">
+                      {t.messages.updateWithdrawnCount(prefixActivity.withdrawn)}
+                    </span>
                   </span>
                   <button
                     onClick={handleViewRoutes}
                     className="ml-auto text-xs text-accent hover:text-accent-hover"
                   >
-                    View Route Details →
+                    {nt.viewRouteDetails}
                   </button>
                 </div>
               )}
@@ -825,7 +834,7 @@ export function NeighborsPage() {
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between gap-2">
                     <span className="text-sm font-medium text-strong">
-                      Session Messages ({visibleSessionMessages.length})
+                      {nt.sessionMessages(visibleSessionMessages.length)}
                     </span>
                     <div className="flex items-center gap-1 text-xs">
                       {(['events', 'all'] as const).map((scope) => (
@@ -838,7 +847,7 @@ export function NeighborsPage() {
                               : 'text-muted hover:bg-surface-raised'
                           }`}
                         >
-                          {scope === 'events' ? 'OPEN / NOTIFICATION' : `All (${sessionMessageTotal})`}
+                          {scope === 'events' ? nt.scopeEvents : nt.scopeAll(sessionMessageTotal)}
                         </button>
                       ))}
                     </div>
@@ -867,7 +876,7 @@ export function NeighborsPage() {
                           {idx > 0 && (
                             <span
                               className="text-xs text-dim font-mono"
-                              title="Time since the previous message shown"
+                              title={nt.timeSincePrevTitle}
                             >
                               {formatDelta(
                                 msg.timestamp.getTime() - rows[idx - 1].timestamp.getTime()
@@ -892,11 +901,11 @@ export function NeighborsPage() {
                 {/* Message Summary */}
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-baseline justify-between gap-2">
-                    <span className="text-sm font-medium text-strong">Message Summary</span>
+                    <span className="text-sm font-medium text-strong">{nt.messageSummary}</span>
                     {/* The overview table's "Msgs" counts what this router sent;
                         this panel counts both directions of its sessions. Same
                         router, different questions — say which one this is. */}
-                    <span className="text-xs text-muted">sent + received</span>
+                    <span className="text-xs text-muted">{nt.sentPlusReceived}</span>
                   </div>
                   <div className="p-4">
                     {messageSummary && (
@@ -917,7 +926,7 @@ export function NeighborsPage() {
                 {/* Sessions */}
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
-                    <span className="text-sm font-medium text-strong">Sessions</span>
+                    <span className="text-sm font-medium text-strong">{nt.sessions}</span>
                   </div>
                   <div className="divide-y divide-hair max-h-48 overflow-auto">
                     {sessions.map((session) => {
@@ -947,13 +956,13 @@ export function NeighborsPage() {
                               return (
                                 <span
                                   className={`text-xs px-1.5 py-0.5 rounded ${SESSION_STATE_STYLE[state]}`}
-                                  title="State when the capture ended"
+                                  title={nt.stateAtEndTitle}
                                 >
                                   {state}
                                 </span>
                               )
                             })()}
-                            <span className="text-xs text-muted">{session.messageCount} msgs</span>
+                            <span className="text-xs text-muted">{nt.msgsCount(session.messageCount)}</span>
                             {session.hasNotification && <span className="text-critical">⚠</span>}
                           </div>
                         </div>
@@ -961,7 +970,7 @@ export function NeighborsPage() {
                     })}
                     {sessions.length === 0 && (
                       <div className="px-4 py-4 text-center text-dim text-sm">
-                        No sessions found
+                        {nt.noSessionsFound}
                       </div>
                     )}
                   </div>
@@ -973,7 +982,7 @@ export function NeighborsPage() {
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between gap-2">
                     <span className="text-sm font-medium text-strong">
-                      Session Messages ({visibleSessionMessages.length})
+                      {nt.sessionMessages(visibleSessionMessages.length)}
                     </span>
                     <div className="flex items-center gap-1 text-xs">
                       {(['events', 'all'] as const).map((scope) => (
@@ -986,7 +995,7 @@ export function NeighborsPage() {
                               : 'text-muted hover:bg-surface-raised'
                           }`}
                         >
-                          {scope === 'events' ? 'OPEN / NOTIFICATION' : `All (${sessionMessageTotal})`}
+                          {scope === 'events' ? nt.scopeEvents : nt.scopeAll(sessionMessageTotal)}
                         </button>
                       ))}
                     </div>
@@ -1015,7 +1024,7 @@ export function NeighborsPage() {
                           {idx > 0 && (
                             <span
                               className="text-xs text-dim font-mono"
-                              title="Time since the previous message shown"
+                              title={nt.timeSincePrevTitle}
                             >
                               {formatDelta(
                                 msg.timestamp.getTime() - rows[idx - 1].timestamp.getTime()
@@ -1036,12 +1045,14 @@ export function NeighborsPage() {
               {announcedPrefixes.length > 0 && (
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
-                    <span className="text-sm font-medium text-strong">Announced Prefixes ({announcedPrefixes.length})</span>
+                    <span className="text-sm font-medium text-strong">
+                      {nt.announcedPrefixes(announcedPrefixes.length)}
+                    </span>
                     <button
                       onClick={handleViewRoutes}
                       className="text-xs text-accent hover:text-accent-hover"
                     >
-                      View all routes →
+                      {nt.viewAllRoutes}
                     </button>
                   </div>
                   <div className="p-2 max-h-48 overflow-auto">
@@ -1051,7 +1062,7 @@ export function NeighborsPage() {
                           key={prefix}
                           type="button"
                           onClick={() => navigate(`/routes?prefix=${encodeURIComponent(prefix)}`)}
-                          title={`Open the route history of ${prefix}`}
+                          title={nt.openRouteHistoryTitle(prefix)}
                           className="px-2 py-0.5 bg-accent-subtle text-accent rounded text-xs font-mono hover:underline"
                         >
                           {prefix}
@@ -1059,7 +1070,7 @@ export function NeighborsPage() {
                       ))}
                       {announcedPrefixes.length > 100 && (
                         <span className="px-2 py-0.5 text-muted text-xs">
-                          +{announcedPrefixes.length - 100} more
+                          {nt.morePrefixes(announcedPrefixes.length - 100)}
                         </span>
                       )}
                     </div>
@@ -1076,13 +1087,13 @@ export function NeighborsPage() {
                   onClick={handleViewMessages}
                   className="px-4 py-2 bg-accent text-accent-fg text-sm rounded-lg hover:bg-accent-hover"
                 >
-                  Show all messages →
+                  {nt.showAllMessages}
                 </button>
               </div>
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-dim">
-              Select a router to view details
+              {nt.selectRouter}
             </div>
           )}
         </div>

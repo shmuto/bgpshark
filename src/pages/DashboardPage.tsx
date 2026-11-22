@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useI18n } from '../i18n'
 import { extractNeighbors, getLatestOpen } from '../lib/bgp/neighbor'
 import type { BgpPacket } from '../lib/bgp/types'
 import { minMax } from '../lib/range'
@@ -109,13 +110,16 @@ function computeTimeline(packets: BgpPacket[]): TimelineData {
 
 export function DashboardPage() {
   const { packets, allPackets } = useApp()
+  const { locale, t } = useI18n()
   const navigate = useNavigate()
 
   const summary = useMemo(() => computeSummary(packets), [packets])
   const alerts = useMemo(
     () =>
-      packets.length > 0 ? computeAlerts(packets, allPackets) : computeTransportAlerts(allPackets),
-    [packets, allPackets]
+      packets.length > 0
+        ? computeAlerts(packets, allPackets, locale)
+        : computeTransportAlerts(allPackets, locale),
+    [packets, allPackets, locale]
   )
   const neighborRows = useMemo(() => {
     const rows = computeNeighborRows(packets)
@@ -145,7 +149,7 @@ export function DashboardPage() {
       <div className="max-w-6xl mx-auto px-6 py-4 space-y-4">
         {/* The file name is not repeated here: the header already shows it. */}
         <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold text-strong">Dashboard</h1>
+          <h1 className="text-lg font-semibold text-strong">{t.dashboard.title}</h1>
         </div>
 
         <SummaryCards summary={summary} onSelect={handleSummarySelect} />

@@ -1,9 +1,12 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useApp } from '../../context/AppContext'
+import { useI18n } from '../../i18n'
+import { LanguageToggle } from './LanguageToggle'
 import { ThemeToggle } from './ThemeToggle'
 
 export function AppHeader() {
   const { status, fileName, reset } = useApp()
+  const { t } = useI18n()
   const navigate = useNavigate()
   const isReady = status === 'ready'
 
@@ -30,21 +33,21 @@ export function AppHeader() {
             read as one more view of the current capture, when it is a separate
             tool whose output replaces it. */}
         {isReady && (
-          <nav aria-label="Capture" className="-mx-1 flex items-center gap-1 overflow-x-auto px-1">
-            <NavItem to="/dashboard">Dashboard</NavItem>
-            <NavItem to="/messages">Messages</NavItem>
-            <NavItem to="/neighbors">Neighbors</NavItem>
-            <NavItem to="/routes">Routes</NavItem>
-            <NavItem to="/sql">SQL</NavItem>
+          <nav aria-label={t.nav.captureAria} className="-mx-1 flex items-center gap-1 overflow-x-auto px-1">
+            <NavItem to="/dashboard">{t.nav.dashboard}</NavItem>
+            <NavItem to="/messages">{t.nav.messages}</NavItem>
+            <NavItem to="/neighbors">{t.nav.neighbors}</NavItem>
+            <NavItem to="/routes">{t.nav.routes}</NavItem>
+            <NavItem to="/sql">{t.nav.sql}</NavItem>
           </nav>
         )}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
         {/* The builder is how you get a capture, so it is offered either way. */}
-        <nav aria-label="Tools" className="flex items-center gap-1">
-          <NavItem to="/builder">Build</NavItem>
-          <NavItem to="/manual">Help</NavItem>
+        <nav aria-label={t.nav.toolsAria} className="flex items-center gap-1">
+          <NavItem to="/builder">{t.nav.build}</NavItem>
+          <NavItem to="/manual">{t.nav.help}</NavItem>
         </nav>
         <div className="h-4 w-px bg-hair-strong" aria-hidden="true" />
         {/* File name */}
@@ -63,10 +66,11 @@ export function AppHeader() {
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-            New File
+            {t.nav.newFile}
           </button>
         )}
 
+        <LanguageToggle />
         <ThemeToggle />
 
         {/* GitHub link */}
@@ -75,7 +79,7 @@ export function AppHeader() {
           target="_blank"
           rel="noopener noreferrer"
           className="text-dim transition-colors hover:text-strong"
-          aria-label="View on GitHub"
+          aria-label={t.nav.viewOnGithub}
         >
           <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
             <path
