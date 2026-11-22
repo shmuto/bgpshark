@@ -1,6 +1,11 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { executeRawSql, isInitialized, isDataLoaded } from '../lib/db'
+import { describeSchema, type SchemaTableInfo } from '../lib/db/schema'
+
+/** Read once: the schema is fixed for the life of the app. */
+const SCHEMA = describeSchema()
 
 interface QueryResult {
   columns: string[]
@@ -103,6 +108,27 @@ export function SqlConsolePage() {
   const [error, setError] = useState<string | null>(null)
   const [isExecuting, setIsExecuting] = useState(false)
   const [queryHistory, setQueryHistory] = useState<string[]>([])
+  const editorRef = useRef<HTMLTextAreaElement>(null)
+
+  /**
+   * Puts a table or column name where the cursor is, so the schema panel can
+   * be used to write a query rather than only to read one off.
+   */
+  const insertAtCursor = useCallback((text: string) => {
+    const editor = editorRef.current
+    if (!editor) {
+      setQuery((q) => q + text)
+      return
+    }
+    const start = editor.selectionStart ?? editor.value.length
+    const end = editor.selectionEnd ?? start
+    const next = editor.value.slice(0, start) + text + editor.value.slice(end)
+    setQuery(next)
+    requestAnimationFrame(() => {
+      editor.focus()
+      editor.setSelectionRange(start + text.length, start + text.length)
+    })
+  }, [])
 
   // Two distinct failure states: the database never came up, or it is up but
   // the capture's packets never made it in. Querying in the second state
@@ -212,17 +238,22 @@ export function SqlConsolePage() {
         {/* Main Editor Area */}
         <div className="flex-1 flex flex-col gap-4 min-h-0">
           {/* SQL Editor */}
-          <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-[200px]">
+          <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col shrink-0">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
               <span className="text-sm font-medium text-strong">Query</span>
               <span className="text-xs text-muted">Ctrl+Enter to execute</span>
             </div>
+            {/* Ten rows by default, so the opening template is readable without
+                scrolling; the handle in the corner makes it taller. */}
             <textarea
+              ref={editorRef}
+              rows={10}
+              aria-label="SQL query"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="SELECT * FROM packets LIMIT 10"
-              className="flex-1 p-4 font-mono text-sm resize-none focus:outline-none bg-surface-sunken text-body"
+              className="p-4 font-mono text-sm resize-y min-h-[8rem] max-h-[70vh] focus:outline-none bg-surface-sunken text-body"
               disabled={!sqlUsable}
             />
             <div className="px-4 py-2 border-t border-hair bg-surface-sunken flex items-center gap-3">
@@ -249,7 +280,7 @@ export function SqlConsolePage() {
           </div>
 
           {/* Results */}
-          <div className="flex-1 bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0">
+          <div className="flex-1 bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-[12rem]">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between shrink-0">
               <span className="text-sm font-medium text-strong">
                 📊 Results {result ? `(${result.rows.length} rows)` : ''}
@@ -286,7 +317,7 @@ export function SqlConsolePage() {
                         <tr key={idx} className="hover:bg-surface-sunken">
                           {result.columns.map((col) => (
                             <td key={col} className="px-4 py-2 font-mono text-body">
-                              {formatValue(row[col])}
+                              <ResultCell column={col} row={row} />
                             </td>
                           ))}
                         </tr>
@@ -313,9 +344,11 @@ export function SqlConsolePage() {
         </div>
 
         {/* Sidebar - drops below the editor when there is no room beside it */}
-        <div className="w-full lg:w-72 flex flex-col gap-4 shrink-0">
+        {/* Scrolls on its own: with the full schema expanded it is taller
+            than the window, and squeezing the cards to fit made them overlap. */}
+        <div className="w-full lg:w-72 flex flex-col gap-4 shrink-0 lg:min-h-0 lg:overflow-y-auto">
           {/* Templates */}
-          <div className="bg-surface rounded-lg shadow-sm border border-hair">
+          <div className="bg-surface rounded-lg shadow-sm border border-hair shrink-0">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
               <span className="text-sm font-medium text-strong">📝 Query Templates</span>
             </div>
@@ -334,11 +367,11 @@ export function SqlConsolePage() {
 
           {/* History */}
           {queryHistory.length > 0 && (
-            <div className="bg-surface rounded-lg shadow-sm border border-hair flex-1 min-h-0 flex flex-col">
+            <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col shrink-0">
               <div className="px-4 py-2 border-b border-hair bg-surface-sunken shrink-0">
                 <span className="text-sm font-medium text-strong">📋 Query History</span>
               </div>
-              <div className="flex-1 overflow-auto p-2">
+              <div className="max-h-48 overflow-auto p-2">
                 {queryHistory.map((q, idx) => (
                   <button
                     key={idx}
@@ -354,27 +387,15 @@ export function SqlConsolePage() {
           )}
 
           {/* Schema */}
-          <div className="bg-surface rounded-lg shadow-sm border border-hair">
-            <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+          <div className="bg-surface rounded-lg shadow-sm border border-hair shrink-0">
+            <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-baseline justify-between gap-2">
               <span className="text-sm font-medium text-strong">📁 Schema</span>
+              <span className="text-xs text-dim">click a name to insert it</span>
             </div>
-            <div className="p-2 text-xs text-muted space-y-1">
-              <SchemaTable name="packets" columns={['frame_index', 'timestamp', 'src_ip', 'dst_ip', '...']} />
-              <SchemaTable name="messages" columns={['id', 'frame_index', 'type', '...']} />
-              <SchemaTable name="as_path" columns={['message_id', 'segment_index', 'asn']} />
-              <SchemaTable
-                name="nlri"
-                columns={['message_id', 'prefix', 'afi', 'safi', 'evpn_route_type', 'evpn_rd', 'evpn_mac', 'evpn_ip', 'evpn_vni', 'evpn_esi', '...']}
-              />
-              <SchemaTable
-                name="withdrawn"
-                columns={['message_id', 'prefix', 'afi', 'safi', 'evpn_route_type', 'evpn_rd', 'evpn_mac', 'evpn_ip', 'evpn_vni', 'evpn_esi', '...']}
-              />
-              <SchemaTable name="communities" columns={['message_id', 'asn', 'value', 'formatted']} />
-              <SchemaTable
-                name="extended_communities"
-                columns={['message_id', 'kind', 'value', 'formatted', 'transitive']}
-              />
+            <div className="p-2 text-xs text-muted space-y-1" data-testid="schema">
+              {SCHEMA.map((table) => (
+                <SchemaTable key={table.name} table={table} onInsert={insertAtCursor} />
+              ))}
             </div>
           </div>
         </div>
@@ -383,27 +404,94 @@ export function SqlConsolePage() {
   )
 }
 
-function SchemaTable({ name, columns }: { name: string; columns: string[] }) {
+function SchemaTable({ table, onInsert }: { table: SchemaTableInfo; onInsert: (text: string) => void }) {
   const [expanded, setExpanded] = useState(false)
 
   return (
     <div>
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 font-medium text-body hover:text-accent"
-      >
-        <span>{expanded ? '▼' : '▶'}</span>
-        {name}
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${table.name}`}
+          className="w-4 text-dim hover:text-accent"
+        >
+          {expanded ? '▼' : '▶'}
+        </button>
+        <button
+          type="button"
+          onClick={() => onInsert(table.name)}
+          title={`Insert ${table.name}`}
+          className="font-medium font-mono text-body hover:text-accent"
+        >
+          {table.name}
+        </button>
+        <span className="text-dim">({table.columns.length})</span>
+      </div>
       {expanded && (
-        <div className="ml-4 text-muted">
-          {columns.map((col) => (
-            <div key={col}>{col}</div>
+        <div className="ml-5">
+          {table.columns.map((column) => (
+            <button
+              key={column.name}
+              type="button"
+              onClick={() => onInsert(column.name)}
+              title={`Insert ${column.name}`}
+              className="w-full flex items-baseline justify-between gap-2 px-1 rounded hover:bg-surface-sunken"
+            >
+              <span className="font-mono text-body">{column.name}</span>
+              <span className="text-dim">{column.type}</span>
+            </button>
           ))}
         </div>
       )}
     </div>
   )
+}
+
+/**
+ * A result cell, linked onward when its column names something another screen
+ * can open: a `frame_index` opens that frame in Messages (All Packets, so a
+ * frame without BGP is reachable too), a `prefix` opens its route history.
+ * The round trip from "this row looks wrong" to the packet itself is the
+ * point of a query here.
+ */
+function ResultCell({ column, row }: { column: string; row: Record<string, unknown> }) {
+  const value = row[column]
+  const text = formatValue(value)
+  if (value === null || value === undefined) return <>{text}</>
+
+  if (column === 'frame_index' && /^\d+$/.test(text)) {
+    return (
+      <Link
+        to={`/messages?frame=${text}&all=1`}
+        title={`Open frame ${text} in Messages`}
+        className="text-accent hover:text-accent-hover hover:underline"
+      >
+        {text}
+      </Link>
+    )
+  }
+  if (column === 'prefix' && /^[0-9a-f:.]+(\/\d+)?$/i.test(text)) {
+    // The tables store the address and its length in separate columns. With
+    // both in the row the route is named exactly; with the address alone the
+    // routes screen is searched for it instead.
+    const length = row.prefix_length
+    const route = text.includes('/') ? text : length != null ? `${text}/${String(length)}` : null
+    const to = route
+      ? `/routes?prefix=${encodeURIComponent(route)}`
+      : `/routes?q=${encodeURIComponent(text)}`
+    return (
+      <Link
+        to={to}
+        title={`Open the route history of ${text}`}
+        className="text-accent hover:text-accent-hover hover:underline"
+      >
+        {text}
+      </Link>
+    )
+  }
+  return <>{text}</>
 }
 
 function formatValue(value: unknown): string {

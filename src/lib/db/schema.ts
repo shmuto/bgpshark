@@ -319,3 +319,43 @@ function hasStatement(chunk: string): boolean {
       .trim() !== ''
   )
 }
+
+export interface SchemaColumn {
+  name: string
+  type: string
+}
+
+export interface SchemaTableInfo {
+  name: string
+  columns: SchemaColumn[]
+}
+
+/**
+ * Every table and column the schema creates, with its declared type, read
+ * from the DDL above.
+ *
+ * The SQL console lists these so a query can be written without guessing:
+ * a hand-maintained list there had drifted into `...` for every wide table,
+ * which hid exactly the columns (`hold_time`, `med_value`, `evpn_vni`) that
+ * the interesting queries need. Read from `SCHEMA_SQL` rather than from
+ * DuckDB so the list is there before the database is, and cannot disagree
+ * with what was actually created.
+ */
+export function describeSchema(script: string = SCHEMA_SQL): SchemaTableInfo[] {
+  const tables: SchemaTableInfo[] = []
+  for (const statement of splitSqlStatements(script)) {
+    const header = statement.match(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\(/i)
+    if (!header) continue
+    const body = statement.slice(header.index! + header[0].length, statement.lastIndexOf(')'))
+    const columns: SchemaColumn[] = []
+    for (const rawLine of body.split('\n')) {
+      const line = rawLine.replace(/--.*$/, '').trim().replace(/,$/, '')
+      if (!line) continue
+      const column = line.match(/^(\w+)\s+([A-Z]+(?:\[\])?)/i)
+      if (!column || /^(PRIMARY|UNIQUE|FOREIGN|CHECK|CONSTRAINT)$/i.test(column[1])) continue
+      columns.push({ name: column[1], type: column[2].toUpperCase() })
+    }
+    tables.push({ name: header[1], columns })
+  }
+  return tables
+}

@@ -75,7 +75,9 @@ The search box supports three match modes:
 
 ### SQL
 
-Exposes the capture as queryable DuckDB tables for custom analysis across many prefixes or sessions. Check the sidebar for the schema and **Query Templates** for ready-made examples.
+Exposes the capture as queryable DuckDB tables for custom analysis across many prefixes or sessions. The sidebar **Schema** lists every table and column with its type; click a name to insert it at the cursor. **Query Templates** has ready-made examples, and the editor can be made taller from its bottom-right corner.
+
+In the results, a `frame_index` value opens that frame in **Messages** and a `prefix` value opens its route history on **Routes** (exactly, when the row also has `prefix_length`).
 
 Three details to keep in mind when writing SQL:
 

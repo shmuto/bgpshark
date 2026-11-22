@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { SCHEMA_SQL, DROP_TABLES_SQL, splitSqlStatements } from '../../../src/lib/db/schema'
+import { SCHEMA_SQL, DROP_TABLES_SQL, describeSchema, splitSqlStatements } from '../../../src/lib/db/schema'
 
 /**
  * DuckDB WASM takes one statement per call, so the schema script is cut up
@@ -90,5 +90,24 @@ describe('the schema survives being split', () => {
       (statement) => statement.match(/DROP TABLE IF EXISTS (\w+)/)?.[1] ?? []
     )
     expect(dropped.slice().sort()).toEqual(created.slice().sort())
+  })
+})
+
+describe('describeSchema', () => {
+  const tables = describeSchema()
+  const table = (name: string) => tables.find((t) => t.name === name)
+
+  test('lists every table the schema creates', () => {
+    const created = [...SCHEMA_SQL.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)].map((m) => m[1])
+    expect(tables.map((t) => t.name)).toEqual(created)
+  })
+
+  test('lists every column with its type, comments and all', () => {
+    expect(table('packets')?.columns.map((c) => c.name)).toContain('raw_data_base64')
+    expect(table('packets')?.columns.find((c) => c.name === 'parse_warnings')?.type).toBe('VARCHAR[]')
+    expect(table('messages')?.columns.find((c) => c.name === 'hold_time')?.type).toBe('INTEGER')
+    // Columns that follow a comment block inside the table are not lost.
+    expect(table('nlri')?.columns.map((c) => c.name)).toContain('evpn_eth_tag')
+    expect(table('nlri')?.columns.find((c) => c.name === 'afi')?.type).toBe('INTEGER')
   })
 })
