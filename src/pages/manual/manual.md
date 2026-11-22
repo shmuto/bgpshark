@@ -326,22 +326,28 @@ A healthy bidirectional session produces two rows of comparable size; a single r
 
 ## Filters
 
-The filter bar supports two modes over the same query language: **Simple** (dropdown rule builder) and **Advanced** (expression editor with autocomplete).
+The filter bar is a single query box with autocomplete. Press `/` or `Ctrl+K` (`⌘K`) to jump to it. **+ Filter** builds one condition from menus and appends it with `and`; the message-type badges write their filter into the same box.
+
+In the packet detail, hover an address, prefix, AS number, next hop or community and click **＋** to narrow the current filter by it, or **=** to filter on it alone.
 
 ```
 type = NOTIFICATION and src_ip = 10.0.0.1
+ip = 10.0.13.1
 asn = 65001
 prefix = 10.0.0.0/8 and not (type = KEEPALIVE)
 capability contains "Route Refresh"
 ```
 
-Combine conditions with `and`, `or`, `not`, and parentheses. Supported operators are `=`, `!=`, `contains`, and `not contains`; numeric fields also accept `<`, `<=`, `>`, and `>=`.
+Combine conditions with `and`, `or`, `not`, and parentheses. Supported operators are `=` (or `==`), `!=`, `contains`, and `not contains`; numeric fields also accept `<`, `<=`, `>`, and `>=`.
+
+A value typed on its own is read as the comparison it most likely means: an address (`10.0.13.1`) as `ip = 10.0.13.1`, a CIDR block (`10.0.0.0/8`) as `prefix = 10.0.0.0/8`, `AS65001` as `asn = 65001`, a MAC as `mac = …`, and a message type (`update`) as `type = UPDATE`.
 
 ### Fields
 
 | Field | Matches |
 |-------|---------|
 | `type` | `OPEN`, `UPDATE`, `NOTIFICATION`, `KEEPALIVE`, `ROUTE_REFRESH` |
+| `ip` / `peer` | Either address — `ip = X` is `src_ip = X or dst_ip = X`, and `ip != X` excludes X on both sides |
 | `src_ip` / `dst_ip` | Source / destination IP; CIDR matches any address inside the block |
 | `src_port` / `dst_port` | TCP port (separates multiple sessions between the same IP pair) |
 | `frame` | Frame number (e.g. `frame >= 100 and frame < 200`) |

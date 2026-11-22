@@ -1,8 +1,8 @@
-import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
+import { useState, useRef, useMemo, useEffect, useCallback, useLayoutEffect } from 'react'
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useFilter } from '../hooks/useFilter'
-import { BackToList, ColumnPicker, PacketList, PaneDivider, QueryInput, type DisplayPacket } from '../components/common'
+import { AddFilterPopover, BackToList, ColumnPicker, PacketList, PaneDivider, QueryInput, type DisplayPacket } from '../components/common'
 import { usePacketColumns } from '../hooks/usePacketColumns'
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { useSplitPane } from '../hooks/useSplitPane'
@@ -22,6 +22,8 @@ import type {
 } from '../lib/bgp/types'
 import { writePcap, sliceFileName, type GenericPacket } from '../lib/pcap'
 import { FILTER_FIELDS, matchTransportFrame, type FilterFieldName } from '../lib/filter/parser'
+import { appendCondition, formatCondition } from '../lib/filter/compose'
+import { FilterActionsContext } from '../context/filter-actions'
 
 const MESSAGE_TYPE_BADGE_COLORS: Record<string, string> = {
   OPEN: 'bg-bgp-open/15 text-bgp-open',
@@ -31,15 +33,6 @@ const MESSAGE_TYPE_BADGE_COLORS: Record<string, string> = {
   ROUTE_REFRESH: 'bg-bgp-route-refresh/15 text-bgp-route-refresh',
 }
 
-type FilterMode = 'simple' | 'advanced'
-type Operator = '=' | '!='
-
-interface FilterRule {
-  id: string
-  field: FilterFieldName | ''
-  operator: Operator
-  value: string
-}
 
 /**
  * Where Messages was left, so coming back to it through the header tab picks
@@ -113,13 +106,6 @@ function MessagesView() {
   const [showAllPackets, setShowAllPackets] = useState(
     () => new URLSearchParams(window.location.search).get('all') === '1'
   )
-  // A filter arriving in the URL opens in advanced mode: a dashboard alert
-  // links an expression the rule builder has no way to represent, and the
-  // builder starting empty would mean starting by throwing that filter away.
-  const [filterMode, setFilterMode] = useState<FilterMode>(
-    () => (new URLSearchParams(window.location.search).get('filter') ? 'advanced' : 'simple')
-  )
-  const [rules, setRules] = useState<FilterRule[]>([])
   // The list gets the larger share by default: its default columns need about
   // 720px to sit side by side, which a 50:50 split of a 1280–1440px window
   // does not leave, while the detail pane reads fine at 40%.
@@ -192,10 +178,6 @@ function MessagesView() {
 
     pushedFilterRef.current = urlFilter
     setQuery(urlFilter)
-    if (urlFilter) {
-      setFilterMode('advanced')
-      setRules([])
-    }
   }, [searchParams, setQuery])
 
   // Update URL when filter changes (use replace to avoid duplicate history entries)
@@ -278,6 +260,26 @@ function MessagesView() {
     }
     return rows
   }, [filteredPackets, packets, allPackets, showAllPackets, filterActive, parsedQuery])
+
+  /**
+   * The selection is an index into the rows, so a new filter would otherwise
+   * leave it pointing at whatever packet now sits in that row — after "filter
+   * on this value", a different packet than the one the value came from. Keep
+   * the same frame selected when it is still listed, and clear it when not.
+   */
+  const previousDisplayRef = useRef(displayPackets)
+  useLayoutEffect(() => {
+    const previous = previousDisplayRef.current
+    previousDisplayRef.current = displayPackets
+    if (previous === displayPackets || selectedPacketIndex === null) return
+    const frame = previous[selectedPacketIndex]?.packet.frameIndex
+    if (frame === undefined) return
+    const index = displayPackets.findIndex((p) => p.packet.frameIndex === frame)
+    if (index !== selectedPacketIndex) selectPacket(index >= 0 ? index : null)
+    // Only a change of rows moves the selection; the selection changing on its
+    // own is the reader's doing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayPackets])
 
   /**
    * A `?frame=` link names a frame by its index in the capture, which is the
@@ -541,279 +543,117 @@ function MessagesView() {
     }
   }, [packets])
 
-  // Convert rules to query string
-  const rulesToQuery = useCallback((filterRules: FilterRule[]): string => {
-    const validRules = filterRules.filter(r => r.field && r.value)
-    if (validRules.length === 0) return ''
-    return validRules
-      .map(r => `${r.field}${r.operator}${r.value}`)
-      .join(' and ')
-  }, [])
-
-  /**
-   * Rules and the query they compile to move together.
-   *
-   * This used to be an effect watching `rules`, which also ran on mount with
-   * no rules yet — compiling them to an empty query and wiping whatever the
-   * URL had just supplied. Every filter link into this screen died that way.
-   */
-  const applyRules = useCallback(
-    (next: FilterRule[]) => {
-      setRules(next)
-      setQuery(rulesToQuery(next))
+  /** Values seen in the capture for a field, for the + Filter popover. */
+  const valuesFor = useCallback(
+    (field: FilterFieldName | 'ip'): string[] => {
+      if (field === 'ip') {
+        return Array.from(new Set([...dynamicValues.src_ip, ...dynamicValues.dst_ip]))
+      }
+      const fieldDef = FILTER_FIELDS[field]
+      if (fieldDef.values.length > 0) return fieldDef.values as string[]
+      return dynamicValues[field as keyof typeof dynamicValues] ?? []
     },
-    [rulesToQuery, setQuery]
+    [dynamicValues]
   )
 
-  // Rule management functions
-  const addRule = () => {
-    applyRules([...rules, { id: crypto.randomUUID(), field: '', operator: '=', value: '' }])
-  }
+  const addCondition = useCallback(
+    (condition: string) => setQuery(appendCondition(query, condition)),
+    [query, setQuery]
+  )
 
-  const updateRule = (id: string, updates: Partial<FilterRule>) => {
-    applyRules(rules.map(r => r.id === id ? { ...r, ...updates } : r))
-  }
+  /** Apply as Filter, from a value in the packet detail. */
+  const filterActions = useMemo(
+    () => ({
+      apply: (field: string, value: string, mode: 'and' | 'replace') => {
+        const condition = formatCondition(field, '=', value)
+        setQuery(mode === 'replace' ? condition : appendCondition(query, condition))
+      },
+    }),
+    [query, setQuery]
+  )
 
-  const removeRule = (id: string) => {
-    applyRules(rules.filter(r => r.id !== id))
-  }
-
-  // Get values for a field
-  const getFieldValues = (field: FilterFieldName | ''): string[] => {
-    if (!field) return []
-    const fieldDef = FILTER_FIELDS[field]
-    // Static values from field definition
-    if (fieldDef.values.length > 0) {
-      return fieldDef.values as string[]
+  /**
+   * `/` or Ctrl/⌘+K jumps to the filter box. `/` only when no other text field
+   * has focus, so it can still be typed into one; Ctrl+K always.
+   */
+  const filterInputRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const typing =
+        !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      const slash = e.key === '/' && !typing && !e.ctrlKey && !e.metaKey && !e.altKey
+      const ctrlK = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'
+      if (!slash && !ctrlK) return
+      e.preventDefault()
+      filterInputRef.current?.focus()
+      filterInputRef.current?.select()
     }
-    // Dynamic values from packets
-    const dv = dynamicValues[field as keyof typeof dynamicValues]
-    if (dv) {
-      // Limit to 100 items for performance
-      return dv.slice(0, 100)
-    }
-    return []
-  }
-
-  // Handle mode switch
-  const handleModeSwitch = (mode: FilterMode) => {
-    if (mode === 'advanced' && filterMode === 'simple') {
-      // Simple -> Advanced: carry over the query (already synced via rulesToQuery)
-      setFilterMode('advanced')
-    } else if (mode === 'simple' && filterMode === 'advanced') {
-      // Advanced -> Simple: clear rules (don't parse query back)
-      setRules([])
-      setQuery('')
-      setFilterMode('simple')
-    }
-  }
-
-  const clearFilter = () => {
-    if (filterMode === 'simple') {
-      setRules([])
-    }
-    setQuery('')
-  }
-
-  // Available filter fields for dropdown
-  const filterFields = Object.keys(FILTER_FIELDS) as FilterFieldName[]
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-canvas">
-      {/* Filter Bar */}
-      <div className="px-4 py-3 border-b border-hair bg-surface-sunken space-y-2">
-        {/* Header row with mode toggle and packet display toggle */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {/* Filter mode toggle */}
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-muted">Filter:</span>
-              <button
-                onClick={() => handleModeSwitch('simple')}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
-                  filterMode === 'simple'
-                    ? 'bg-accent text-accent-fg'
-                    : 'bg-surface-sunken text-muted hover:bg-surface-raised'
-                }`}
-              >
-                Simple
-              </button>
-              <button
-                onClick={() => handleModeSwitch('advanced')}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
-                  filterMode === 'advanced'
-                    ? 'bg-accent text-accent-fg'
-                    : 'bg-surface-sunken text-muted hover:bg-surface-raised'
-                }`}
-              >
-                Advanced
-              </button>
-            </div>
-
-            <div className="h-4 w-px bg-hair-strong" />
-
-            {/* Packet display toggle */}
-            <div className="flex items-center gap-1">
-              <span className="text-xs text-muted">Show:</span>
-              <button
-                onClick={() => { setShowAllPackets(false); selectPacket(null) }}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
-                  !showAllPackets
-                    ? 'bg-accent text-accent-fg'
-                    : 'bg-surface-sunken text-muted hover:bg-surface-raised'
-                }`}
-              >
-                BGP Only
-              </button>
-              <button
-                onClick={() => { setShowAllPackets(true); selectPacket(null) }}
-                className={`px-2 py-1 text-xs rounded transition-colors ${
-                  showAllPackets
-                    ? 'bg-accent text-accent-fg'
-                    : 'bg-surface-sunken text-muted hover:bg-surface-raised'
-                }`}
-              >
-                All Packets
-              </button>
-            </div>
+      {/* Filter Bar — one query box, always there, the way Wireshark's
+          display filter is. The menus that used to be a separate "Simple"
+          mode now write into it (+ Filter), so the filter on screen is
+          always the filter in effect. */}
+      <div className="px-4 py-2 border-b border-hair bg-surface-sunken space-y-2">
+        <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
+          <div className="flex-1 min-w-[16rem]">
+            <QueryInput
+              value={query}
+              onChange={setQuery}
+              packets={packets}
+              hasError={showParseErrors}
+              inputRef={filterInputRef}
+              ariaLabel="Filter"
+              placeholder="Filter — type = UPDATE, ip = 192.0.2.1, 198.51.100.0/24, AS65001   ( / to focus)"
+            />
           </div>
-
-          {/* Clear button */}
-          {(query || rules.length > 0) && (
+          <AddFilterPopover valuesFor={valuesFor} onAdd={addCondition} />
+          {query && (
             <button
-              onClick={clearFilter}
-              className="px-3 py-1 text-xs text-muted hover:bg-surface-sunken rounded transition-colors"
+              onClick={() => setQuery('')}
+              className="shrink-0 px-2 py-1.5 text-xs text-muted hover:bg-surface-raised rounded transition-colors"
             >
               Clear Filter
             </button>
           )}
+
+          <div className="h-4 w-px bg-hair-strong shrink-0" />
+
+          {/* Packet display toggle */}
+          <div className="flex items-center gap-1 shrink-0">
+            <span className="text-xs text-muted">Show:</span>
+            <button
+              onClick={() => { setShowAllPackets(false); selectPacket(null) }}
+              className={`px-2 py-1 text-xs rounded transition-colors ${
+                !showAllPackets
+                  ? 'bg-accent text-accent-fg'
+                  : 'bg-surface-sunken text-muted hover:bg-surface-raised'
+              }`}
+            >
+              BGP Only
+            </button>
+            <button
+              onClick={() => { setShowAllPackets(true); selectPacket(null) }}
+              className={`px-2 py-1 text-xs rounded transition-colors ${
+                showAllPackets
+                  ? 'bg-accent text-accent-fg'
+                  : 'bg-surface-sunken text-muted hover:bg-surface-raised'
+              }`}
+            >
+              All Packets
+            </button>
+          </div>
         </div>
-
-        {/* Filter input area */}
-        {filterMode === 'advanced' ? (
-          /* Advanced mode - text query input */
-          <div className="flex items-center gap-2">
-            <span className="text-dim text-sm">Query:</span>
-            <div className="flex-1">
-              <QueryInput
-                value={query}
-                onChange={setQuery}
-                packets={packets}
-                hasError={showParseErrors}
-              />
-            </div>
-          </div>
-        ) : (
-          /* Simple mode - rule builder */
-          <div className="space-y-2">
-            {rules.length === 0 ? (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-muted">No filters applied.</span>
-                <button
-                  onClick={addRule}
-                  className="px-2 py-1 text-xs bg-accent text-accent-fg rounded hover:bg-accent-hover transition-colors flex items-center gap-1"
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  Add Filter
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                {rules.map((rule, index) => (
-                  <div key={rule.id} className="flex items-center gap-2">
-                    {index > 0 && (
-                      <span className="text-xs text-dim w-8 text-center">AND</span>
-                    )}
-                    {index === 0 && <span className="w-8" />}
-
-                    {/* Field selector */}
-                    <select
-                      value={rule.field}
-                      onChange={(e) => updateRule(rule.id, { field: e.target.value as FilterFieldName | '', value: '' })}
-                      className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body min-w-[100px]"
-                    >
-                      <option value="">Select field...</option>
-                      {filterFields.map((field) => (
-                        <option key={field} value={field}>{field}</option>
-                      ))}
-                    </select>
-
-                    {/* Operator selector */}
-                    <select
-                      value={rule.operator}
-                      onChange={(e) => updateRule(rule.id, { operator: e.target.value as Operator })}
-                      className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body w-16"
-                    >
-                      <option value="=">=</option>
-                      <option value="!=">!=</option>
-                    </select>
-
-                    {/* Value selector */}
-                    {(() => {
-                      const values = getFieldValues(rule.field)
-                      if (values.length > 0) {
-                        return (
-                          <select
-                            value={rule.value}
-                            onChange={(e) => updateRule(rule.id, { value: e.target.value })}
-                            className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body min-w-[120px]"
-                          >
-                            <option value="">Select value...</option>
-                            {values.map((v) => (
-                              <option key={v} value={v}>{v}</option>
-                            ))}
-                          </select>
-                        )
-                      }
-                      // Ports and frame numbers have no value list to offer, so
-                      // they land here as free text — typed as a number.
-                      const isNumeric = rule.field !== '' && FILTER_FIELDS[rule.field].valueType === 'number'
-                      return (
-                        <input
-                          type="text"
-                          inputMode={isNumeric ? 'numeric' : undefined}
-                          value={rule.value}
-                          onChange={(e) => updateRule(rule.id, { value: e.target.value })}
-                          placeholder={isNumeric ? 'Enter number...' : 'Enter value...'}
-                          className="px-2 py-1 text-xs rounded border border-hair-strong bg-surface text-body min-w-[120px] placeholder:text-dim"
-                        />
-                      )
-                    })()}
-
-                    {/* Remove button */}
-                    <button
-                      onClick={() => removeRule(rule.id)}
-                      className="p-1 text-dim hover:text-critical transition-colors"
-                      title="Remove filter"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
-
-                {/* Add rule button */}
-                <button
-                  onClick={addRule}
-                  className="ml-8 px-2 py-1 text-xs text-muted hover:text-accent transition-colors flex items-center gap-1"
-                >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  Add Filter
-                </button>
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Message counts up front, because the list is virtualized: 27 UPDATEs
             that all sit below the fold are otherwise invisible to someone
-            scanning the Type column. Clicking a badge filters to that type
-            without knowing the filter syntax. */}
+            scanning the Type column. Clicking a badge writes its filter into
+            the query box like any other filter. */}
         {!showAllPackets && packets.length > 0 && (
           <div className="flex items-center gap-1.5 text-xs flex-wrap">
             {(Object.entries(messageTypeCounts) as [string, number][])
@@ -952,6 +792,7 @@ function MessagesView() {
           </div>
           <div className="flex-1 overflow-auto">
             {selectedBgpPacket ? (
+              <FilterActionsContext.Provider value={filterActions}>
               <PacketDetail
                 packet={selectedBgpPacket}
                 holdTimer={holdTimer}
@@ -961,6 +802,7 @@ function MessagesView() {
                 sessionPrevious={sessionPrevious}
                 keepalive={keepalive}
               />
+              </FilterActionsContext.Provider>
             ) : selectedGenericPacket ? (
               <GenericPacketDetail packet={selectedGenericPacket} />
             ) : (

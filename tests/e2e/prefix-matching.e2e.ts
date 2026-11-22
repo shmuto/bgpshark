@@ -55,6 +55,7 @@ test.describe('prefix matching', () => {
 
   test('the route screen agrees with the filter for the same text', async ({ page }) => {
     await page.getByRole('link', { name: 'Routes', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Prefix Statistics' })).toBeVisible()
     await page.locator('input[placeholder*="10.0.0.0"]').first().fill('10.0.0.0/8')
     await page.getByRole('button', { name: 'Search' }).click()
     await expect(page.getByText(/\d+ prefixes/)).toBeVisible()

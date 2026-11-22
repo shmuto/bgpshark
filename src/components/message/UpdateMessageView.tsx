@@ -1,4 +1,5 @@
 import { usePersistentFlag } from '../../hooks/usePersistentFlag'
+import { FilterableValue } from './FilterableValue'
 import type {
   BgpUpdateMessage,
   BgpPathAttribute,
@@ -83,7 +84,7 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
                   <div className="flex flex-wrap gap-1">
                     {allNlri.slice(0, 8).map((prefix, i) => (
                       <span key={i} className="font-mono text-xs bg-ok-subtle text-ok px-1.5 py-0.5 rounded">
-                        {formatPrefix(prefix)}
+                        <FilterablePrefix prefix={prefix} />
                         <PathId prefix={prefix} />
                       </span>
                     ))}
@@ -104,7 +105,7 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
                   <div className="flex flex-wrap gap-1">
                     {allWithdrawn.slice(0, 5).map((prefix, i) => (
                       <span key={i} className="font-mono text-xs bg-critical-subtle text-critical px-1.5 py-0.5 rounded line-through">
-                        {formatPrefix(prefix)}
+                        <FilterablePrefix prefix={prefix} />
                         <PathId prefix={prefix} />
                       </span>
                     ))}
@@ -121,7 +122,9 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
             {nextHop && (
               <tr className="border-b border-hair">
                 <td className="px-3 py-2 text-muted">Next Hop</td>
-                <td className="px-3 py-2 font-mono" colSpan={2}>{nextHop}</td>
+                <td className="px-3 py-2 font-mono" colSpan={2}>
+                  <FilterableValue field="next_hop" value={nextHop} />
+                </td>
               </tr>
             )}
             {asPath.length > 0 && (
@@ -220,9 +223,11 @@ function AsPathCompact({ segments }: { segments: AsPathSegment[] }) {
   const remaining = allAsns.length - displayAsns.length
 
   return (
-    <span className="font-mono">
-      {displayAsns.join(' ')}
-      {remaining > 0 && <span className="text-dim"> +{remaining}</span>}
+    <span className="font-mono inline-flex flex-wrap items-center gap-x-1.5">
+      {displayAsns.map((asn, i) => (
+        <FilterableValue key={i} field="asn" value={String(asn)} />
+      ))}
+      {remaining > 0 && <span className="text-dim">+{remaining}</span>}
     </span>
   )
 }
@@ -247,13 +252,29 @@ function PathId({ prefix }: { prefix: BgpPrefix }) {
   )
 }
 
+/**
+ * A prefix that can be filtered on. EVPN routes have no prefix to filter by —
+ * their MAC is the handle, so that is what they offer instead.
+ */
+function FilterablePrefix({ prefix }: { prefix: BgpPrefix }) {
+  const text = formatPrefix(prefix)
+  if (prefix.evpn) {
+    return prefix.evpn.macAddress ? (
+      <FilterableValue field="mac" value={prefix.evpn.macAddress}>{text}</FilterableValue>
+    ) : (
+      <>{text}</>
+    )
+  }
+  return <FilterableValue field="prefix" value={text} />
+}
+
 function PrefixList({ prefixes, className }: { prefixes: BgpPrefix[]; className: string }) {
   return (
     <div className={`rounded-lg border p-3 ${className}`}>
       <div className="flex flex-wrap gap-1">
         {prefixes.map((prefix, i) => (
           <span key={i} className="font-mono text-xs bg-surface px-1.5 py-0.5 rounded border border-hair">
-            {formatPrefix(prefix)}
+            <FilterablePrefix prefix={prefix} />
             <PathId prefix={prefix} />
           </span>
         ))}
@@ -314,7 +335,11 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
       return <AsPathView segments={parsed.segments} />
 
     case 'NEXT_HOP':
-      return <span className="font-mono">{parsed.address}</span>
+      return (
+        <span className="font-mono">
+          <FilterableValue field="next_hop" value={parsed.address} />
+        </span>
+      )
 
     case 'MULTI_EXIT_DISC':
       return <span className="font-mono">MED: {parsed.value}</span>
@@ -337,7 +362,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
         <div className="flex flex-wrap gap-1 mt-1">
           {parsed.communities.map((comm, i) => (
             <span key={i} className="font-mono text-xs bg-bgp-keepalive/15 text-bgp-keepalive px-1.5 py-0.5 rounded">
-              {comm}
+              <FilterableValue field="community" value={comm} />
             </span>
           ))}
         </div>
@@ -372,7 +397,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
         <div className="flex flex-wrap gap-1 mt-1">
           {parsed.communities.map((comm, i) => (
             <span key={i} className="font-mono text-xs bg-bgp-keepalive/15 text-bgp-keepalive px-1.5 py-0.5 rounded">
-              {comm.globalAdmin}:{comm.localData1}:{comm.localData2}
+              <FilterableValue field="community" value={`${comm.globalAdmin}:${comm.localData1}:${comm.localData2}`} />
             </span>
           ))}
         </div>
@@ -438,7 +463,7 @@ function AsPathView({ segments }: { segments: AsPathSegment[] }) {
 
           {segment.asNumbers.map((asn, j) => (
             <span key={j} className="font-mono text-xs bg-bgp-update/15 text-bgp-update px-1.5 py-0.5 rounded">
-              {asn}
+              <FilterableValue field="asn" value={String(asn)} />
             </span>
           ))}
 

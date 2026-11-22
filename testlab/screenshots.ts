@@ -94,7 +94,6 @@ function card(page: Page, title: string): Locator {
 
 /** Types a filter expression and waits past the DuckDB debounce. */
 async function filter(page: Page, expression: string): Promise<void> {
-  await page.getByRole('button', { name: 'Advanced' }).click()
   const input = page.locator('input[type="text"]').first()
   await input.click()
   await input.fill(expression)
@@ -271,6 +270,9 @@ const SHOTS: Shot[] = [
     scenario: 's10',
     take: async (page) => {
       await go(page, 'Dashboard')
+      // The panel shows five rows until asked for more, and the withdrawal
+      // burst the manual points at is below the fold.
+      await page.getByRole('button', { name: /Show \d+ more alerts?/ }).click()
       return card(page, 'Alerts')
     },
   },

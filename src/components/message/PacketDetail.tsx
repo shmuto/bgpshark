@@ -5,6 +5,7 @@ import { KeepaliveMessageView } from './KeepaliveMessageView'
 import { UpdateMessageView } from './UpdateMessageView'
 import { RouteRefreshMessageView } from './RouteRefreshMessageView'
 import { HexDump } from '../common/HexDump'
+import { FilterableValue } from './FilterableValue'
 import type { HoldTimerContext, KeepaliveContext } from '../../lib/bgp/hold-timer'
 import type { RouteRefreshDiff } from '../../lib/bgp/route-refresh'
 import { formatDelta } from '../../lib/format-time'
@@ -83,13 +84,13 @@ export function PacketDetail({
           <div className="flex justify-between">
             <span className="text-muted">Source</span>
             <span className="font-mono">
-              {packet.srcIp}:{packet.srcPort}
+              <FilterableValue field="src_ip" value={packet.srcIp}>{packet.srcIp}</FilterableValue>:{packet.srcPort}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted">Destination</span>
             <span className="font-mono">
-              {packet.dstIp}:{packet.dstPort}
+              <FilterableValue field="dst_ip" value={packet.dstIp}>{packet.dstIp}</FilterableValue>:{packet.dstPort}
             </span>
           </div>
           {messages.length > 1 && (

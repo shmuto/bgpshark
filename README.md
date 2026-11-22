@@ -15,7 +15,7 @@ Inspect OPEN, UPDATE, NOTIFICATION, KEEPALIVE, and ROUTE-REFRESH messages withou
 - **Neighbor Analysis** — Sessions grouped by Router ID with side-by-side OPEN / capability diffs and ADD-PATH negotiation results.
 - **Route Analysis** — Per-prefix announce/withdraw history, flap counts, and best-path attributes (AS_PATH, Next Hop, MED, LOCAL_PREF, communities).
 - **SQL Console** — Query the capture directly in the browser with DuckDB WASM.
-- **Filter expressions** — Simple rule-builder and Advanced expression syntax (e.g. `type = NOTIFICATION and src_ip = 10.0.0.1`) with autocomplete and CIDR-aware prefix matching. See the in-app manual ([`src/pages/manual/manual.md`](src/pages/manual/manual.md)) for the full filter reference.
+- **Filter expressions** — one Wireshark-style query box (e.g. `type = NOTIFICATION and ip = 10.0.0.1`, or just `10.0.0.1`) with autocomplete, a menu-driven **+ Filter**, and apply-as-filter from packet details and CIDR-aware prefix matching. See the in-app manual ([`src/pages/manual/manual.md`](src/pages/manual/manual.md)) for the full filter reference.
 - **Capture Builder** — Generate realistic BGP pcap files directly in the browser from presets or custom peer/message sequences.
 - **In-app User Manual** — Available at `/manual` in English and Japanese, covering every screen, the filter language, and symptom-based troubleshooting walkthroughs.
 - **Light / dark theme** and **IndexedDB persistence** across reloads.

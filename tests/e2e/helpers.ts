@@ -72,7 +72,6 @@ export async function prefixCount(page: Page): Promise<number> {
  * appears first.
  */
 export async function applyFilter(page: Page, expression: string) {
-  await page.getByRole('button', { name: 'Advanced' }).click()
   const input = page.locator('input[type="text"]').first()
   await input.click()
   await input.fill(expression)

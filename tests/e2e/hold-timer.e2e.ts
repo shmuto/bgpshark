@@ -50,8 +50,6 @@ test.describe('the silence before a hold timer teardown', () => {
     // capture.
     await loadCapture(page, 'holdtimer.pcap', holdTimerExpiryCapture())
     await openMessagesAfterLoad(page)
-
-    await page.getByRole('button', { name: 'Advanced' }).click()
     const input = page.locator('input[type="text"]').first()
     await input.click()
     await input.fill('type == NOTIFICATION')

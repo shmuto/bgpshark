@@ -94,7 +94,9 @@ Path Identifiers are retained per prefix and displayed on packet detail chips an
 Screen state is synchronized with URL query parameters (`?filter=`, `?selected=`, `?frame=`, `?all=1`, `?router=`, `?peer=`, and route search/sort/mode).
 
 #### 2.1.9 Filtering
-Two UI modes (**Simple** rule builder and **Advanced** expression editor with autocomplete) share one grammar: `field (= | != | contains | not contains | < | <= | > | >=) value`, combined with `and`, `or`, `not`, and parentheses. Ordered operators apply to numeric fields only.
+One always-visible query box with autocomplete (focused by `/` or Ctrl/⌘+K), plus a **+ Filter** popover that builds a condition from menus and appends it to the box, so the text on screen is always the filter in effect. Packet-detail values (addresses, prefixes, ASNs, next hops, communities) offer "add to filter" / "filter on". Grammar: `field (= | == | != | contains | not contains | < | <= | > | >=) value`, combined with `and`, `or`, `not`, and parentheses. Ordered operators apply to numeric fields only.
+
+`ip` / `peer` and bare values are rewritten into ordinary comparisons while parsing, so both backends see only canonical fields: `ip <op> X` becomes `src_ip <op> X or dst_ip <op> X` (`and` for `!=` / `not contains`); a bare address becomes `ip = X`, a bare CIDR `prefix = X`, `AS<n>` `asn = n`, a bare MAC `mac = X`, and a bare message type `type = X`.
 
 Expressions parse once into an AST (`src/lib/filter/parser.ts`) and run either via DuckDB SQL (`src/lib/db/filter-to-sql.ts`) or in memory when DuckDB is unavailable. Optional numeric attributes (`med`, `local_pref`) are never coerced to `0`: an UPDATE lacking the attribute matches no comparison on that field in either backend.
 

@@ -8,12 +8,15 @@ interface QueryInputProps {
   packets: BgpPacket[]
   placeholder?: string
   hasError?: boolean
+  /** Lets the page focus the box from a keyboard shortcut. */
+  inputRef?: React.RefObject<HTMLInputElement>
+  ariaLabel?: string
 }
 
 /** Nothing in the suggestion list is selected. Enter applies the filter instead. */
 const NO_SELECTION = -1
 
-export function QueryInput({ value, onChange, packets, placeholder, hasError }: QueryInputProps) {
+export function QueryInput({ value, onChange, packets, placeholder, hasError, inputRef: externalRef, ariaLabel }: QueryInputProps) {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   /**
    * Which suggestion the user has picked, not merely which one is first.
@@ -26,7 +29,8 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
   const [selectedIndex, setSelectedIndex] = useState(NO_SELECTION)
   const [showSuggestions, setShowSuggestions] = useState(false)
   const [isComposing, setIsComposing] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const ownRef = useRef<HTMLInputElement>(null)
+  const inputRef = externalRef ?? ownRef
   const suggestionsRef = useRef<HTMLDivElement>(null)
 
   const updateSuggestions = useCallback(
@@ -188,6 +192,7 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError }: 
         </svg>
         <input
           ref={inputRef}
+          aria-label={ariaLabel}
           type="text"
           value={value}
           onChange={handleChange}
