@@ -358,7 +358,8 @@ A value typed on its own is read as the comparison it most likely means: an addr
 | `next_hop` | NEXT_HOP or MP_REACH next hop |
 | `med` | MULTI_EXIT_DISC (supports ranges; absent MED matches nothing) |
 | `local_pref` | LOCAL_PREF (supports ranges; iBGP only, absent LOCAL_PREF matches nothing) |
-| `prefix` | Announced or withdrawn prefix |
+| `prefix` | Announced or withdrawn prefix — the whole history of a route |
+| `nlri` | Announced prefix only |
 | `withdrawn` | Withdrawn prefix only |
 | `community` | Standard or large community |
 | `rt` | Route Target (e.g. `rt = 65001:100`) |
@@ -366,7 +367,7 @@ A value typed on its own is read as the comparison it most likely means: an addr
 | `mac` / `vni` / `rd` / `evpn_type` | EVPN route attributes |
 | `capability` | Capability name from OPEN |
 
-Supported aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `nlri`, `router-id`, `my_as`, `large-community`, `route-target`, `ext-community`, `evpn-type`.
+Supported aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `router-id`, `my_as`, `large-community`, `route-target`, `ext-community`, `evpn-type`.
 
 ### How prefixes match
 

@@ -358,7 +358,8 @@ capability contains "Route Refresh"
 | `next_hop` | NEXT_HOP または MP_REACH のネクストホップ |
 | `med` | MULTI_EXIT_DISC（範囲比較可。MED を持たない UPDATE には不一致） |
 | `local_pref` | LOCAL_PREF（範囲比較可。iBGP のみ。属性がない UPDATE には不一致） |
-| `prefix` | 広告または取り消し（Withdraw）されたプレフィックス |
+| `prefix` | 広告または取り消し（Withdraw）されたプレフィックス（経路の履歴全体） |
+| `nlri` | 広告されたプレフィックスのみ |
 | `withdrawn` | 取り消し（Withdraw）されたプレフィックスのみ |
 | `community` | Standard / Large Community |
 | `rt` | Route Target（例：`rt = 65001:100`） |
@@ -366,7 +367,7 @@ capability contains "Route Refresh"
 | `mac` / `vni` / `rd` / `evpn_type` | EVPN 経路の各属性 |
 | `capability` | OPEN メッセージのケイパビリティ名 |
 
-以下のエイリアスも利用できます：`src`、`dst`、`as`、`aspath`、`nexthop`、`nlri`、`router-id`、`my_as`、`large-community`、`route-target`、`ext-community`、`evpn-type`。
+以下のエイリアスも利用できます：`src`、`dst`、`as`、`aspath`、`nexthop`、`router-id`、`my_as`、`large-community`、`route-target`、`ext-community`、`evpn-type`。
 
 ### プレフィックスと IP アドレスの照合ルール {#how-prefixes-match}
 
