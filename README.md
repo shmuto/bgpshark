@@ -54,8 +54,14 @@ In offline environments or when using a system Chromium, set `CHROMIUM_PATH` to 
 CHROMIUM_PATH=/usr/bin/chromium bun run test:e2e
 ```
 
+CI runs the suite against the production build instead of the dev server, so the real Content Security Policy is in force. To do the same locally (it builds first):
+
+```bash
+E2E_PREVIEW=1 bun run test:e2e
+```
+
 > [!NOTE]
-> The dev server does not apply the production Content Security Policy. After changes that affect asset loading, WASM, or dependencies, verify the built app with `bun run build && bun run preview`.
+> The dev server does not apply the production Content Security Policy. After changes that affect asset loading, WASM, or dependencies, verify the built app with `bun run build && bun run preview`, or run the e2e suite with `E2E_PREVIEW=1`.
 
 ### Nix development shell
 
