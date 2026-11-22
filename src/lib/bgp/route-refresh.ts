@@ -21,7 +21,7 @@
 import type { BgpPacket, BgpUpdateMessage, BgpRouteRefreshMessage } from './types'
 import { formatPrefix } from '../net/prefix'
 import { endOfRibMarker } from './update'
-import { getMessages, type Locale } from '../../i18n'
+import { getMessages, type Locale } from '../../i18n/locale'
 
 /** One route as the comparison sees it: an identity and the attributes on it. */
 interface RouteState {

@@ -111,6 +111,20 @@ test.describe('header language toggle across screens', () => {
     await page.goto('./', { waitUntil: 'networkidle' })
     await expect(page.getByText('pcap ファイルをここにドロップ')).toBeVisible()
   })
+
+  test('re-translates active validation errors when switching language', async ({ page }) => {
+    await page.goto('./', { waitUntil: 'networkidle' })
+    await page.locator('input[type="file"]').first().setInputFiles({
+      name: 'notes.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('not a capture'),
+    })
+    await expect(page.getByText(/Invalid file type/)).toBeVisible()
+
+    // Switching language updates the already-visible error banner in place.
+    await page.getByTestId('language-toggle').click()
+    await expect(page.getByText(/対応していないファイル形式です/)).toBeVisible()
+  })
 })
 
 test.describe('Japanese UI layout stability', () => {

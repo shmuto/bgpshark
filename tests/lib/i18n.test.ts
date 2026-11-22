@@ -7,7 +7,12 @@ import {
   isLocale,
 } from '../../src/i18n'
 import { BGP_ERROR_CODES, getErrorHint, getErrorInfo } from '../../src/lib/bgp/errors'
-import { validateCaptureFile, MAX_FILE_SIZE } from '../../src/lib/file-constraints'
+import {
+  checkCaptureFile,
+  formatCaptureFileIssue,
+  validateCaptureFile,
+  MAX_FILE_SIZE,
+} from '../../src/lib/file-constraints'
 import { formatLoadProgressLabel, loadProgress } from '../../src/lib/load-progress'
 import { getSuggestions } from '../../src/lib/filter/parser'
 import { computeAlerts, computeTransportAlerts } from '../../src/components/dashboard/alerts'
@@ -146,11 +151,19 @@ describe('Japanese BGP error hints', () => {
 })
 
 describe('localized domain helpers', () => {
-  test('validateCaptureFile returns Japanese errors when locale is ja', () => {
+  test('validateCaptureFile and CaptureFileIssue helpers support switching locale', () => {
     const badExt = new File(['hello'], 'notes.txt')
+    const issue = checkCaptureFile(badExt)
+    expect(issue).toEqual({ kind: 'invalidType' })
+    expect(formatCaptureFileIssue(issue!, 'en')).toContain('Invalid file type')
+    expect(formatCaptureFileIssue(issue!, 'ja')).toMatch(HAS_JAPANESE)
     expect(validateCaptureFile(badExt, 'ja')).toMatch(HAS_JAPANESE)
 
     const tooBig = { name: 'big.pcap', size: MAX_FILE_SIZE + 1024 } as File
+    const sizeIssue = checkCaptureFile(tooBig)
+    expect(sizeIssue?.kind).toBe('tooLarge')
+    expect(formatCaptureFileIssue(sizeIssue!, 'en')).toContain('File too large')
+    expect(formatCaptureFileIssue(sizeIssue!, 'ja')).toMatch(HAS_JAPANESE)
     expect(validateCaptureFile(tooBig, 'ja')).toMatch(HAS_JAPANESE)
   })
 

@@ -7,6 +7,11 @@
  *
  * It is deliberately outside `RequireCapture`: the most likely reader is someone
  * who has just arrived, has nothing loaded, and wants to know what this is.
+ *
+ * The manual shares the global app language (`useI18n`), so the English / 日本語
+ * buttons here switch both the manual prose and the rest of the UI together.
+ * Initial language detection and `bgpshark:manual-language` migration live in
+ * `src/i18n/locale.ts`.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'

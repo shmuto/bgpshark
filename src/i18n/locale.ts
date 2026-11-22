@@ -19,12 +19,15 @@ export function isLocale(value: string | null | undefined): value is Locale {
 }
 
 /**
- * Determine the initial UI language:
- * 1. Explicit user preference in localStorage (`bgpshark:language`, falling
- *    back to the legacy `bgpshark:manual-language` key so existing manual
- *    readers keep their choice).
- * 2. Browser language list (`navigator.languages` / `navigator.language`):
- *    any `ja` tag selects Japanese; everything else selects English.
+ * Which language to open the app — and its user manual — with.
+ *
+ * The UI and the user manual share one language preference, so switching in
+ * either the header or the manual changes both together. A remembered choice
+ * wins (`bgpshark:language`, falling back to the legacy
+ * `bgpshark:manual-language` key so existing manual readers keep their choice),
+ * then the browser's languages: someone browsing in Japanese is more likely to
+ * want the Japanese UI and manual than to want to be asked, and the toggle is
+ * right there for when the guess is wrong.
  */
 export function detectInitialLocale(): Locale {
   try {
@@ -33,7 +36,8 @@ export function detectInitialLocale(): Locale {
     const legacy = window.localStorage.getItem(LEGACY_MANUAL_LANGUAGE_KEY)
     if (isLocale(legacy)) return legacy
   } catch {
-    // Private mode or blocked storage; fall through to browser languages.
+    // Storage can be unavailable — private mode, a blocked origin. Not knowing
+    // the reader's last choice is not a reason to fail to render the app.
   }
 
   if (typeof navigator !== 'undefined') {

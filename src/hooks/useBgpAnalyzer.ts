@@ -1,12 +1,33 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { parsePcap, isPcapng, parsePcapng, type GenericPacket } from '../lib/pcap'
 import { parseBgpFromPackets, type BgpPacket } from '../lib/bgp'
 import { initDatabase, loadPackets, isInitialized, isDataLoaded } from '../lib/db'
 import { savePcapFile, loadPcapFile, clearPcapFile } from '../lib/storage'
-import { loadProgress, type LoadProgress } from '../lib/load-progress'
+import { formatLoadProgressLabel, loadProgress, type LoadProgress } from '../lib/load-progress'
 import { useI18n } from '../i18n'
 
-interface AnalyzerState {
+type AnalyzerWarning = { kind: 'duckdbFailed' } | { kind: 'raw'; message: string }
+type AnalyzerError =
+  | { kind: 'noIpPackets' }
+  | { kind: 'unknownError' }
+  | { kind: 'raw'; message: string }
+
+interface InternalAnalyzerState {
+  status: 'idle' | 'initializing' | 'loading' | 'ready' | 'error'
+  fileName: string | null
+  packets: BgpPacket[]
+  allPackets: GenericPacket[]
+  /** The source capture's link type, needed to write a slice of it back out. */
+  linkType: number | null
+  selectedPacketIndex: number | null
+  warnings: AnalyzerWarning[]
+  error: AnalyzerError | null
+  dbReady: boolean
+  /** How far the load in flight has got; null when nothing is loading. */
+  progress: LoadProgress | null
+}
+
+export interface AnalyzerState {
   status: 'idle' | 'initializing' | 'loading' | 'ready' | 'error'
   fileName: string | null
   packets: BgpPacket[]
@@ -29,7 +50,7 @@ interface AnalyzerState {
  * idle for the first render is what used to bounce deep links and reloads off
  * to the upload page before the restore had even been attempted.
  */
-const initialState: AnalyzerState = {
+const initialState: InternalAnalyzerState = {
   status: 'initializing',
   fileName: null,
   packets: [],
@@ -67,11 +88,9 @@ function nextPaint(): Promise<void> {
 export function useBgpAnalyzer() {
   const { locale, t } = useI18n()
   const localeRef = useRef(locale)
-  const messagesRef = useRef(t)
   localeRef.current = locale
-  messagesRef.current = t
 
-  const [state, setState] = useState<AnalyzerState>(initialState)
+  const [internalState, setState] = useState<InternalAnalyzerState>(initialState)
   const restoredRef = useRef(false)
   // Latest parsed packets, for the backfill below — a capture dropped while
   // DuckDB was still initializing is parsed before the database can take it.
@@ -98,7 +117,7 @@ export function useBgpAnalyzer() {
           setState((prev) => ({
             ...prev,
             status: 'error',
-            error: pcapResult.errors.join('\n'),
+            error: { kind: 'raw', message: pcapResult.errors.join('\n') },
             progress: null,
           }))
           return false
@@ -113,14 +132,14 @@ export function useBgpAnalyzer() {
           setState((prev) => ({
             ...prev,
             status: 'error',
-            error: messagesRef.current.warnings.noIpPackets,
+            error: { kind: 'noIpPackets' },
             progress: null,
           }))
           return false
         }
 
         // Load packets into DuckDB if available
-        const dbWarnings: string[] = []
+        const dbWarnings: AnalyzerWarning[] = []
         if (isInitialized() && bgpResult.packets.length > 0) {
           try {
             await report(loadProgress('database', undefined, undefined, localeRef.current))
@@ -136,7 +155,7 @@ export function useBgpAnalyzer() {
             console.error('Failed to load packets into DuckDB:', err)
             // Continue without DuckDB — but say so. Filtering falls back to
             // the in-memory evaluator; only the SQL console is actually lost.
-            dbWarnings.push(messagesRef.current.warnings.duckdbFailed)
+            dbWarnings.push({ kind: 'duckdbFailed' })
           }
         }
 
@@ -159,7 +178,11 @@ export function useBgpAnalyzer() {
           allPackets: pcapResult.allPackets,
           linkType: pcapResult.globalHeader.linkType,
           selectedPacketIndex: null,
-          warnings: [...pcapResult.warnings, ...bgpResult.warnings, ...dbWarnings],
+          warnings: [
+            ...pcapResult.warnings.map((message): AnalyzerWarning => ({ kind: 'raw', message })),
+            ...bgpResult.warnings.map((message): AnalyzerWarning => ({ kind: 'raw', message })),
+            ...dbWarnings,
+          ],
           error: null,
           dbReady: isInitialized(),
           progress: null,
@@ -169,7 +192,10 @@ export function useBgpAnalyzer() {
         setState((prev) => ({
           ...prev,
           status: 'error',
-          error: e instanceof Error ? e.message : messagesRef.current.warnings.unknownError,
+          error:
+            e instanceof Error
+              ? { kind: 'raw', message: e.message }
+              : { kind: 'unknownError' },
           progress: null,
         }))
         return false
@@ -275,6 +301,40 @@ export function useBgpAnalyzer() {
       dbReady: prev.dbReady,
     }))
   }, [])
+
+  // Resolve localized warnings/errors/progress at render time so switching
+  // languages updates already-displayed banners and error messages live.
+  const state = useMemo<AnalyzerState>(() => {
+    const warnings = internalState.warnings.map((w) =>
+      w.kind === 'duckdbFailed' ? t.warnings.duckdbFailed : w.message
+    )
+    const error =
+      internalState.error === null
+        ? null
+        : internalState.error.kind === 'noIpPackets'
+          ? t.warnings.noIpPackets
+          : internalState.error.kind === 'unknownError'
+            ? t.warnings.unknownError
+            : internalState.error.message
+    const progress = internalState.progress
+      ? {
+          ...internalState.progress,
+          label: formatLoadProgressLabel(
+            internalState.progress.stage,
+            internalState.progress.done,
+            internalState.progress.total,
+            locale
+          ),
+        }
+      : null
+
+    return {
+      ...internalState,
+      warnings,
+      error,
+      progress,
+    }
+  }, [internalState, locale, t])
 
   return {
     state,

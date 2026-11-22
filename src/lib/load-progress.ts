@@ -23,7 +23,7 @@
  * bar never runs backwards and does not race to a third and then crawl.
  */
 
-import { getMessages, type Locale } from '../i18n'
+import { getMessages, type Locale } from '../i18n/locale'
 
 export type LoadStage = 'reading' | 'parsing' | 'decoding' | 'database' | 'saving'
 

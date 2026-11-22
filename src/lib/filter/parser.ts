@@ -18,7 +18,7 @@ import type { EvpnRoute } from '../bgp/evpn'
 import type { ExtendedCommunity } from '../bgp/extended-communities'
 import { formatExtendedCommunity } from '../bgp/extended-communities'
 import { contains, formatPrefix, parseBgpPrefix, parsePrefix } from '../net/prefix'
-import { getMessages, type Locale } from '../../i18n'
+import { getMessages, type Locale } from '../../i18n/locale'
 
 // =============================================================================
 // Token Types

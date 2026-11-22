@@ -352,7 +352,9 @@ async function panelShot(page: Page, target: Locator, height: number): Promise<B
  */
 async function run(browser: Browser, shot: Shot): Promise<void> {
   const viewport = shot.viewport ?? VIEWPORT
-  const context = await browser.newContext({ viewport, deviceScaleFactor: 1.5 })
+  // Pin English so regenerating manual screenshots on a Japanese OS does not
+  // overwrite the shared English UI screenshots.
+  const context = await browser.newContext({ viewport, deviceScaleFactor: 1.5, locale: 'en-US' })
   const page = await context.newPage()
 
   try {

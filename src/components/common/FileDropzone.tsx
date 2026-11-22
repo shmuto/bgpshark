@@ -2,11 +2,15 @@ import { useCallback, useState, useRef } from 'react'
 import {
   ACCEPT_ATTRIBUTE,
   MAX_FILE_SIZE_LABEL,
-  validateCaptureFile,
+  checkCaptureFile,
+  formatCaptureFileIssue,
+  type CaptureFileIssue,
 } from '../../lib/file-constraints'
 import type { LoadProgress } from '../../lib/load-progress'
 import { useI18n } from '../../i18n'
 import { LoadProgressBar } from './LoadProgressBar'
+
+type DropzoneError = { kind: 'file'; issue: CaptureFileIssue } | { kind: 'sample' }
 
 interface FileDropzoneProps {
   onFileLoad: (file: File) => void
@@ -18,29 +22,35 @@ interface FileDropzoneProps {
 export function FileDropzone({ onFileLoad, isLoading, progress }: FileDropzoneProps) {
   const { locale, t } = useI18n()
   const [isDragOver, setIsDragOver] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [errorState, setErrorState] = useState<DropzoneError | null>(null)
   const [isSampleLoading, setIsSampleLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const busy = isLoading || isSampleLoading
+  const error =
+    errorState === null
+      ? null
+      : errorState.kind === 'sample'
+        ? t.upload.sampleError
+        : formatCaptureFileIssue(errorState.issue, locale)
 
   const validateAndLoad = useCallback(
     (file: File) => {
-      setError(null)
+      setErrorState(null)
 
-      const validationError = validateCaptureFile(file, locale)
-      if (validationError) {
-        setError(validationError)
+      const fileIssue = checkCaptureFile(file)
+      if (fileIssue) {
+        setErrorState({ kind: 'file', issue: fileIssue })
         return
       }
 
       onFileLoad(file)
     },
-    [onFileLoad, locale]
+    [onFileLoad]
   )
 
   const handleSampleClick = useCallback(async () => {
-    setError(null)
+    setErrorState(null)
     setIsSampleLoading(true)
 
     try {
@@ -56,11 +66,11 @@ export function FileDropzone({ onFileLoad, isLoading, progress }: FileDropzonePr
       // never bypass the limits the rest of the app enforces.
       validateAndLoad(file)
     } catch {
-      setError(t.upload.sampleError)
+      setErrorState({ kind: 'sample' })
     } finally {
       setIsSampleLoading(false)
     }
-  }, [validateAndLoad, t.upload.sampleError])
+  }, [validateAndLoad])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()

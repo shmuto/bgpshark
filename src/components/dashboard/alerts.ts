@@ -23,7 +23,7 @@ import type { GenericPacket } from '../../lib/pcap'
 import { aggregatePrefixStats, type PrefixStats } from '../../lib/bgp/prefix-stats'
 import type { DashboardAlert } from './types'
 import { formatAsPath } from '../../lib/bgp/as-path-display'
-import { getMessages, type Locale } from '../../i18n'
+import { getMessages, type Locale } from '../../i18n/locale'
 
 // A pair of peers is considered "flapped" once we see more than one full
 // OPEN handshake (2 OPENs = one handshake) between the same two IPs.

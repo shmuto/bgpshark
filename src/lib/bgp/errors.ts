@@ -1,6 +1,12 @@
 /**
  * BGP Error Codes and Subcodes (RFC 4271, RFC 4486, RFC 8538)
  */
+import {
+  BGP_ERROR_HINTS_JA,
+  UNKNOWN_ERROR_CODE_HINT_JA,
+  UNKNOWN_ERROR_SUBCODE_HINT_JA,
+} from '../../i18n/bgp-error-hints.ja'
+import type { Locale } from '../../i18n/locale'
 
 interface ErrorSubcode {
   name: string
@@ -221,13 +227,6 @@ export const BGP_ERROR_CODES: Record<number, ErrorCode> = {
     },
   },
 }
-
-import {
-  BGP_ERROR_HINTS_JA,
-  UNKNOWN_ERROR_CODE_HINT_JA,
-  UNKNOWN_ERROR_SUBCODE_HINT_JA,
-} from '../../i18n/bgp-error-hints.ja'
-import type { Locale } from '../../i18n'
 
 /**
  * Get localized troubleshooting hint for a given BGP NOTIFICATION code and subcode.
