@@ -35,14 +35,16 @@ ORDER BY occurrence DESC
 LIMIT 20`,
   },
   {
+    // Grouped by prefix *and* length: 10.0.12.0/24 and 10.0.12.0/23 are two
+    // routes. Returned as CIDR, so the cell links straight to the route.
     name: 'Prefix Flapping',
     query: `SELECT
   prefix,
   COUNT(*) as flap_count
 FROM (
-  SELECT prefix FROM nlri
+  SELECT COALESCE(prefix || '/' || prefix_length, prefix) AS prefix FROM nlri
   UNION ALL
-  SELECT prefix FROM withdrawn
+  SELECT COALESCE(prefix || '/' || prefix_length, prefix) AS prefix FROM withdrawn
 )
 GROUP BY prefix
 HAVING COUNT(*) > 5
@@ -474,13 +476,15 @@ function ResultCell({ column, row }: { column: string; row: Record<string, unkno
   }
   if (column === 'prefix' && /^[0-9a-f:.]+(\/\d+)?$/i.test(text)) {
     // The tables store the address and its length in separate columns. With
-    // both in the row the route is named exactly; with the address alone the
-    // routes screen is searched for it instead.
+    // both in the row the route is named exactly. With the address alone the
+    // routes screen is searched for the routes that *cover* it: a bare
+    // 10.0.12.0 under the default Subnets match reads as 10.0.12.0/32 and
+    // finds nothing, while Supernets finds 10.0.12.0/24.
     const length = row.prefix_length
     const route = text.includes('/') ? text : length != null ? `${text}/${String(length)}` : null
     const to = route
       ? `/routes?prefix=${encodeURIComponent(route)}`
-      : `/routes?q=${encodeURIComponent(text)}`
+      : `/routes?q=${encodeURIComponent(text)}&match=supernets`
     return (
       <Link
         to={to}
