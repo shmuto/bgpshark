@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useIsCompact } from '../hooks/useMediaQuery'
@@ -53,6 +53,18 @@ const DEFAULT_DIRECTION: Record<SortColumn, SortDirection> = {
   lastSeen: 'desc',
   flap: 'desc',
 }
+
+/** The Messages filter that selects one route of this screen, or null. */
+function routeFilter(key: string): string | null {
+  if (key.startsWith('[')) {
+    const mac = key.match(/[0-9a-f]{2}(?::[0-9a-f]{2}){5}/i)?.[0]
+    return mac ? `mac = ${mac}` : null
+  }
+  return `prefix = ${key}`
+}
+
+/** How long the search box waits for typing to pause before applying it. */
+const SEARCH_DEBOUNCE_MS = 200
 
 function isSortColumn(value: string | null): value is SortColumn {
   return value !== null && value in DEFAULT_DIRECTION
@@ -118,9 +130,16 @@ export function RoutesPage() {
     [updateParams]
   )
 
-  // The box holds a draft until Search (or Enter) commits it, so the button does
-  // what it says. Emptying the box clears the filter without a round trip.
+  // The box applies itself once typing pauses, like the search on Neighbors;
+  // Search (or Enter) still commits at once. The pause keeps a half-typed
+  // `10.0.1` from re-filtering the table on every keystroke.
   const [searchDraft, setSearchDraft] = useState(searchQuery)
+  useEffect(() => {
+    const draft = searchDraft.trim()
+    if (draft === searchQuery) return
+    const timer = setTimeout(() => updateParams({ q: draft || null }), SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [searchDraft, searchQuery, updateParams])
   /**
    * Route History reads oldest first by default, the same way Messages and
    * Neighbors do, so a timeline does not flip direction between screens. The
@@ -272,8 +291,18 @@ export function RoutesPage() {
     return Array.from(counts.values()).sort((a, b) => b.count - a.count)
   }, [selectedPrefixStats])
 
+  /**
+   * Opens the UPDATE behind a history row, with the list narrowed to this
+   * route, so the reader lands among the other events of the same story
+   * rather than somewhere in the whole capture. EVPN routes are narrowed by
+   * their MAC where they have one, since `prefix` does not name them.
+   */
   const handleHistoryClick = (event: PrefixEvent) => {
-    navigate(`/messages?selected=${event.packetIndex}`)
+    const filter = selectedPrefix ? routeFilter(selectedPrefix) : null
+    const params = new URLSearchParams()
+    if (filter) params.set('filter', filter)
+    params.set('selected', String(event.packetIndex))
+    navigate(`/messages?${params.toString()}`)
   }
 
   /**

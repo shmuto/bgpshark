@@ -141,3 +141,47 @@ function negotiated(
     silenceReachedHoldTime: silence === undefined ? undefined : silence >= negotiatedHoldTime,
   }
 }
+
+/**
+ * Where a KEEPALIVE sits against the hold timer it is feeding.
+ *
+ * The receiving end resets its hold timer on every message from the sender, so
+ * the number an operator wants on a KEEPALIVE is the gap since the sender's
+ * previous message in the same direction, measured against the negotiated hold
+ * time. A KEEPALIVE every 30s of a 90s hold time is the RFC 4271 §10 default
+ * (one third); one arriving at 80s is a session about to drop.
+ */
+export interface KeepaliveContext {
+  sender: string
+  receiver: string
+  /** The sender's previous message to the receiver. Absent at the start of the capture. */
+  previous?: {
+    type: string
+    timestamp: Date
+    gapSeconds: number
+  }
+  /** Lower of the two most recent OPENs, when the capture has both. */
+  negotiatedHoldTime?: number
+  /** gapSeconds / negotiatedHoldTime, when both exist and the hold time is not 0. */
+  holdTimeFraction?: number
+}
+
+export function keepaliveContext(packets: BgpPacket[], index: number): KeepaliveContext | null {
+  const packet = packets[index]
+  if (!packet || !packet.messages.some((message) => message.type === 'KEEPALIVE')) return null
+
+  const sender = packet.srcIp
+  const receiver = packet.dstIp
+  const heard = findLastHeard(packets, index, sender, receiver)
+  const { negotiatedHoldTime } = negotiated(packets, index, sender, receiver)
+
+  const previous = heard && {
+    type: heard.type,
+    timestamp: heard.timestamp,
+    gapSeconds: heard.silenceSeconds,
+  }
+  const holdTimeFraction =
+    previous && negotiatedHoldTime ? previous.gapSeconds / negotiatedHoldTime : undefined
+
+  return { sender, receiver, previous, negotiatedHoldTime, holdTimeFraction }
+}

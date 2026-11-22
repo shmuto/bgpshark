@@ -55,6 +55,8 @@ The **Info** column summarizes each message (for example, `AS65001 Hold=90` for 
 
 Use **Columns** (at the right end of the status bar, above the list) to toggle timestamp and port columns, and **Export** to save the currently filtered packets as a new `.pcap` file (handy for attaching only the relevant frames to a ticket).
 
+UPDATE path attributes open expanded; collapsing them is remembered as you move between packets with `↑`/`↓`. A KEEPALIVE shows the gap since its sender's previous message and how much of the negotiated hold time that gap used. Leaving **Messages** for another tab and coming back through the header restores the filter, **All Packets** mode, and the selected frame.
+
 ### Neighbors
 
 Groups sessions by Router ID. Click a router, then select one of its sessions to open **Capability Diff**, which compares the two OPEN messages side by side.
@@ -63,7 +65,7 @@ Capabilities are compared per address family (AFI/SAFI), with mismatches listed 
 
 ### Routes
 
-Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs.
+Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs. The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
 
 The search box supports three match modes:
 

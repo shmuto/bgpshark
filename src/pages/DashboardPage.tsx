@@ -130,7 +130,10 @@ export function DashboardPage() {
   const timeline = useMemo(() => computeTimeline(packets), [packets])
 
   const handleSummarySelect = (filter: string | null) => {
-    navigate(filter ? `/messages?filter=${encodeURIComponent(filter)}` : '/messages')
+    // The PACKETS card means "everything": start from a clean list rather than
+    // whatever Messages was last left showing.
+    if (filter) navigate(`/messages?filter=${encodeURIComponent(filter)}`)
+    else navigate('/messages', { state: { fresh: true } })
   }
 
   const handleSelectNotification = (packetIndex: number) => {

@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useFilter } from '../hooks/useFilter'
 import { BackToList, ColumnPicker, PacketList, PaneDivider, QueryInput, type DisplayPacket } from '../components/common'
@@ -7,7 +7,7 @@ import { usePacketColumns } from '../hooks/usePacketColumns'
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { useSplitPane } from '../hooks/useSplitPane'
 import { PacketDetail } from '../components/message/PacketDetail'
-import { holdTimerContext } from '../lib/bgp/hold-timer'
+import { holdTimerContext, keepaliveContext } from '../lib/bgp/hold-timer'
 import { routeRefreshDiff } from '../lib/bgp/route-refresh'
 import type {
   BgpPacket,
@@ -41,7 +41,55 @@ interface FilterRule {
   value: string
 }
 
+/**
+ * Where Messages was left, so coming back to it through the header tab picks
+ * up the investigation instead of starting over: the filter, All Packets, and
+ * the selected frame. Kept per tab (sessionStorage) and per capture, so a new
+ * file or a new window starts clean.
+ */
+const VIEW_STORAGE_KEY = 'bgpshark-messages-view'
+
+interface SavedView {
+  fileName: string | null
+  search: string
+}
+
+function loadSavedView(fileName: string | null): string | null {
+  try {
+    const raw = sessionStorage.getItem(VIEW_STORAGE_KEY)
+    if (!raw) return null
+    const saved = JSON.parse(raw) as SavedView
+    return saved.fileName === fileName && saved.search ? saved.search : null
+  } catch {
+    return null
+  }
+}
+
+function saveView(view: SavedView) {
+  try {
+    sessionStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify(view))
+  } catch {
+    // Losing the saved place is an inconvenience, not an error.
+  }
+}
+
+/**
+ * A bare `/messages` — the header tab — restores the saved view. Anything
+ * arriving with parameters (a dashboard alert, a route history row, a shared
+ * link) is a new question and wins, as does a link that asks to start fresh.
+ */
 export function MessagesPage() {
+  const { fileName } = useApp()
+  const location = useLocation()
+  const fresh = (location.state as { fresh?: boolean } | null)?.fresh === true
+  if (!location.search && !fresh) {
+    const saved = loadSavedView(fileName)
+    if (saved) return <Navigate to={{ pathname: location.pathname, search: saved }} replace />
+  }
+  return <MessagesView />
+}
+
+function MessagesView() {
   const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
@@ -283,6 +331,20 @@ export function MessagesPage() {
   const captureStart = allPackets[0]?.timestamp ?? packets[0]?.timestamp
 
   const selectedDisplayPacket = selectedPacketIndex !== null ? displayPackets[selectedPacketIndex] : null
+
+  // Remember this view for the next visit through the header tab. The
+  // selection is saved as a frame number, the one address that survives a
+  // different filter being applied in between.
+  const selectedFrame = selectedDisplayPacket?.packet.frameIndex
+  useEffect(() => {
+    if (packets.length === 0) return
+    const next = new URLSearchParams()
+    if (query) next.set('filter', query)
+    if (showAllPackets) next.set('all', '1')
+    if (selectedFrame !== undefined) next.set('frame', String(selectedFrame))
+    const search = next.toString()
+    saveView({ fileName, search: search ? `?${search}` : '' })
+  }, [query, showAllPackets, selectedFrame, fileName, packets.length])
   const selectedBgpPacket = selectedDisplayPacket?.kind === 'bgp' ? selectedDisplayPacket.packet : null
   const selectedGenericPacket = selectedDisplayPacket?.kind === 'generic' ? selectedDisplayPacket.packet : null
 
@@ -299,6 +361,13 @@ export function MessagesPage() {
     if (!selectedBgpPacket) return null
     const index = packets.indexOf(selectedBgpPacket)
     return index >= 0 ? holdTimerContext(packets, index) : null
+  }, [selectedBgpPacket, packets])
+
+  /** For a KEEPALIVE, measured on the unfiltered list like the hold timer. */
+  const keepalive = useMemo(() => {
+    if (!selectedBgpPacket) return null
+    const index = packets.indexOf(selectedBgpPacket)
+    return index >= 0 ? keepaliveContext(packets, index) : null
   }, [selectedBgpPacket, packets])
 
   /**
@@ -876,6 +945,7 @@ export function MessagesPage() {
                 onSelectPacket={selectByPacketIndex}
                 captureStart={captureStart}
                 sessionPrevious={sessionPrevious}
+                keepalive={keepalive}
               />
             ) : selectedGenericPacket ? (
               <GenericPacketDetail packet={selectedGenericPacket} />

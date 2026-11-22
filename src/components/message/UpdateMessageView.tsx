@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { usePersistentFlag } from '../../hooks/usePersistentFlag'
 import type {
   BgpUpdateMessage,
   BgpPathAttribute,
@@ -16,7 +16,10 @@ interface UpdateMessageViewProps {
 }
 
 export function UpdateMessageView({ message }: UpdateMessageViewProps) {
-  const [isExpanded, setIsExpanded] = useState(false)
+  // Open by default: LOCAL_PREF, MED, COMMUNITIES and ORIGIN are what an
+  // UPDATE is opened for. Collapsing it is remembered across packets, so the
+  // reader picks the density once rather than on every arrow key.
+  const [isExpanded, setIsExpanded] = usePersistentFlag('bgpshark-update-expanded', true)
 
   const endOfRib = endOfRibMarker(message)
 

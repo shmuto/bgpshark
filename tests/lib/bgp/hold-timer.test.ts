@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test'
-import { holdTimerContext } from '../../../src/lib/bgp/hold-timer'
+import { holdTimerContext, keepaliveContext } from '../../../src/lib/bgp/hold-timer'
 import type { BgpMessage, BgpPacket } from '../../../src/lib/bgp/types'
 
 /**
@@ -178,5 +178,35 @@ describe('the silence before a hold timer teardown', () => {
 
   test('a packet that is not a NOTIFICATION has nothing to say either', () => {
     expect(holdTimerContext([packet(A, B, 10, [keepalive])], 0)).toBeNull()
+  })
+})
+
+describe('a KEEPALIVE against the hold timer it feeds', () => {
+  test('measures from the same sender, in the same direction', () => {
+    const packets = [
+      packet(A, B, 0, [open(90)]),
+      packet(B, A, 0, [open(180)]),
+      packet(A, B, 30, [keepalive]),
+      // B's own KEEPALIVE in between is not what resets B's timer on A.
+      packet(B, A, 50, [keepalive]),
+      packet(A, B, 60, [keepalive]),
+    ]
+
+    const context = keepaliveContext(packets, 4)
+    expect(context?.sender).toBe(A)
+    expect(context?.previous?.gapSeconds).toBe(30)
+    expect(context?.negotiatedHoldTime).toBe(90)
+    expect(context?.holdTimeFraction).toBeCloseTo(1 / 3)
+  })
+
+  test('has no gap for the first message the capture holds from that end', () => {
+    const packets = [packet(A, B, 5, [keepalive])]
+    const context = keepaliveContext(packets, 0)
+    expect(context?.previous).toBeUndefined()
+    expect(context?.holdTimeFraction).toBeUndefined()
+  })
+
+  test('says nothing about a packet that is not a KEEPALIVE', () => {
+    expect(keepaliveContext([packet(A, B, 0, [open(90)])], 0)).toBeNull()
   })
 })

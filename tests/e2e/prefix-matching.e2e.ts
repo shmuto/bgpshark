@@ -123,16 +123,12 @@ test.describe('prefix search on the route screen', () => {
     expect(await prefixCount(page)).toBe(found)
   })
 
-  test('the Search button is what commits the query', async ({ page }) => {
+  test('typing applies once it pauses, the way the neighbours search does', async ({ page }) => {
     const before = await search(page, '10.0.0.0/8')
 
     await page.locator('input[placeholder*="10.0.0.0"]').first().fill('2.2.2.2')
-    await page.waitForTimeout(400)
-    expect(await prefixCount(page)).toBe(before)
-
-    await page.getByRole('button', { name: 'Search' }).click()
-    await page.waitForTimeout(400)
-    expect(await prefixCount(page)).not.toBe(before)
+    await expect.poll(() => prefixCount(page)).not.toBe(before)
+    await expect(page).toHaveURL(/q=2\.2\.2\.2/)
   })
 
   test('emptying the box restores the full list without pressing anything', async ({ page }) => {

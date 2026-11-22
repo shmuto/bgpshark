@@ -5,7 +5,7 @@ import { KeepaliveMessageView } from './KeepaliveMessageView'
 import { UpdateMessageView } from './UpdateMessageView'
 import { RouteRefreshMessageView } from './RouteRefreshMessageView'
 import { HexDump } from '../common/HexDump'
-import type { HoldTimerContext } from '../../lib/bgp/hold-timer'
+import type { HoldTimerContext, KeepaliveContext } from '../../lib/bgp/hold-timer'
 import type { RouteRefreshDiff } from '../../lib/bgp/route-refresh'
 import { formatDelta } from '../../lib/format-time'
 
@@ -30,6 +30,8 @@ interface PacketDetailProps {
    * is the first one the capture holds.
    */
   sessionPrevious?: BgpPacket | null
+  /** Gap since the sender's previous message, against the hold time, for a KEEPALIVE. */
+  keepalive?: KeepaliveContext | null
 }
 
 export function PacketDetail({
@@ -39,6 +41,7 @@ export function PacketDetail({
   onSelectPacket,
   captureStart,
   sessionPrevious,
+  keepalive,
 }: PacketDetailProps) {
   const { messages, rawData, parseWarnings } = packet
 
@@ -121,6 +124,7 @@ export function PacketDetail({
           total={messages.length}
           holdTimer={holdTimer}
           refreshDiff={refreshDiff}
+          keepalive={keepalive}
           onSelectPacket={onSelectPacket}
         />
       ))}
@@ -142,12 +146,14 @@ function MessageSection({
   total,
   holdTimer,
   refreshDiff,
+  keepalive,
   onSelectPacket,
 }: {
   message: BgpMessage
   index: number
   total: number
   holdTimer?: HoldTimerContext | null
+  keepalive?: KeepaliveContext | null
   refreshDiff?: RouteRefreshDiff | null
   onSelectPacket?: (packetIndex: number) => void
 }) {
@@ -162,7 +168,7 @@ function MessageSection({
       {message.type === 'NOTIFICATION' && (
         <NotificationMessageView message={message} holdTimer={holdTimer} />
       )}
-      {message.type === 'KEEPALIVE' && <KeepaliveMessageView />}
+      {message.type === 'KEEPALIVE' && <KeepaliveMessageView context={keepalive} />}
       {message.type === 'UPDATE' && <UpdateMessageView message={message} />}
       {message.type === 'ROUTE_REFRESH' && (
         <RouteRefreshMessageView
