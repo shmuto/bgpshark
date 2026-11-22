@@ -14,7 +14,8 @@ test.describe('deep links and reloads', () => {
   for (const path of ['dashboard', 'neighbors', 'routes', 'sql']) {
     test(`opening /${path} directly stays there`, async ({ page }) => {
       await page.goto(`./${path}`, { waitUntil: 'networkidle' })
-      await expect(page).toHaveURL(new RegExp(`/${path}$`))
+      // Neighbors and Routes add the row they open on to the query string.
+      await expect(page).toHaveURL(new RegExp(`/${path}(\\?|$)`))
     })
   }
 
@@ -46,7 +47,7 @@ test.describe('without a capture', () => {
     await expect(page.getByText('Drop pcap file here')).toBeVisible()
 
     await page.getByRole('button', { name: /sample/i }).first().click()
-    await expect(page).toHaveURL(/\/routes$/)
+    await expect(page).toHaveURL(/\/routes(\?|$)/)
   })
 
   test('a file that is not a capture is refused by extension', async ({ page }) => {

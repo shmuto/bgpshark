@@ -12,12 +12,12 @@ test.describe('the neighbours screen', () => {
     await page.getByText(/↔ 10\.0\.13\.3/).first().click()
 
     await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('10.0.13.1 ↔ 10.0.13.3')
-    await expect(page.getByText('🔍 Capability Diff')).toBeInViewport()
+    await expect(page.getByText('Capability Diff', { exact: true })).toBeInViewport()
     // One message list for the session, not a second timeline beneath it.
     await expect(page.getByText(/Session Timeline/)).toHaveCount(0)
 
     await page.getByRole('button', { name: '← Router overview' }).click()
-    await expect(page.getByText('🔗 Sessions')).toBeVisible()
+    await expect(page.getByText('Sessions', { exact: true })).toBeVisible()
     await expect(page).not.toHaveURL(/peer=/)
   })
 

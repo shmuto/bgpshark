@@ -24,7 +24,7 @@ test.describe('SQL console', () => {
 
   test('a failed query is not recorded as one that worked', async ({ page }) => {
     await runSql(page, 'select * from does_not_exist')
-    const history = page.getByText('📋 Query History')
+    const history = page.getByText('Query History', { exact: true })
     await expect(history).toBeHidden()
   })
 

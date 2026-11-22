@@ -17,7 +17,6 @@ export function MessageTimeline({ data, onSelectNotification }: MessageTimelineP
     return (
       <div className="bg-surface rounded-lg shadow-sm border border-hair">
         <div className="px-4 py-3 border-b border-hair flex items-center gap-2">
-          <span>📈</span>
           <h2 className="font-semibold text-strong">Timeline</h2>
         </div>
         <div className="text-center text-dim text-sm py-8">No timeline data</div>
@@ -31,7 +30,6 @@ export function MessageTimeline({ data, onSelectNotification }: MessageTimelineP
   return (
     <div className="bg-surface rounded-lg shadow-sm border border-hair">
       <div className="px-4 py-3 border-b border-hair flex items-center gap-2">
-        <span>📈</span>
         <h2 className="font-semibold text-strong">Timeline</h2>
       </div>
       <div className="p-4">

@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useAutoSelectFirst } from '../hooks/useAutoSelectFirst'
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { BackToList, PaneDivider } from '../components/common'
 import { useSplitPane } from '../hooks/useSplitPane'
@@ -89,6 +90,14 @@ export function NeighborsPage() {
       prev.delete('peer') // Clear peer when router changes
       return prev
     })
+  }, [setSearchParams])
+
+  /** The first router, picked for the reader: replaces the history entry. */
+  const autoSelectRouter = useCallback((routerId: string) => {
+    setSearchParams((prev) => {
+      prev.set('router', routerId)
+      return prev
+    }, { replace: true })
   }, [setSearchParams])
 
   const setSelectedPeer = useCallback((peerIp: string | null) => {
@@ -222,6 +231,7 @@ export function NeighborsPage() {
   const split = useSplitPane('neighbors', 33)
   const showList = !isCompact || selectedRouter === null
   const showDetail = !isCompact || selectedRouter !== null
+  useAutoSelectFirst(!isCompact, selectedRouter, filteredRouters[0]?.routerId, autoSelectRouter)
 
   // Get IPs for selected router
   const selectedIps = useMemo(() => {
@@ -557,7 +567,6 @@ export function NeighborsPage() {
       <div className="p-4 bg-surface border-b border-hair">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <span className="text-xl">👥</span>
             <h1 className="text-lg font-semibold text-strong">Neighbors Overview</h1>
           </div>
           <span className="text-sm text-muted">{routers.length} routers detected</span>
@@ -723,6 +732,7 @@ export function NeighborsPage() {
                     </div>
                     <button
                       onClick={() => setSelectedRouter(null)}
+                      aria-label="Close router details"
                       className="text-dim hover:text-strong"
                     >
                       ✕
@@ -764,7 +774,7 @@ export function NeighborsPage() {
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
                     <span className="text-sm font-medium text-strong">
-                      🔍 Capability Diff
+                      Capability Diff
                     </span>
                   </div>
                   <div className="p-4">
@@ -815,7 +825,7 @@ export function NeighborsPage() {
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between gap-2">
                     <span className="text-sm font-medium text-strong">
-                      📋 Session Messages ({visibleSessionMessages.length})
+                      Session Messages ({visibleSessionMessages.length})
                     </span>
                     <div className="flex items-center gap-1 text-xs">
                       {(['events', 'all'] as const).map((scope) => (
@@ -882,7 +892,7 @@ export function NeighborsPage() {
                 {/* Message Summary */}
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-baseline justify-between gap-2">
-                    <span className="text-sm font-medium text-strong">📊 Message Summary</span>
+                    <span className="text-sm font-medium text-strong">Message Summary</span>
                     {/* The overview table's "Msgs" counts what this router sent;
                         this panel counts both directions of its sessions. Same
                         router, different questions — say which one this is. */}
@@ -907,7 +917,7 @@ export function NeighborsPage() {
                 {/* Sessions */}
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
-                    <span className="text-sm font-medium text-strong">🔗 Sessions</span>
+                    <span className="text-sm font-medium text-strong">Sessions</span>
                   </div>
                   <div className="divide-y divide-hair max-h-48 overflow-auto">
                     {sessions.map((session) => {
@@ -963,7 +973,7 @@ export function NeighborsPage() {
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between gap-2">
                     <span className="text-sm font-medium text-strong">
-                      📋 Session Messages ({visibleSessionMessages.length})
+                      Session Messages ({visibleSessionMessages.length})
                     </span>
                     <div className="flex items-center gap-1 text-xs">
                       {(['events', 'all'] as const).map((scope) => (
@@ -1026,7 +1036,7 @@ export function NeighborsPage() {
               {announcedPrefixes.length > 0 && (
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
-                    <span className="text-sm font-medium text-strong">📡 Announced Prefixes ({announcedPrefixes.length})</span>
+                    <span className="text-sm font-medium text-strong">Announced Prefixes ({announcedPrefixes.length})</span>
                     <button
                       onClick={handleViewRoutes}
                       className="text-xs text-accent hover:text-accent-hover"

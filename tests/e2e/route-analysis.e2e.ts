@@ -14,7 +14,8 @@ test.describe('the prefix table', () => {
   })
 
   test('starts sorted by flap count, worst first', async ({ page }) => {
-    const flaps = await page.locator('tbody tr td:nth-child(5)').allTextContents()
+    // The first table is the prefix list; the route history beside it has rows too.
+    const flaps = await page.locator('table').first().locator('tbody tr td:nth-child(5)').allTextContents()
     const numbers = flaps.map((f) => parseInt(f, 10))
     expect(numbers).toEqual([...numbers].sort((a, b) => b - a))
   })

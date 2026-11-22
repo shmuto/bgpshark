@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useAutoSelectFirst } from '../hooks/useAutoSelectFirst'
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { BackToList, PaneDivider } from '../components/common'
 import { useSplitPane } from '../hooks/useSplitPane'
@@ -245,6 +246,7 @@ export function RoutesPage() {
   // Only the rows near the viewport are mounted: a busy capture holds tens of
   // thousands of routes, and asking the browser to lay all of them out is what
   // made arriving on this screen hang.
+  useAutoSelectFirst(!isCompact, selectedPrefix, sortedPrefixes[0]?.key, setSelectedPrefix)
   const rows = useVirtualRows(sortedPrefixes.length)
 
   const toggleSort = (column: SortColumn) => {
@@ -458,7 +460,6 @@ export function RoutesPage() {
           style={isCompact ? undefined : { width: `calc(${split.percent}% - 0.5rem)` }}
         >
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
-            <span>📊</span>
             <h2 className="font-semibold text-strong">Prefix Statistics</h2>
             {peerFilter.length > 0 && (
               <button
@@ -561,7 +562,6 @@ export function RoutesPage() {
         <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 flex-1">
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <BackToList onClick={() => setSelectedPrefix(null)} />
-            <span>📜</span>
             <h2 className="font-semibold text-strong truncate">
               Route History{selectedPrefix ? `: ${selectedPrefix}` : ''}
             </h2>
@@ -708,7 +708,6 @@ export function RoutesPage() {
         {asPathVariants.length > 0 && (
           <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 shrink-0 max-h-64">
             <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
-              <span>🔗</span>
               <h2 className="font-semibold text-strong">AS_PATH Analysis</h2>
               <span className="text-xs text-muted ml-auto">
                 {asPathVariants.length === 1

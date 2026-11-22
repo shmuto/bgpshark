@@ -130,7 +130,7 @@ const SHOTS: Shot[] = [
       await page.waitForTimeout(400)
       await page.getByText('10.0.0.1 ↔ 10.0.0.2').first().click()
       await page.waitForTimeout(800)
-      const diff = card(page, '🔍 Capability Diff')
+      const diff = card(page, 'Capability Diff')
       await diff.scrollIntoViewIfNeeded()
       return diff
     },

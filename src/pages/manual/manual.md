@@ -26,7 +26,7 @@ Three caveats to keep in mind when reading results:
 
 ## The screens
 
-Each screen is designed around a specific troubleshooting question. If you are not sure where to start, open **Dashboard** or jump to [Investigating by symptom](#investigating-by-symptom).
+Each screen is designed around a specific troubleshooting question. The header lists the screens for the open capture on the left; **Build** and **Help** sit on the right, apart from them. If you are not sure where to start, open **Dashboard** or jump to [Investigating by symptom](#investigating-by-symptom).
 
 | Screen | What it answers |
 |--------|-----------------|
@@ -59,13 +59,13 @@ Each UPDATE is one card listing its announced and withdrawn prefixes (including 
 
 ### Neighbors
 
-Groups sessions by Router ID. The **Sent** column counts messages the router sent; the detail pane's **Message Summary** counts both directions. Click a router to see its sessions, messages and announced prefixes (click a prefix to open its route history). Then select one of its sessions to switch the pane to that session: a breadcrumb (**← Router overview** goes back), **Capability Diff**, which compares the two OPEN messages side by side, the session's prefix activity, and its messages with the time since the previous one.
+Groups sessions by Router ID. The **Sent** column counts messages the router sent; the detail pane's **Message Summary** counts both directions. Click a router to see its sessions, messages and announced prefixes (on a wide screen the busiest router is opened for you) (click a prefix to open its route history). Then select one of its sessions to switch the pane to that session: a breadcrumb (**← Router overview** goes back), **Capability Diff**, which compares the two OPEN messages side by side, the session's prefix activity, and its messages with the time since the previous one.
 
 Capabilities are compared per address family (AFI/SAFI), with mismatches listed first. Different Hold Times are marked informational (the lower value is negotiated), while duplicate BGP Identifiers are flagged as errors.
 
 ### Routes
 
-Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs. The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
+Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs (on a wide screen the top prefix is opened for you). The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
 
 The search box supports three match modes:
 

@@ -675,7 +675,7 @@ function MessagesView() {
         {!showAllPackets && packets.length === 0 && allPackets.length > 0 && (
           <div className="text-xs text-warning flex items-center gap-2">
             <span>
-              ⚠️ No BGP messages in this capture, but it contains {allPackets.length} other packets
+              ⚠ No BGP messages in this capture, but it contains {allPackets.length} other packets
               (TCP handshakes, resets, …).
             </span>
             <button

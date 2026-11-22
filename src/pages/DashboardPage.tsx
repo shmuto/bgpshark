@@ -145,7 +145,6 @@ export function DashboardPage() {
       <div className="max-w-6xl mx-auto px-6 py-4 space-y-4">
         {/* The file name is not repeated here: the header already shows it. */}
         <div className="flex items-center gap-2">
-          <span className="text-xl">📊</span>
           <h1 className="text-lg font-semibold text-strong">Dashboard</h1>
         </div>
 
