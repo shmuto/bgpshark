@@ -1,35 +1,37 @@
 import { useState } from 'react'
 import type { BgpOpenMessage, BgpCapability, ParsedCapability } from '../../lib/bgp/types'
+import { useI18n } from '../../i18n'
 
 interface OpenMessageViewProps {
   message: BgpOpenMessage
 }
 
 export function OpenMessageView({ message }: OpenMessageViewProps) {
+  const { t } = useI18n()
   const displayAs = message.fourByteAs ?? message.myAs
 
   return (
     <div className="space-y-3">
       {/* Basic Fields */}
       <div className="bg-surface-sunken rounded-lg p-3 text-sm space-y-2">
-        <FieldRow label="Version" value={message.version.toString()} />
+        <FieldRow label={t.packetDetail.open.version} value={message.version.toString()} />
         <FieldRow
-          label="My AS"
+          label={t.packetDetail.open.myAs}
           value={
             message.fourByteAs
-              ? `${displayAs} (2-byte: ${message.myAs})`
+              ? t.packetDetail.open.twoByteAs(displayAs, message.myAs)
               : displayAs.toString()
           }
         />
-        <FieldRow label="Hold Time" value={`${message.holdTime} seconds`} />
-        <FieldRow label="BGP Identifier" value={message.bgpIdentifier} />
+        <FieldRow label={t.packetDetail.open.holdTime} value={t.common.seconds(message.holdTime)} />
+        <FieldRow label={t.packetDetail.open.bgpIdentifier} value={message.bgpIdentifier} />
       </div>
 
       {/* Capabilities */}
       {message.capabilities.length > 0 && (
         <div>
           <h4 className="text-sm font-medium text-strong mb-2">
-            Capabilities ({message.capabilities.length})
+            {t.packetDetail.open.capabilities(message.capabilities.length)}
           </h4>
           <div className="space-y-2">
             {message.capabilities.map((cap, index) => (
@@ -89,6 +91,8 @@ function CapabilityItem({ capability }: { capability: BgpCapability }) {
 }
 
 function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
+  const { t } = useI18n()
+
   switch (parsed.type) {
     case 'MULTIPROTOCOL':
       return (
@@ -112,7 +116,7 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
       return (
         <div className="bg-surface rounded p-2">
           <div className="flex justify-between">
-            <span className="text-muted">AS Number</span>
+            <span className="text-muted">{t.packetDetail.open.asNumber}</span>
             <span className="font-mono">{parsed.asNumber}</span>
           </div>
         </div>
@@ -122,16 +126,16 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
       return (
         <div className="bg-surface rounded p-2 space-y-2">
           <div className="flex justify-between">
-            <span className="text-muted">Restart Time</span>
-            <span className="font-mono">{parsed.restartTime} seconds</span>
+            <span className="text-muted">{t.packetDetail.open.restartTime}</span>
+            <span className="font-mono">{t.common.seconds(parsed.restartTime)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted">Restart Flags</span>
+            <span className="text-muted">{t.packetDetail.open.restartFlags}</span>
             <span className="font-mono">0x{parsed.restartFlags.toString(16).padStart(2, '0')}</span>
           </div>
           {parsed.addressFamilies.length > 0 && (
             <div>
-              <span className="text-muted text-xs">Address Families:</span>
+              <span className="text-muted text-xs">{t.packetDetail.open.addressFamilies}</span>
               <div className="mt-1 space-y-1">
                 {parsed.addressFamilies.map((af, i) => (
                   <div key={i} className="text-xs font-mono bg-surface-sunken rounded px-2 py-1">
@@ -147,7 +151,7 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
     case 'ADD_PATH':
       return (
         <div className="bg-surface rounded p-2">
-          <span className="text-muted text-xs">Address Families:</span>
+          <span className="text-muted text-xs">{t.packetDetail.open.addressFamilies}</span>
           <div className="mt-1 space-y-1">
             {parsed.addressFamilies.map((af, i) => (
               <div key={i} className="text-xs font-mono bg-surface-sunken rounded px-2 py-1">
@@ -161,11 +165,15 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
     case 'EXTENDED_NEXT_HOP':
       return (
         <div className="bg-surface rounded p-2">
-          <span className="text-muted text-xs">Next Hop Encodings:</span>
+          <span className="text-muted text-xs">{t.packetDetail.open.nextHopEncodings}</span>
           <div className="mt-1 space-y-1">
             {parsed.entries.map((entry, i) => (
               <div key={i} className="text-xs font-mono bg-surface-sunken rounded px-2 py-1">
-                {entry.nlriAfiName}/{entry.nlriSafiName} uses {entry.nexthopAfiName} next-hop
+                {t.packetDetail.open.usesNextHop(
+                  entry.nlriAfiName,
+                  entry.nlriSafiName,
+                  entry.nexthopAfiName
+                )}
               </div>
             ))}
           </div>
@@ -175,7 +183,7 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
     case 'ROUTE_REFRESH':
     case 'ENHANCED_ROUTE_REFRESH':
       return (
-        <div className="bg-surface rounded p-2 text-muted text-sm">Supported</div>
+        <div className="bg-surface rounded p-2 text-muted text-sm">{t.packetDetail.open.supported}</div>
       )
 
     default:

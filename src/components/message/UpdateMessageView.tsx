@@ -11,6 +11,7 @@ import type {
 import { endOfRibMarker } from '../../lib/bgp/update'
 import { formatPrefix } from '../../lib/net/prefix'
 import type { EvpnRoute } from '../../lib/bgp/evpn'
+import { useI18n } from '../../i18n'
 
 interface UpdateMessageViewProps {
   message: BgpUpdateMessage
@@ -36,6 +37,8 @@ const PREFIX_FOLD = 32
  * attributes keep only what is theirs alone — the address family and next hop.
  */
 export function UpdateMessageView({ message }: UpdateMessageViewProps) {
+  const { t } = useI18n()
+  const ut = t.packetDetail.update
   const endOfRib = endOfRibMarker(message)
 
   // Collect all NLRI (IPv4 + MP_REACH_NLRI)
@@ -75,14 +78,12 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
           <span className="text-xs font-medium bg-accent-subtle text-accent px-1.5 py-0.5 rounded">
             End-of-RIB
           </span>
-          <span className="text-xs text-muted">
-            {endOfRib} — initial routing table advertisement is complete (RFC 4724)
-          </span>
+          <span className="text-xs text-muted">{ut.endOfRibNote(endOfRib)}</span>
         </div>
       )}
 
       {showAnnounced && (
-        <Row label={`Announced (${plainNlri.length})`}>
+        <Row label={ut.announced(plainNlri.length)}>
           {plainNlri.length > 0 ? (
             <PrefixChips prefixes={plainNlri} className="bg-ok-subtle text-ok" />
           ) : (
@@ -92,7 +93,7 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
       )}
 
       {showWithdrawn && (
-        <Row label={`Withdrawn (${plainWithdrawn.length})`}>
+        <Row label={ut.withdrawn(plainWithdrawn.length)}>
           <PrefixChips prefixes={plainWithdrawn} className="bg-critical-subtle text-critical line-through" />
         </Row>
       )}
@@ -102,7 +103,7 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
       {evpnAnnounced.length > 0 && (
         <div className="px-3 py-2 space-y-1">
           <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-            EVPN Routes ({evpnAnnounced.length} announced)
+            {ut.evpnAnnounced(evpnAnnounced.length)}
           </div>
           <EvpnRouteTable routes={evpnAnnounced} tone="announced" />
         </div>
@@ -110,14 +111,14 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
       {evpnWithdrawn.length > 0 && (
         <div className="px-3 py-2 space-y-1">
           <div className="text-xs font-semibold text-dim uppercase tracking-wide">
-            EVPN Routes ({evpnWithdrawn.length} withdrawn)
+            {ut.evpnWithdrawn(evpnWithdrawn.length)}
           </div>
           <EvpnRouteTable routes={evpnWithdrawn} tone="withdrawn" />
         </div>
       )}
 
       {message.pathAttributes.length > 0 && (
-        <Row label="Path Attributes">
+        <Row label={ut.pathAttributes}>
           <div className="space-y-1">
             {message.pathAttributes.map((attr, i) => (
               <PathAttributeView key={i} attribute={attr} />
@@ -139,6 +140,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 function PrefixChips({ prefixes, className }: { prefixes: BgpPrefix[]; className: string }) {
+  const { t } = useI18n()
   const [showAll, setShowAll] = useState(false)
   const folded = !showAll && prefixes.length > PREFIX_FOLD
   const shown = folded ? prefixes.slice(0, PREFIX_FOLD) : prefixes
@@ -157,7 +159,9 @@ function PrefixChips({ prefixes, className }: { prefixes: BgpPrefix[]; className
           onClick={() => setShowAll(!showAll)}
           className="text-xs text-accent hover:text-accent-hover px-1"
         >
-          {folded ? `Show all ${prefixes.length}` : 'Show fewer'}
+          {folded
+            ? t.packetDetail.update.showAll(prefixes.length)
+            : t.packetDetail.update.showFewer}
         </button>
       )}
     </div>
@@ -175,11 +179,12 @@ function PrefixChips({ prefixes, className }: { prefixes: BgpPrefix[]; className
  * one.
  */
 function PathId({ prefix }: { prefix: BgpPrefix }) {
+  const { t } = useI18n()
   if (prefix.pathId === undefined) return null
   return (
-    <span className="opacity-60" title={`ADD-PATH Path Identifier ${prefix.pathId} (RFC 7911)`}>
+    <span className="opacity-60" title={t.packetDetail.update.pathIdTitle(prefix.pathId)}>
       {' '}
-      path {prefix.pathId}
+      {t.packetDetail.update.pathIdLabel(prefix.pathId)}
     </span>
   )
 }
@@ -207,6 +212,7 @@ function FilterablePrefix({ prefix }: { prefix: BgpPrefix }) {
  * understand it, which is worth noticing.
  */
 function PathAttributeView({ attribute }: { attribute: BgpPathAttribute }) {
+  const { t } = useI18n()
   const { parsed } = attribute
 
   return (
@@ -216,15 +222,15 @@ function PathAttributeView({ attribute }: { attribute: BgpPathAttribute }) {
         {parsed ? (
           <ParsedAttributeValue parsed={parsed} />
         ) : (
-          <span className="font-mono text-xs">{attribute.length} bytes</span>
+          <span className="font-mono text-xs">{t.common.bytes(attribute.length)}</span>
         )}
       </div>
       <span className="flex gap-1">
         {attribute.flags.optional && (
-          <span className="text-[10px] text-dim" title="Optional">Opt</span>
+          <span className="text-[10px] text-dim" title={t.packetDetail.update.optTitle}>Opt</span>
         )}
         {attribute.flags.transitive && (
-          <span className="text-[10px] text-dim" title="Transitive">Trans</span>
+          <span className="text-[10px] text-dim" title={t.packetDetail.update.transTitle}>Trans</span>
         )}
         {attribute.flags.partial && (
           <span className="text-xs bg-warning-subtle text-warning px-1 rounded">Partial</span>
@@ -235,6 +241,9 @@ function PathAttributeView({ attribute }: { attribute: BgpPathAttribute }) {
 }
 
 function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute['parsed']> }) {
+  const { t } = useI18n()
+  const ut = t.packetDetail.update
+
   switch (parsed.type) {
     case 'ORIGIN':
       return (
@@ -268,12 +277,12 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
       return <span className="font-mono">{parsed.value}</span>
 
     case 'ATOMIC_AGGREGATE':
-      return <span className="text-muted">Present</span>
+      return <span className="text-muted">{ut.present}</span>
 
     case 'AGGREGATOR':
       return (
         <span className="font-mono">
-          AS{parsed.asNumber} via {parsed.address}
+          {ut.aggregatorVia(parsed.asNumber, parsed.address)}
         </span>
       )
 
@@ -303,10 +312,10 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
                     ? 'bg-surface-sunken text-muted'
                     : 'bg-bgp-keepalive/15 text-bgp-keepalive'
               }`}
-              title={comm.transitive ? undefined : 'Non-transitive: does not leave this AS'}
+              title={comm.transitive ? undefined : ut.nonTransitiveTitle}
             >
               {comm.kind} {comm.value}
-              {!comm.transitive && <span className="text-dim"> (non-transitive)</span>}
+              {!comm.transitive && <span className="text-dim">{ut.nonTransitiveTag}</span>}
             </span>
           ))}
         </div>
@@ -332,7 +341,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
             {parsed.afiName} / {parsed.safiName}
           </span>
           <span className="font-mono">
-            <span className="text-xs text-dim">Next Hop </span>
+            <span className="text-xs text-dim">{ut.nextHopLabel}</span>
             <FilterableValue field="next_hop" value={parsed.nextHop} />
           </span>
         </span>
@@ -347,13 +356,14 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
 
     case 'UNKNOWN':
     default:
-      return <span className="text-dim">Unparsed</span>
+      return <span className="text-dim">{ut.unparsed}</span>
   }
 }
 
 function AsPathView({ segments }: { segments: AsPathSegment[] }) {
+  const { t } = useI18n()
   if (segments.length === 0) {
-    return <span className="text-dim">Empty</span>
+    return <span className="text-dim">{t.packetDetail.update.empty}</span>
   }
 
   return (
@@ -388,6 +398,8 @@ function AsPathView({ segments }: { segments: AsPathSegment[] }) {
  * table of multicast routes has no MACs to talk about.
  */
 function EvpnRouteTable({ routes, tone }: { routes: EvpnRoute[]; tone: 'announced' | 'withdrawn' }) {
+  const { t } = useI18n()
+  const ut = t.packetDetail.update
   const has = (pick: (route: EvpnRoute) => unknown) => routes.some((route) => pick(route) !== undefined)
   const showMac = has((r) => r.macAddress)
   // Type 3 and 4 name the router that originated them, which is the VTEP —
@@ -404,13 +416,13 @@ function EvpnRouteTable({ routes, tone }: { routes: EvpnRoute[]; tone: 'announce
       <table className="w-full text-xs">
         <thead className="bg-surface-sunken text-muted">
           <tr className="text-left">
-            <th className="px-2 py-1 font-medium">Type</th>
+            <th className="px-2 py-1 font-medium">{ut.evpnColType}</th>
             <th className="px-2 py-1 font-medium">RD</th>
             {showMac && <th className="px-2 py-1 font-medium">MAC</th>}
-            {showIp && <th className="px-2 py-1 font-medium">IP / Originating Router</th>}
+            {showIp && <th className="px-2 py-1 font-medium">{ut.evpnColIp}</th>}
             {showVni && <th className="px-2 py-1 font-medium">VNI</th>}
             {showEsi && <th className="px-2 py-1 font-medium">ESI</th>}
-            {showTag && <th className="px-2 py-1 font-medium">Eth Tag</th>}
+            {showTag && <th className="px-2 py-1 font-medium">{ut.evpnColEthTag}</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-hair">
@@ -419,8 +431,8 @@ function EvpnRouteTable({ routes, tone }: { routes: EvpnRoute[]; tone: 'announce
               <td className={`px-2 py-1 ${toneClass}`}>
                 [{route.routeType}] {route.routeTypeName}
                 {route.truncated && (
-                  <span className="ml-1 text-warning" title="The route body could not be fully read">
-                    ⚠ partial
+                  <span className="ml-1 text-warning" title={ut.evpnPartialTitle}>
+                    {ut.evpnPartial}
                   </span>
                 )}
               </td>
@@ -436,7 +448,7 @@ function EvpnRouteTable({ routes, tone }: { routes: EvpnRoute[]; tone: 'announce
                 <td className="px-2 py-1 font-mono text-muted">
                   {route.label ?? '-'}
                   {route.label2 !== undefined && (
-                    <span className="text-dim" title="Second label, an L3 VNI alongside the L2 one">
+                    <span className="text-dim" title={ut.evpnSecondLabelTitle}>
                       {' / '}{route.label2}
                     </span>
                   )}

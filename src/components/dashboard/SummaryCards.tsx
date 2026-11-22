@@ -1,4 +1,5 @@
 import type { BgpMessageTypeName } from '../../lib/bgp/types'
+import { useI18n } from '../../i18n'
 import type { SummaryData } from './types'
 
 interface TypeBadgeDef {
@@ -36,6 +37,7 @@ interface SummaryCardsProps {
  * one sentence, and the per-type badges read as a breakdown of the messages.
  */
 export function SummaryCards({ summary, onSelect }: SummaryCardsProps) {
+  const { t } = useI18n()
   const messageTotal = Object.values(summary.counts).reduce((a, b) => a + b, 0)
 
   return (
@@ -48,8 +50,10 @@ export function SummaryCards({ summary, onSelect }: SummaryCardsProps) {
         className="flex items-baseline gap-1.5 rounded hover:text-accent transition-colors"
       >
         <span className="text-xl font-bold font-mono text-strong">{summary.total.toLocaleString()}</span>
-        <span className="text-sm text-muted">BGP packets</span>
-        <span className="text-sm text-dim">({messageTotal.toLocaleString()} messages)</span>
+        <span className="text-sm text-muted">{t.dashboard.bgpPackets}</span>
+        <span className="text-sm text-dim">
+          {t.dashboard.messagesCount(messageTotal.toLocaleString())}
+        </span>
       </button>
       <div className="flex flex-wrap items-center gap-1.5 sm:ml-auto">
         {TYPE_BADGES.map(({ type, label, colorClass, showZero }) => {

@@ -15,6 +15,7 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useI18n, type Messages } from '../i18n'
 import { ScenarioEditor } from '../components/builder/ScenarioEditor'
 import {
   toEditorSteps,
@@ -43,6 +44,7 @@ type BuildResult =
 
 export function BuilderPage() {
   const { loadFile } = useApp()
+  const { t } = useI18n()
   const navigate = useNavigate()
 
   const [presetId, setPresetId] = useState(PRESETS[0].id)
@@ -99,22 +101,20 @@ export function BuilderPage() {
 
   const frameCount = result.ok ? result.capture.frames.length : 0
   const byteCount = result.ok ? result.capture.bytes.length : 0
+  const activePreset = PRESETS.find((p) => p.id === presetId)
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-canvas lg:flex-row">
       {/* Editor */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto border-hair p-4 lg:border-r">
         <div className="mb-4">
-          <h1 className="text-sm font-semibold text-strong">Build a capture</h1>
-          <p className="mt-1 text-xs text-muted">
-            Describe a BGP session and get a pcap of it. Start from a scenario below, then change
-            the addresses, AS numbers and routes to match the one you are working on.
-          </p>
+          <h1 className="text-sm font-semibold text-strong">{t.builder.title}</h1>
+          <p className="mt-1 text-xs text-muted">{t.builder.subtitle}</p>
         </div>
 
         <div className="mb-5">
           <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-dim">
-            Scenario
+            {t.builder.scenarioLabel}
           </label>
           <select
             className="w-full rounded border border-hair-strong bg-surface px-2 py-1.5 text-xs text-body focus:border-accent focus:outline-none"
@@ -123,12 +123,12 @@ export function BuilderPage() {
           >
             {PRESETS.map((preset) => (
               <option key={preset.id} value={preset.id}>
-                {preset.name}
+                {t.builder.presets[preset.id]?.name ?? preset.name}
               </option>
             ))}
           </select>
           <p className="mt-1.5 text-[11px] text-dim">
-            {PRESETS.find((p) => p.id === presetId)?.description}
+            {activePreset ? (t.builder.presets[activePreset.id]?.description ?? activePreset.description) : ''}
           </p>
         </div>
 
@@ -143,11 +143,12 @@ export function BuilderPage() {
       {/* Preview */}
       <div className="flex min-h-0 flex-1 flex-col lg:max-w-[46%]">
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hair bg-surface px-4 py-2.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-dim">Preview</span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-dim">
+            {t.builder.previewHeading}
+          </span>
           {result.ok && (
             <span className="font-mono text-[11px] text-muted">
-              {frameCount} frames · {formatBytes(byteCount)} ·{' '}
-              {result.preview.bgpMessageCount} BGP messages
+              {t.builder.previewStats(frameCount, formatBytes(byteCount), result.preview.bgpMessageCount)}
             </span>
           )}
 
@@ -158,7 +159,7 @@ export function BuilderPage() {
               disabled={!result.ok || frameCount === 0}
               className="rounded border border-hair px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-hair-strong hover:text-strong disabled:pointer-events-none disabled:opacity-40"
             >
-              Download .pcap
+              {t.builder.downloadPcap}
             </button>
             <button
               type="button"
@@ -166,7 +167,7 @@ export function BuilderPage() {
               disabled={!result.ok || frameCount === 0 || loading}
               className="rounded bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-40"
             >
-              {loading ? 'Loading…' : 'Open in analyzer'}
+              {loading ? t.common.loading : t.builder.openInAnalyzer}
             </button>
           </div>
         </div>
@@ -179,9 +180,7 @@ export function BuilderPage() {
           <>
             {(result.preview.errors.length > 0 || result.preview.warnings.length > 0) && (
               <div className="m-4 mb-0 rounded border border-warning/40 bg-warning-subtle px-3 py-2 text-xs text-body">
-                <p className="mb-1 font-medium text-warning">
-                  The built file did not read back cleanly
-                </p>
+                <p className="mb-1 font-medium text-warning">{t.builder.readBackWarning}</p>
                 <ul className="list-disc pl-4">
                   {[...result.preview.errors, ...result.preview.warnings].slice(0, 5).map((w, i) => (
                     <li key={i}>{w}</li>
@@ -198,6 +197,7 @@ export function BuilderPage() {
 }
 
 function FramePreview({ preview }: { preview: Preview }) {
+  const { t } = useI18n()
   const start = preview.packets[0]?.timestamp.getTime() ?? 0
 
   return (
@@ -206,11 +206,11 @@ function FramePreview({ preview }: { preview: Preview }) {
         <thead className="sticky top-0 bg-surface-sunken">
           <tr className="border-b border-hair text-left text-[11px] uppercase tracking-wide text-dim">
             <th className="px-3 py-1.5 font-medium">#</th>
-            <th className="px-3 py-1.5 font-medium">Time</th>
-            <th className="px-3 py-1.5 font-medium">Source</th>
-            <th className="px-3 py-1.5 font-medium">Destination</th>
-            <th className="px-3 py-1.5 font-medium">Len</th>
-            <th className="px-3 py-1.5 font-medium">Info</th>
+            <th className="px-3 py-1.5 font-medium">{t.builder.colTime}</th>
+            <th className="px-3 py-1.5 font-medium">{t.builder.colSource}</th>
+            <th className="px-3 py-1.5 font-medium">{t.builder.colDestination}</th>
+            <th className="px-3 py-1.5 font-medium">{t.builder.colLen}</th>
+            <th className="px-3 py-1.5 font-medium">{t.builder.colInfo}</th>
           </tr>
         </thead>
         <tbody>
@@ -251,25 +251,30 @@ const TYPE_COLORS: Record<string, string> = {
 }
 
 function BgpInfo({ packet }: { packet: BgpPacket }) {
+  const { t } = useI18n()
+
   return (
     <span className="flex flex-wrap gap-x-2">
       {packet.messages.map((message, index) => (
         <span key={index} className={TYPE_COLORS[message.type] ?? 'text-body'}>
-          {message.type === 'UPDATE' ? describeUpdate(message) : message.type}
+          {message.type === 'UPDATE' ? describeUpdate(message, t) : message.type}
         </span>
       ))}
     </span>
   )
 }
 
-function describeUpdate(message: Extract<BgpPacket['messages'][number], { type: 'UPDATE' }>): string {
+function describeUpdate(
+  message: Extract<BgpPacket['messages'][number], { type: 'UPDATE' }>,
+  t: Messages
+): string {
   const eor = endOfRibMarker(message)
   if (eor) return `UPDATE (End-of-RIB ${eor})`
 
   const { announced, withdrawn } = countUpdatePrefixes(message)
   const parts: string[] = []
-  if (announced > 0) parts.push(`${announced} announced`)
-  if (withdrawn > 0) parts.push(`${withdrawn} withdrawn`)
+  if (announced > 0) parts.push(t.messages.updateAnnouncedCount(announced))
+  if (withdrawn > 0) parts.push(t.messages.updateWithdrawnCount(withdrawn))
   return `UPDATE${parts.length ? ` (${parts.join(', ')})` : ''}`
 }
 

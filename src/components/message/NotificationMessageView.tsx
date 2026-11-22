@@ -1,8 +1,10 @@
 import type { BgpNotificationMessage } from '../../lib/bgp/types'
 import type { NotificationData } from '../../lib/bgp/notification-data'
+import { getErrorHint } from '../../lib/bgp/errors'
 import { HexDump } from '../common/HexDump'
 import type { HoldTimerContext } from '../../lib/bgp/hold-timer'
 import { formatTimeOfDayUtc } from '../../lib/format-time'
+import { useI18n } from '../../i18n'
 
 /**
  * A duration in the terms this panel compares: seconds against a hold time
@@ -25,59 +27,55 @@ function seconds(value: number): string {
  * means the capture is missing what the timer was counting.
  */
 function HoldTimer({ context }: { context: HoldTimerContext }) {
+  const { t } = useI18n()
+  const nt = t.packetDetail.notification
   const { lastHeard, negotiatedHoldTime, silenceReachedHoldTime, peer } = context
+
+  const line = lastHeard
+    ? nt.silenceLine(
+        seconds(lastHeard.silenceSeconds),
+        lastHeard.type,
+        peer,
+        formatTimeOfDayUtc(lastHeard.timestamp),
+        negotiatedHoldTime
+      )
+    : null
 
   return (
     <div className="rounded-lg border border-hair bg-surface-sunken p-3">
       <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-dim">
-        Silence before the teardown
+        {nt.silenceHeading}
       </h4>
 
-      {lastHeard ? (
+      {line ? (
         <div className="space-y-1 text-sm text-body">
           <p>
-            <span className="font-mono font-medium text-strong">
-              {seconds(lastHeard.silenceSeconds)}
-            </span>{' '}
-            since the last {lastHeard.type} from <span className="font-mono">{peer}</span> at{' '}
-            <span className="font-mono">{formatTimeOfDayUtc(lastHeard.timestamp)}</span>
-            {negotiatedHoldTime !== undefined && (
+            <span className="font-mono font-medium text-strong">{line.duration}</span>
+            {line.afterDuration}
+            <span className="font-mono">{line.peer}</span>
+            {line.atTime}
+            <span className="font-mono">{line.time}</span>
+            {line.againstHold && line.holdTimeStr && (
               <>
-                , against a negotiated hold time of{' '}
-                <span className="font-mono font-medium text-strong">{negotiatedHoldTime}s</span>
+                {line.againstHold}
+                <span className="font-mono font-medium text-strong">{line.holdTimeStr}</span>
               </>
             )}
-            .
+            {line.suffix}
           </p>
 
           {silenceReachedHoldTime === true && (
-            <p className="text-muted">
-              The peer was quiet for the whole hold time, so the session timed out as
-              specified. What to chase is why its packets stopped arriving — one-way
-              reachability, a filter in one direction, an overloaded control plane —
-              rather than BGP itself.
-            </p>
+            <p className="text-muted">{nt.silenceReached}</p>
           )}
           {silenceReachedHoldTime === false && (
-            <p className="text-muted">
-              That is shorter than the hold time, so the timer fired before the silence
-              could have run it out. Either this capture is missing packets that did
-              arrive, or the hold time in force was not the one these OPENs agreed.
-            </p>
+            <p className="text-muted">{nt.silenceShort}</p>
           )}
           {negotiatedHoldTime === undefined && (
-            <p className="text-muted">
-              The hold time is unknown because the capture does not hold an OPEN from
-              both ends — compare the silence against the configured value yourself.
-            </p>
+            <p className="text-muted">{nt.silenceUnknownHold}</p>
           )}
         </div>
       ) : (
-        <p className="text-sm text-body">
-          Nothing from <span className="font-mono">{peer}</span> appears in this capture
-          before the teardown, so the silence cannot be measured — and a capture with
-          nothing from one end is worth checking before drawing conclusions from it.
-        </p>
+        <p className="text-sm text-body">{nt.silenceNoneBefore(peer)}</p>
       )}
     </div>
   )
@@ -91,51 +89,52 @@ function HoldTimer({ context }: { context: HoldTimerContext }) {
  * the message where people want to do that.
  */
 function DecodedData({ decoded }: { decoded: NotificationData }) {
+  const { t } = useI18n()
+  const nt = t.packetDetail.notification
+
   switch (decoded.kind) {
     case 'attribute': {
       const { attribute } = decoded
       return (
-        <Decoded label="Offending attribute">
+        <Decoded label={nt.offendingAttribute}>
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono font-medium text-strong">{attribute.typeName}</span>
-            <span className="text-xs text-muted">type {attribute.typeCode}</span>
-            <span className="text-xs text-muted">{attribute.length} bytes</span>
+            <span className="text-xs text-muted">{nt.attrType(attribute.typeCode)}</span>
+            <span className="text-xs text-muted">{t.common.bytes(attribute.length)}</span>
             {/* The flags are often the fault itself — an unknown type code with
                 the optional bit clear is precisely error 3/2, "Unrecognized
                 Well-known Attribute". Rendering only the flags that are set
                 would leave that one legible by its absence, so the optional
                 bit is named either way, in the words the subcode uses. */}
-            <Flag>{attribute.flags.optional ? 'Optional' : 'Well-known'}</Flag>
-            {attribute.flags.transitive && <Flag>Transitive</Flag>}
-            {attribute.flags.partial && <Flag>Partial</Flag>}
-            {attribute.flags.extendedLength && <Flag>Extended length</Flag>}
+            <Flag>{attribute.flags.optional ? nt.flagOptional : nt.flagWellKnown}</Flag>
+            {attribute.flags.transitive && <Flag>{nt.flagTransitive}</Flag>}
+            {attribute.flags.partial && <Flag>{nt.flagPartial}</Flag>}
+            {attribute.flags.extendedLength && <Flag>{nt.flagExtendedLength}</Flag>}
           </div>
         </Decoded>
       )
     }
     case 'version':
       return (
-        <Decoded label="Highest version the peer supports">
+        <Decoded label={nt.highestVersion}>
           <span className="font-mono font-medium text-strong">BGP-{decoded.version}</span>
         </Decoded>
       )
     case 'as':
       return (
-        <Decoded label="AS number in the data field">
+        <Decoded label={nt.asInData}>
           <span className="font-mono font-medium text-strong">AS{decoded.asNumber}</span>
-          <p className="mt-1 text-xs text-muted">
-            Compare this against your neighbor statement and the peer's router bgp line.
-          </p>
+          <p className="mt-1 text-xs text-muted">{nt.asInDataHint}</p>
         </Decoded>
       )
     case 'capabilities':
       return (
-        <Decoded label={`Unsupported ${decoded.capabilities.length === 1 ? 'capability' : 'capabilities'}`}>
+        <Decoded label={nt.unsupportedCapabilities(decoded.capabilities.length)}>
           <ul className="space-y-1">
             {decoded.capabilities.map((capability, index) => (
               <li key={index} className="flex items-center gap-2">
                 <span className="font-mono font-medium text-strong">{capability.name}</span>
-                <span className="text-xs text-muted">code {capability.code}</span>
+                <span className="text-xs text-muted">{nt.capCode(capability.code)}</span>
               </li>
             ))}
           </ul>
@@ -143,21 +142,21 @@ function DecodedData({ decoded }: { decoded: NotificationData }) {
       )
     case 'length':
       return (
-        <Decoded label="Rejected message length">
-          <span className="font-mono font-medium text-strong">{decoded.length} bytes</span>
-          <p className="mt-1 text-xs text-muted">Valid BGP messages are 19–4096 bytes.</p>
+        <Decoded label={nt.rejectedLength}>
+          <span className="font-mono font-medium text-strong">{t.common.bytes(decoded.length)}</span>
+          <p className="mt-1 text-xs text-muted">{nt.validLengthHint}</p>
         </Decoded>
       )
     case 'messageType':
       return (
-        <Decoded label="Unrecognised message type">
+        <Decoded label={nt.unrecognisedType}>
           <span className="font-mono font-medium text-strong">{decoded.typeName}</span>
-          <span className="ml-2 text-xs text-muted">type {decoded.typeCode}</span>
+          <span className="ml-2 text-xs text-muted">{nt.attrType(decoded.typeCode)}</span>
         </Decoded>
       )
     case 'shutdownMessage':
       return (
-        <Decoded label="Shutdown communication">
+        <Decoded label={nt.shutdownCommunication}>
           {/* The one place BGP lets the far end explain itself in words. */}
           <p className="whitespace-pre-wrap font-medium text-strong">{decoded.message}</p>
         </Decoded>
@@ -186,18 +185,22 @@ interface NotificationMessageViewProps {
 }
 
 export function NotificationMessageView({ message, holdTimer }: NotificationMessageViewProps) {
+  const { locale, t } = useI18n()
+  const nt = t.packetDetail.notification
+  const hint = message.hint ? getErrorHint(message.errorCode, message.errorSubcode, locale) : null
+
   return (
     <div className="space-y-3">
       {/* Error Info */}
       <div className="bg-critical-subtle border border-critical/30 rounded-lg p-3 text-sm space-y-2">
         <div className="flex justify-between">
-          <span className="text-critical">Error Code</span>
+          <span className="text-critical">{nt.errorCode}</span>
           <span className="font-mono font-medium text-critical">
             {message.errorCode} ({message.errorCodeName})
           </span>
         </div>
         <div className="flex justify-between">
-          <span className="text-critical">Error Subcode</span>
+          <span className="text-critical">{nt.errorSubcode}</span>
           <span className="font-mono font-medium text-critical">
             {message.errorSubcode} ({message.errorSubcodeName})
           </span>
@@ -209,7 +212,7 @@ export function NotificationMessageView({ message, holdTimer }: NotificationMess
       {holdTimer && <HoldTimer context={holdTimer} />}
 
       {/* Hint */}
-      {message.hint && (
+      {hint && (
         <div className="bg-accent-subtle border border-accent/30 rounded-lg p-3">
           <div className="flex items-start gap-2">
             <svg
@@ -226,8 +229,8 @@ export function NotificationMessageView({ message, holdTimer }: NotificationMess
               />
             </svg>
             <div>
-              <h4 className="text-sm font-medium text-strong mb-1">Troubleshooting Hint</h4>
-              <p className="text-sm text-body">{message.hint}</p>
+              <h4 className="text-sm font-medium text-strong mb-1">{nt.troubleshootingHint}</h4>
+              <p className="text-sm text-body">{hint}</p>
             </div>
           </div>
         </div>
@@ -240,7 +243,7 @@ export function NotificationMessageView({ message, holdTimer }: NotificationMess
       {message.data.length > 0 && (
         <div>
           <h4 className="text-sm font-medium text-strong mb-2">
-            Error Data ({message.data.length} bytes)
+            {nt.errorData(message.data.length)}
           </h4>
           <HexDump data={message.data} />
         </div>

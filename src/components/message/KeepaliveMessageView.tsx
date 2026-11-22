@@ -1,5 +1,6 @@
 import type { KeepaliveContext } from '../../lib/bgp/hold-timer'
 import { formatDelta } from '../../lib/format-time'
+import { useI18n } from '../../i18n'
 
 /**
  * A KEEPALIVE carries nothing but its header, so what is worth showing is
@@ -9,10 +10,12 @@ import { formatDelta } from '../../lib/format-time'
  * gaps approaching the whole of it are a session about to expire.
  */
 export function KeepaliveMessageView({ context }: { context?: KeepaliveContext | null }) {
+  const { t } = useI18n()
+
   if (!context) {
     return (
       <div className="bg-bgp-keepalive/10 border border-bgp-keepalive/30 rounded-lg p-3 text-sm text-bgp-keepalive">
-        KEEPALIVE — header only (19 bytes).
+        {t.packetDetail.keepalive.headerOnly}
       </div>
     )
   }
@@ -32,24 +35,26 @@ export function KeepaliveMessageView({ context }: { context?: KeepaliveContext |
   return (
     <div className="bg-surface-sunken rounded-lg p-3 text-sm space-y-1">
       <div className="flex justify-between gap-4">
-        <span className="text-muted" title="Each end's hold timer is reset by messages from the other end">
-          Since {sender}'s previous message to {receiver}
+        <span className="text-muted" title={t.packetDetail.keepalive.sincePreviousTitle}>
+          {t.packetDetail.keepalive.sincePrevious(sender, receiver)}
         </span>
         <span className="font-mono">
           {previous
             ? `${formatDelta(previous.gapSeconds * 1000)} (${previous.type})`
-            : '- (first from this end in the capture)'}
+            : t.packetDetail.keepalive.firstInCapture}
         </span>
       </div>
       <div className="flex justify-between gap-4">
-        <span className="text-muted">Negotiated hold time</span>
+        <span className="text-muted">{t.packetDetail.keepalive.negotiatedHoldTime}</span>
         <span className="font-mono">
-          {negotiatedHoldTime !== undefined ? `${negotiatedHoldTime}s` : '- (OPENs not in the capture)'}
+          {negotiatedHoldTime !== undefined
+            ? `${negotiatedHoldTime}s`
+            : t.packetDetail.keepalive.noOpensInCapture}
         </span>
       </div>
       {percent !== undefined && (
         <div className="flex justify-between gap-4">
-          <span className="text-muted">Hold time used</span>
+          <span className="text-muted">{t.packetDetail.keepalive.holdTimeUsed}</span>
           <span className={`font-mono font-medium ${tone}`}>{percent}%</span>
         </div>
       )}

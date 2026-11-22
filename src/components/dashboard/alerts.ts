@@ -23,6 +23,7 @@ import type { GenericPacket } from '../../lib/pcap'
 import { aggregatePrefixStats, type PrefixStats } from '../../lib/bgp/prefix-stats'
 import type { DashboardAlert } from './types'
 import { formatAsPath } from '../../lib/bgp/as-path-display'
+import { getMessages, type Locale } from '../../i18n'
 
 // A pair of peers is considered "flapped" once we see more than one full
 // OPEN handshake (2 OPENs = one handshake) between the same two IPs.
@@ -86,7 +87,8 @@ interface NotificationGroup {
  * its AS is wrong is a different fault from B telling A the same thing, and the
  * row names a direction.
  */
-function groupNotifications(packets: BgpPacket[]): DashboardAlert[] {
+function groupNotifications(packets: BgpPacket[], locale: Locale): DashboardAlert[] {
+  const t = getMessages(locale).alerts
   const groups = new Map<string, NotificationGroup>()
 
   packets.forEach((packet, packetIndex) => {
@@ -97,7 +99,7 @@ function groupNotifications(packets: BgpPacket[]): DashboardAlert[] {
       const group = groups.get(key)
       if (!group) {
         groups.set(key, {
-          title: `NOTIFICATION: ${notif.errorCodeName} / ${notif.errorSubcodeName}`,
+          title: t.notifTitle(notif.errorCodeName, notif.errorSubcodeName),
           routine: isRoutineNotification(notif),
           srcIp: packet.srcIp,
           dstIp: packet.dstIp,
@@ -124,7 +126,7 @@ function groupNotifications(packets: BgpPacket[]): DashboardAlert[] {
     severity: group.routine ? ('warning' as const) : ('critical' as const),
     title: group.title,
     detail: group.routine
-      ? `${group.srcIp} → ${group.dstIp} — both ends connected at once; one connection closed (normal)`
+      ? t.notifCollisionDetail(group.srcIp, group.dstIp)
       : `${group.srcIp} → ${group.dstIp}`,
     timestamp: group.first,
     filter: sessionFilter(group.srcIp, group.dstIp),
@@ -172,10 +174,10 @@ function asPathChange(stat: PrefixStats): PathChange | null {
   return worst
 }
 
-function describeAsPath(path: string): string {
+function describeAsPath(path: string, locale: Locale): string {
   // Collapsed the same way the routes screen shows it, so a prepend reads as a
   // count in both places rather than as a wall of the same AS number.
-  return path === '' ? '(no AS_PATH)' : formatAsPath(path)
+  return path === '' ? getMessages(locale).alerts.noAsPath : formatAsPath(path)
 }
 
 /**
@@ -184,7 +186,8 @@ function describeAsPath(path: string): string {
  *
  * Warnings, not criticals: nothing here means a session is broken.
  */
-function computeRouteAlerts(stats: PrefixStats[]): DashboardAlert[] {
+function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAlert[] {
+  const t = getMessages(locale).alerts
   const alerts: DashboardAlert[] = []
 
   // A route that went away at least once. `flap` is already counted per
@@ -202,8 +205,8 @@ function computeRouteAlerts(stats: PrefixStats[]): DashboardAlert[] {
     alerts.push({
       id: `route-flap-${stat.key}`,
       severity: 'warning',
-      title: `Route flapping: ${stat.key}`,
-      detail: `${stat.announced} announcements, ${stat.withdrawn} withdrawals`,
+      title: t.routeFlappingTitle(stat.key),
+      detail: t.routeFlappingDetail(stat.announced, stat.withdrawn),
       timestamp: first.timestamp,
       filter: `prefix = ${stat.key}`,
       packetIndex: first.packetIndex,
@@ -218,8 +221,8 @@ function computeRouteAlerts(stats: PrefixStats[]): DashboardAlert[] {
     alerts.push({
       id: 'route-flap-more',
       severity: 'warning',
-      title: `${rest.length} more prefixes flapped`,
-      detail: `${restFlaps} further withdrawals — sort the Routes screen by Flap to see them all`,
+      title: t.morePrefixesFlappedTitle(rest.length),
+      detail: t.morePrefixesFlappedDetail(restFlaps),
       timestamp: null,
       filter: 'type=UPDATE',
     })
@@ -248,12 +251,16 @@ function computeRouteAlerts(stats: PrefixStats[]): DashboardAlert[] {
           event.asPath !== undefined &&
           event.asPath !== paths[0]
       ) ?? stat.history[0]
-    const from = pathId !== undefined ? `${source} (path ${pathId})` : source
+    const from = pathId !== undefined ? t.asPathFromPath(source, pathId) : source
     alerts.push({
       id: `route-aspath-${stat.key}`,
       severity: 'warning',
-      title: `AS_PATH changed: ${stat.key}`,
-      detail: `from ${from}: ${describeAsPath(paths[0])} → ${describeAsPath(paths[paths.length - 1])}`,
+      title: t.asPathChangedTitle(stat.key),
+      detail: t.asPathChangedDetail(
+        from,
+        describeAsPath(paths[0], locale),
+        describeAsPath(paths[paths.length - 1], locale)
+      ),
       timestamp: change.timestamp,
       filter: `prefix = ${stat.key}`,
       packetIndex: change.packetIndex,
@@ -281,7 +288,7 @@ function computeRouteAlerts(stats: PrefixStats[]): DashboardAlert[] {
     alerts.push({
       id: `route-macmove-${stat.key}`,
       severity: 'warning',
-      title: `MAC moved: ${stat.key}`,
+      title: t.macMovedTitle(stat.key),
       detail: `${announcements[0].source} → ${last.source}`,
       timestamp: moves[0].timestamp,
       filter: mac ? `mac = ${mac}` : `prefix = ${stat.key}`,
@@ -295,8 +302,8 @@ function computeRouteAlerts(stats: PrefixStats[]): DashboardAlert[] {
     alerts.push({
       id: 'route-aspath-more',
       severity: 'warning',
-      title: `${rest.length} more prefixes changed AS_PATH`,
-      detail: 'Open the Routes screen to compare their paths',
+      title: t.moreAsPathChangedTitle(rest.length),
+      detail: t.moreAsPathChangedDetail,
       timestamp: null,
       filter: 'type=UPDATE',
     })
@@ -380,8 +387,10 @@ function collectPairFacts(
  */
 function computeSessionSetupAlerts(
   packets: BgpPacket[],
-  allPackets: GenericPacket[]
+  allPackets: GenericPacket[],
+  locale: Locale
 ): DashboardAlert[] {
+  const t = getMessages(locale).alerts
   const alerts: DashboardAlert[] = []
 
   for (const facts of collectPairFacts(packets, allPackets).values()) {
@@ -396,12 +405,8 @@ function computeSessionSetupAlerts(
       alerts.push({
         id: `one-direction-${sortedPairKey(ipA, ipB)}`,
         severity: 'critical',
-        title: 'Only one direction of this session is in the capture',
-        detail:
-          `Every frame between ${ipA} and ${ipB} was sent by ${from}. Either the ` +
-          `capture caught one direction only, or traffic from the other end is ` +
-          `not arriving — a one-way link, a filter applied in one direction. ` +
-          `Anything read off this session is half a conversation until you know which.`,
+        title: t.oneDirectionTitle,
+        detail: t.oneDirectionDetail(ipA, ipB, from),
         timestamp: facts.firstSeen,
         filter: sessionFilter(ipA, ipB),
         pairKey: sortedPairKey(ipA, ipB),
@@ -423,14 +428,8 @@ function computeSessionSetupAlerts(
       alerts.push({
         id: `no-reply-${sortedPairKey(ipA, ipB)}`,
         severity: 'critical',
-        title: `TCP connects but ${silent} sends no BGP`,
-        detail:
-          `${facts.accepted} connection(s) accepted on port 179 and ${speaker} sent ` +
-          `BGP, but ${silent} sent none — no OPEN, no NOTIFICATION. The port is ` +
-          `open and the handshake succeeded, so the fault is after TCP came up: ` +
-          `the peer's BGP not willing to talk to this address, or the payload not ` +
-          `surviving a path that carries the handshake (a TCP middlebox, a PMTU ` +
-          `black hole, control-plane policing).`,
+        title: t.noReplyTitle(silent),
+        detail: t.noReplyDetail(facts.accepted, speaker, silent),
         timestamp: facts.firstSeen,
         filter: sessionFilter(ipA, ipB),
         pairKey: sortedPairKey(ipA, ipB),
@@ -693,7 +692,11 @@ function gracefulRestarts(connections: Connection[]): GracefulRestartEvent[] {
   return events
 }
 
-function computeSilentTeardownAlerts(byPeering: Map<string, Connection[]>): DashboardAlert[] {
+function computeSilentTeardownAlerts(
+  byPeering: Map<string, Connection[]>,
+  locale: Locale
+): DashboardAlert[] {
+  const t = getMessages(locale).alerts
   // Grouped by (peering, kind) and counted within, the same shape the
   // NOTIFICATION rule uses. A session dying every ten minutes for six hours is
   // at most two rows carrying their own counts, not thirty-six rows — and the
@@ -738,22 +741,12 @@ function computeSilentTeardownAlerts(byPeering: Map<string, Connection[]>): Dash
         severity: 'critical',
         title:
           kind === 'RST'
-            ? `${ipA} ↔ ${ipB} was reset with no NOTIFICATION`
-            : `${ipA} ↔ ${ipB} was closed with no NOTIFICATION`,
+            ? t.silentResetTitle(ipA, ipB)
+            : t.silentCloseTitle(ipA, ipB),
         detail:
           kind === 'RST'
-            ? `A connection carrying BGP ended when ${sender} sent an RST, and no ` +
-              `NOTIFICATION was exchanged on it. A speaker shutting the session ` +
-              `down would have sent a Cease first, so the reset came from ` +
-              `somewhere else — a firewall or load balancer dropping the flow, a ` +
-              `stack that had no socket for it, an ACL applied mid-session. The ` +
-              `frame is in the capture under All Packets.`
-            : `A connection carrying BGP was closed with FIN by ${sender}, and no ` +
-              `NOTIFICATION was exchanged on it. BGP does not end a session that ` +
-              `way — a speaker going down sends a Cease — so something in the ` +
-              `path decided the connection was finished, which is what an idle ` +
-              `timeout on a firewall or NAT looks like. The frame is in the ` +
-              `capture under All Packets.`,
+            ? t.silentResetDetail(sender)
+            : t.silentCloseDetail(sender),
         timestamp: times[0] ?? null,
         filter: sessionFilter(ipA, ipB),
         pairKey,
@@ -787,7 +780,11 @@ function seconds(value: number): string {
  * speaker expected to be away and whether it kept forwarding, and the gap
  * between re-establishment and End-of-RIB says how long it actually took.
  */
-function computeGracefulRestartAlerts(byPeering: Map<string, Connection[]>): DashboardAlert[] {
+function computeGracefulRestartAlerts(
+  byPeering: Map<string, Connection[]>,
+  locale: Locale
+): DashboardAlert[] {
+  const t = getMessages(locale).alerts
   const alerts: DashboardAlert[] = []
 
   for (const [pairKey, connections] of byPeering) {
@@ -810,34 +807,22 @@ function computeGracefulRestartAlerts(byPeering: Map<string, Connection[]>): Das
 
     const convergence =
       first.convergenceSeconds !== undefined
-        ? `Routes were back ${seconds(first.convergenceSeconds)} after the session came up, ` +
-          `against the ${first.restartTime}s ${first.restarter} asked for.`
-        : `The capture holds no End-of-RIB from ${first.restarter} after it came back, so how ` +
-          `long convergence took cannot be measured here — only that the session returned.`
+        ? t.grConvergenceMeasured(seconds(first.convergenceSeconds), first.restartTime, first.restarter)
+        : t.grConvergenceUnknown(first.restarter)
 
     const forwarding = first.forwardingPreserved
-      ? `${first.restarter} advertised that it kept forwarding state across the restart, so ` +
-        `traffic should have continued while BGP caught up.`
-      : `${first.restarter} did not advertise preserved forwarding state, so its dataplane ` +
-        `most likely dropped traffic for the whole of that window — which is the part a ` +
-        `graceful restart is supposed to avoid.`
+      ? t.grForwardingPreserved(first.restarter)
+      : t.grForwardingNotPreserved(first.restarter)
 
-    const overran =
-      slow.length > 0
-        ? ` Convergence ran past the Restart Time, so the peer will have given up holding the ` +
-          `routes and withdrawn them before they came back.`
-        : ''
+    const overran = slow.length > 0 ? t.grOverran : ''
 
     alerts.push({
       id: `graceful-restart-${pairKey}`,
       severity,
       // Names the end that went away and the one that held its routes, rather
       // than repeating the restarter inside a peering string that contains it.
-      title: `${first.restarter} restarted gracefully, peer ${first.restarter === ipA ? ipB : ipA}`,
-      detail:
-        `The session went down with nothing at the BGP layer announcing it and came back with ` +
-        `both ends re-advertising Graceful Restart, which is a restart rather than a flap. ` +
-        `${convergence} ${forwarding}${overran}`,
+      title: t.grTitle(first.restarter, first.restarter === ipA ? ipB : ipA),
+      detail: t.grDetail(convergence, forwarding, overran),
       timestamp: first.cameBackAt,
       filter: sessionFilter(ipA, ipB),
       pairKey,
@@ -860,17 +845,19 @@ function computeGracefulRestartAlerts(byPeering: Map<string, Connection[]>): Das
  */
 export function computeAlerts(
   packets: BgpPacket[],
-  allPackets: GenericPacket[] = []
+  allPackets: GenericPacket[] = [],
+  locale: Locale = 'en'
 ): DashboardAlert[] {
+  const t = getMessages(locale).alerts
   const alerts: DashboardAlert[] = []
   const byPeering = connectionsByPeering(packets, allPackets)
 
-  alerts.push(...computeSessionSetupAlerts(packets, allPackets))
-  alerts.push(...computeSilentTeardownAlerts(byPeering))
-  alerts.push(...computeGracefulRestartAlerts(byPeering))
+  alerts.push(...computeSessionSetupAlerts(packets, allPackets, locale))
+  alerts.push(...computeSilentTeardownAlerts(byPeering, locale))
+  alerts.push(...computeGracefulRestartAlerts(byPeering, locale))
 
   // 1. NOTIFICATIONs, one row per repeated fault rather than per packet.
-  alerts.push(...groupNotifications(packets))
+  alerts.push(...groupNotifications(packets, locale))
 
   // 2. Flapping sessions: repeated OPEN exchanges between the same peer pair.
   const opensByPair = new Map<string, { timestamp: Date; packetIndex: number }[]>()
@@ -899,8 +886,8 @@ export function computeAlerts(
     alerts.push({
       id: `flap-${key}`,
       severity: 'warning',
-      title: 'Session flapping detected',
-      detail: `${ipA} ↔ ${ipB} — ${opens.length} OPEN messages (~${establishments} establishments)`,
+      title: t.sessionFlapTitle,
+      detail: t.sessionFlapDetail(ipA, ipB, opens.length, establishments),
       timestamp: opens[opens.length - 1].timestamp,
       filter: sessionFilter(ipA, ipB),
       packetIndex: opens[0].packetIndex,
@@ -934,8 +921,8 @@ export function computeAlerts(
       alerts.push({
         id: `withdraw-burst-${cursor}`,
         severity: 'warning',
-        title: 'Burst of withdrawn prefixes',
-        detail: `${windowTotal} prefixes withdrawn within ${WITHDRAWN_BURST_WINDOW_MS / 1000}s`,
+        title: t.withdrawBurstTitle,
+        detail: t.withdrawBurstDetail(windowTotal, WITHDRAWN_BURST_WINDOW_MS / 1000),
         timestamp: withdrawEvents[cursor].timestamp,
         filter: 'type=UPDATE',
         packetIndex: withdrawEvents[cursor].packetIndex,
@@ -948,7 +935,7 @@ export function computeAlerts(
 
   // 4. Route-level findings. aggregatePrefixStats walks every packet, so it is
   // called once here and both route rules read the same result.
-  alerts.push(...computeRouteAlerts(aggregatePrefixStats(packets)))
+  alerts.push(...computeRouteAlerts(aggregatePrefixStats(packets), locale))
 
   // Most severe first, then the rows standing for the most occurrences, then
   // most recent first. Counting before recency keeps a peer that failed 40
@@ -970,7 +957,11 @@ export function computeAlerts(
  * BGP not running), and presenting that as "no issues detected" sends the
  * engineer away from the evidence.
  */
-export function computeTransportAlerts(allPackets: GenericPacket[]): DashboardAlert[] {
+export function computeTransportAlerts(
+  allPackets: GenericPacket[],
+  locale: Locale = 'en'
+): DashboardAlert[] {
+  const t = getMessages(locale).alerts
   const port179 = allPackets.filter(
     (p) => p.protocol === 'TCP' && (p.srcPort === 179 || p.dstPort === 179)
   )
@@ -981,11 +972,9 @@ export function computeTransportAlerts(allPackets: GenericPacket[]): DashboardAl
       {
         id: 'transport-no-179',
         severity: 'warning',
-        title: 'No BGP messages and no TCP port 179 traffic',
+        title: t.transportNo179Title,
         detail:
-          tcpCount > 0
-            ? `${tcpCount} TCP packets on other ports — non-standard-port sessions are decoded only when BGP message markers are visible in the flow`
-            : 'The capture contains no TCP traffic',
+          tcpCount > 0 ? t.transportNo179DetailTcp(tcpCount) : t.transportNo179DetailNone,
         timestamp: allPackets[0]?.timestamp ?? null,
         filter: '',
       },
@@ -1002,8 +991,8 @@ export function computeTransportAlerts(allPackets: GenericPacket[]): DashboardAl
       {
         id: 'transport-refused',
         severity: 'critical',
-        title: 'TCP connections to port 179 are being refused',
-        detail: `${syns.length} SYNs answered by RST — the session never reaches BGP. Check ACLs/filters, MD5 (TCP-AO) configuration, or whether BGP is running on the peer`,
+        title: t.transportRefusedTitle,
+        detail: t.transportRefusedDetail(syns.length),
         timestamp: syns[0].timestamp,
         filter: '',
       },
@@ -1015,8 +1004,8 @@ export function computeTransportAlerts(allPackets: GenericPacket[]): DashboardAl
       {
         id: 'transport-unanswered',
         severity: 'critical',
-        title: 'TCP SYNs to port 179 go unanswered',
-        detail: `${syns.length} SYNs with no SYN-ACK — traffic filtered in transit or the peer is unreachable`,
+        title: t.transportUnansweredTitle,
+        detail: t.transportUnansweredDetail(syns.length),
         timestamp: syns[0].timestamp,
         filter: '',
       },
@@ -1027,8 +1016,8 @@ export function computeTransportAlerts(allPackets: GenericPacket[]): DashboardAl
     {
       id: 'transport-no-bgp-payload',
       severity: 'warning',
-      title: 'TCP port 179 traffic carries no decodable BGP',
-      detail: `${port179.length} packets on port 179 but no BGP messages could be decoded`,
+      title: t.transportNoBgpPayloadTitle,
+      detail: t.transportNoBgpPayloadDetail(port179.length),
       timestamp: port179[0].timestamp,
       filter: '',
     },

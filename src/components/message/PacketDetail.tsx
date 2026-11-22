@@ -10,6 +10,7 @@ import { FilterableValue } from './FilterableValue'
 import type { HoldTimerContext, KeepaliveContext } from '../../lib/bgp/hold-timer'
 import type { RouteRefreshDiff } from '../../lib/bgp/route-refresh'
 import { formatDelta } from '../../lib/format-time'
+import { useI18n } from '../../i18n'
 
 interface PacketDetailProps {
   packet: BgpPacket
@@ -45,6 +46,7 @@ export function PacketDetail({
   sessionPrevious,
   keepalive,
 }: PacketDetailProps) {
+  const { t } = useI18n()
   const { messages, rawData, parseWarnings } = packet
   const [rawOpen, setRawOpen] = usePersistentFlag('bgpshark-raw-data-open', false)
 
@@ -53,16 +55,16 @@ export function PacketDetail({
       {/* Packet Info */}
       <section>
         <h3 className="text-sm font-semibold text-dim uppercase tracking-wide mb-2">
-          Packet Info
+          {t.packetDetail.packetInfo}
         </h3>
         <div className="bg-surface-sunken rounded-lg p-3 text-sm space-y-1">
           <div className="flex justify-between">
-            <span className="text-muted">Time (UTC)</span>
+            <span className="text-muted">{t.packetDetail.timeUtc}</span>
             <span className="font-mono">{packet.timestamp.toISOString()}</span>
           </div>
           {captureStart && (
             <div className="flex justify-between">
-              <span className="text-muted">Since capture start</span>
+              <span className="text-muted">{t.packetDetail.sinceCaptureStart}</span>
               <span className="font-mono">
                 {((packet.timestamp.getTime() - captureStart.getTime()) / 1000).toFixed(3)}s
               </span>
@@ -72,32 +74,32 @@ export function PacketDetail({
             <div className="flex justify-between">
               <span
                 className="text-muted"
-                title="Time since the previous BGP packet between these two addresses, in either direction"
+                title={t.packetDetail.deltaPreviousTitle}
               >
-                Δ previous on session
+                {t.packetDetail.deltaPrevious}
               </span>
               <span className="font-mono">
                 {sessionPrevious
                   ? `${formatDelta(packet.timestamp.getTime() - sessionPrevious.timestamp.getTime())} (#${sessionPrevious.frameIndex})`
-                  : '- (first on this session)'}
+                  : t.packetDetail.firstOnSession}
               </span>
             </div>
           )}
           <div className="flex justify-between">
-            <span className="text-muted">Source</span>
+            <span className="text-muted">{t.packetDetail.source}</span>
             <span className="font-mono">
               <FilterableValue field="src_ip" value={packet.srcIp} align="left">{packet.srcIp}</FilterableValue>:{packet.srcPort}
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted">Destination</span>
+            <span className="text-muted">{t.packetDetail.destination}</span>
             <span className="font-mono">
               <FilterableValue field="dst_ip" value={packet.dstIp} align="left">{packet.dstIp}</FilterableValue>:{packet.dstPort}
             </span>
           </div>
           {messages.length > 1 && (
             <div className="flex justify-between">
-              <span className="text-muted">Messages</span>
+              <span className="text-muted">{t.packetDetail.messages}</span>
               <span className="font-mono">{messages.length}</span>
             </div>
           )}
@@ -108,7 +110,7 @@ export function PacketDetail({
       {parseWarnings.length > 0 && (
         <section>
           <div className="bg-warning-subtle border border-warning/30 rounded-lg p-3">
-            <h4 className="text-sm font-medium text-warning mb-1">Parse Warnings</h4>
+            <h4 className="text-sm font-medium text-warning mb-1">{t.packetDetail.parseWarnings}</h4>
             <ul className="text-sm text-warning space-y-1">
               {parseWarnings.map((warning, i) => (
                 <li key={i}>{warning}</li>
@@ -142,7 +144,7 @@ export function PacketDetail({
         className="group"
       >
         <summary className="cursor-pointer select-none text-sm font-semibold text-dim uppercase tracking-wide mb-2 hover:text-muted">
-          Raw Data ({rawData.length} bytes)
+          {t.packetDetail.rawData(rawData.length)}
         </summary>
         {rawOpen && <HexDump data={rawData} />}
       </details>
@@ -167,7 +169,11 @@ function MessageSection({
   refreshDiff?: RouteRefreshDiff | null
   onSelectPacket?: (packetIndex: number) => void
 }) {
-  const title = total > 1 ? `BGP ${message.type} Message (${index + 1}/${total})` : `BGP ${message.type} Message`
+  const { t } = useI18n()
+  const title =
+    total > 1
+      ? t.packetDetail.messageTitleIndexed(message.type, index + 1, total)
+      : t.packetDetail.messageTitle(message.type)
 
   return (
     <section>

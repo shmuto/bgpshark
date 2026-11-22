@@ -1,3 +1,5 @@
+import { useI18n } from '../../i18n'
+
 interface BackToListProps {
   onClick: () => void
   label?: string
@@ -10,7 +12,8 @@ interface BackToListProps {
  * detail, never both, so the detail needs its own way back — there is no list
  * beside it to click.
  */
-export function BackToList({ onClick, label = 'Back to list' }: BackToListProps) {
+export function BackToList({ onClick, label }: BackToListProps) {
+  const { t } = useI18n()
   return (
     <button
       type="button"
@@ -20,7 +23,7 @@ export function BackToList({ onClick, label = 'Back to list' }: BackToListProps)
       <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
       </svg>
-      {label}
+      {label ?? t.common.backToList}
     </button>
   )
 }

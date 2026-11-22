@@ -10,6 +10,7 @@ import { aggregatePrefixStats, type PrefixEvent, type PrefixStats } from '../lib
 import { contains, equals, parsePrefix, type ParsedPrefix } from '../lib/net/prefix'
 import { formatDelta, formatTimeOfDayUtc } from '../lib/format-time'
 import { collapsePrepends, formatAsPath } from '../lib/bgp/as-path-display'
+import { useI18n } from '../i18n'
 
 /** What the text in the search box turned out to be. */
 type Search =
@@ -31,14 +32,10 @@ type SortDirection = 'asc' | 'desc'
  */
 type MatchMode = 'exact' | 'subnets' | 'supernets'
 
-const MATCH_MODES: { value: MatchMode; label: string; hint: string }[] = [
-  { value: 'exact', label: 'Exact', hint: 'Only the prefix and mask length typed' },
-  { value: 'subnets', label: 'Subnets', hint: 'Routes announced inside the block typed' },
-  { value: 'supernets', label: 'Supernets', hint: 'Less specific routes that cover the block typed' },
-]
+const MATCH_MODE_VALUES: readonly MatchMode[] = ['exact', 'subnets', 'supernets']
 
 function isMatchMode(value: string | null): value is MatchMode {
-  return MATCH_MODES.some(mode => mode.value === value)
+  return value !== null && (MATCH_MODE_VALUES as readonly string[]).includes(value)
 }
 
 /**
@@ -73,6 +70,8 @@ function isSortColumn(value: string | null): value is SortColumn {
 
 export function RoutesPage() {
   const { packets } = useApp()
+  const { t } = useI18n()
+  const rt = t.routes
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -356,6 +355,12 @@ export function RoutesPage() {
   const showPathIdColumn =
     selectedPrefixStats?.history.some((event) => event.pathId !== undefined) ?? false
 
+  const matchModes: { value: MatchMode; label: string; hint: string }[] = [
+    { value: 'exact', label: rt.matchExact, hint: rt.matchExactHint },
+    { value: 'subnets', label: rt.matchSubnets, hint: rt.matchSubnetsHint },
+    { value: 'supernets', label: rt.matchSupernets, hint: rt.matchSupernetsHint },
+  ]
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-canvas">
       {/* Search Bar — one row: the box applies itself as you type, so it
@@ -382,7 +387,7 @@ export function RoutesPage() {
             </svg>
             <input
               type="text"
-              aria-label="Prefix search"
+              aria-label={rt.searchAria}
               value={searchDraft}
               onChange={(e) => {
                 setSearchDraft(e.target.value)
@@ -390,13 +395,13 @@ export function RoutesPage() {
                 // after the typing pause.
                 if (!e.target.value.trim()) updateParams({ q: null })
               }}
-              placeholder="Filter by prefix (10.0.0.0/8), IP, AS65001 or MAC"
+              placeholder={rt.searchPlaceholder}
               className="w-full pl-8 pr-8 py-1.5 border border-hair-strong rounded focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-sm font-mono placeholder:font-sans placeholder:text-dim"
             />
             {searchDraft && (
               <button
                 type="button"
-                aria-label="Clear search"
+                aria-label={rt.clearSearchAria}
                 onClick={() => {
                   setSearchDraft('')
                   updateParams({ q: null })
@@ -413,14 +418,14 @@ export function RoutesPage() {
             {/* Radios rather than a checkbox: these are three different
                 questions about the block typed, not one question with a
                 modifier on it. */}
-            <div role="radiogroup" aria-label="Match" className="flex items-center gap-2">
-              <span className="text-sm text-muted">Match</span>
+            <div role="radiogroup" aria-label={rt.matchLabel} className="flex items-center gap-2">
+              <span className="text-sm text-muted">{rt.matchLabel}</span>
               {/* The focus ring goes round the whole control rather than the
                   segment: the segments are clipped to the rounded corners, so
                   an outline on one of them would be cut off, and arrow keys
                   move between them anyway. */}
               <div className="flex rounded-lg border border-hair-strong overflow-hidden has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
-                {MATCH_MODES.map(mode => (
+                {matchModes.map(mode => (
                   <label
                     key={mode.value}
                     title={mode.hint}
@@ -445,7 +450,7 @@ export function RoutesPage() {
               </div>
             </div>
             {search?.kind === 'asn' && (
-              <span className="text-xs text-dim">Prefixes with AS{search.asn} in their AS_PATH</span>
+              <span className="text-xs text-dim">{rt.asnSearchNote(search.asn)}</span>
             )}
           </div>
         </div>
@@ -460,36 +465,36 @@ export function RoutesPage() {
           style={isCompact ? undefined : { width: `calc(${split.percent}% - 0.5rem)` }}
         >
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
-            <h2 className="font-semibold text-strong">Prefix Statistics</h2>
+            <h2 className="font-semibold text-strong">{rt.prefixStatistics}</h2>
             {peerFilter.length > 0 && (
               <button
                 onClick={() => updateParams({ peer: null })}
-                title="Show routes from every peer"
+                title={rt.showAllPeersTitle}
                 className="text-xs bg-accent-subtle text-accent rounded px-2 py-0.5 hover:opacity-75"
               >
-                from {peerFilter.join(', ')} ✕
+                {rt.fromPeers(peerFilter.join(', '))}
               </button>
             )}
-            <span className="text-xs text-muted ml-auto">{filteredPrefixes.length} prefixes</span>
+            <span className="text-xs text-muted ml-auto">{rt.prefixesCount(filteredPrefixes.length)}</span>
           </div>
           <div ref={rows.containerRef} onScroll={rows.onScroll} className="flex-1 overflow-auto">
             <table className="w-full text-sm">
               <thead ref={rows.measureHeaderRef} className="bg-surface-sunken sticky top-0">
                 <tr className="text-left text-muted">
                   <SortableHeader column="prefix" {...{ sortColumn, sortDirection, toggleSort }}>
-                    Prefix
+                    {rt.colPrefix}
                   </SortableHeader>
                   <SortableHeader column="announced" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
-                    Announced
+                    {rt.colAnnounced}
                   </SortableHeader>
                   <SortableHeader column="withdrawn" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
-                    Withdrawn
+                    {rt.colWithdrawn}
                   </SortableHeader>
                   <SortableHeader column="lastSeen" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
-                    Last Seen (UTC)
+                    {rt.colLastSeen}
                   </SortableHeader>
                   <SortableHeader column="flap" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
-                    Flap
+                    {rt.colFlap}
                   </SortableHeader>
                 </tr>
               </thead>
@@ -535,7 +540,7 @@ export function RoutesPage() {
             </table>
             {sortedPrefixes.length === 0 && (
               <div className="text-center text-dim py-8">
-                No prefixes found
+                {rt.noPrefixesFound}
               </div>
             )}
           </div>
@@ -548,7 +553,7 @@ export function RoutesPage() {
             onDragStart={split.startDrag}
             onReset={split.reset}
             onNudge={split.nudge}
-            label="Resize the prefix list"
+            label={rt.resizePrefixList}
           />
         )}
 
@@ -563,7 +568,7 @@ export function RoutesPage() {
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <BackToList onClick={() => setSelectedPrefix(null)} />
             <h2 className="font-semibold text-strong truncate">
-              Route History{selectedPrefix ? `: ${selectedPrefix}` : ''}
+              {rt.routeHistory(selectedPrefix)}
             </h2>
           </div>
           <div className="flex-1 overflow-auto">
@@ -578,37 +583,37 @@ export function RoutesPage() {
                       <button
                         type="button"
                         onClick={() => setHistoryOrder(historyOrder === 'asc' ? 'desc' : 'asc')}
-                        title={historyOrder === 'asc' ? 'Oldest first — click for newest first' : 'Newest first — click for oldest first'}
+                        title={historyOrder === 'asc' ? rt.oldestFirstTitle : rt.newestFirstTitle}
                         className="inline-flex items-center gap-1 hover:text-strong"
                       >
-                        Time (UTC) <span aria-hidden="true">{historyOrder === 'asc' ? '▲' : '▼'}</span>
+                        {rt.colTimeUtc} <span aria-hidden="true">{historyOrder === 'asc' ? '▲' : '▼'}</span>
                       </button>
                     </th>
-                    <th className="px-3 py-2 font-medium" title="Time since the previous event in time">Δ</th>
-                    <th className="px-3 py-2 font-medium">Action</th>
+                    <th className="px-3 py-2 font-medium" title={rt.colDeltaTitle}>Δ</th>
+                    <th className="px-3 py-2 font-medium">{rt.colAction}</th>
                     <th className="px-3 py-2 font-medium">AS_PATH</th>
                     {showPathIdColumn && (
                       <th
                         className="px-3 py-2 font-medium"
-                        title="ADD-PATH Path Identifier (RFC 7911) — which of the peer's paths to this prefix this event is about"
+                        title={rt.colPathIdTitle}
                       >
-                        Path ID
+                        {rt.colPathId}
                       </th>
                     )}
                     {showRdColumn && (
                       <th
                         className="px-3 py-2 font-medium"
-                        title="Route Distinguisher — which leaf advertised this route"
+                        title={rt.colRdTitle}
                       >
                         RD
                       </th>
                     )}
-                    <th className="px-3 py-2 font-medium" title="The peer this event arrived from">From</th>
-                    <th className="px-3 py-2 font-medium">Next Hop</th>
+                    <th className="px-3 py-2 font-medium" title={rt.colFromTitle}>{rt.colFrom}</th>
+                    <th className="px-3 py-2 font-medium">{rt.colNextHop}</th>
                     {showMedColumn && (
                       <th
                         className="px-3 py-2 font-medium"
-                        title="MULTI_EXIT_DISC — lower wins, and only between paths from the same neighbouring AS"
+                        title={rt.colMedTitle}
                       >
                         MED
                       </th>
@@ -616,18 +621,18 @@ export function RoutesPage() {
                     {showLocalPrefColumn && (
                       <th
                         className="px-3 py-2 font-medium"
-                        title="LOCAL_PREF — higher wins, and outranks AS_PATH length"
+                        title={rt.colLocalPrefTitle}
                       >
                         LOCAL_PREF
                       </th>
                     )}
                     {showOriginColumn && (
-                      <th className="px-3 py-2 font-medium" title="ORIGIN — IGP beats EGP beats INCOMPLETE">
-                        Origin
+                      <th className="px-3 py-2 font-medium" title={rt.colOriginTitle}>
+                        {rt.colOrigin}
                       </th>
                     )}
                     {showCommunitiesColumn && (
-                      <th className="px-3 py-2 font-medium">Communities</th>
+                      <th className="px-3 py-2 font-medium">{rt.colCommunities}</th>
                     )}
                   </tr>
                 </thead>
@@ -654,9 +659,9 @@ export function RoutesPage() {
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap">
                         {event.action === 'announce' ? (
-                          <span className="text-ok">🟢 Announce</span>
+                          <span className="text-ok">{rt.actionAnnounce}</span>
                         ) : (
-                          <span className="text-critical">🔴 Withdraw</span>
+                          <span className="text-critical">{rt.actionWithdraw}</span>
                         )}
                       </td>
                       <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
@@ -699,7 +704,7 @@ export function RoutesPage() {
               </table>
             ) : (
               <div className="text-center text-dim py-8">
-                Select a prefix to view history
+                {rt.selectPrefix}
               </div>
             )}
           </div>
@@ -708,11 +713,11 @@ export function RoutesPage() {
         {asPathVariants.length > 0 && (
           <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 shrink-0 max-h-64">
             <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
-              <h2 className="font-semibold text-strong">AS_PATH Analysis</h2>
+              <h2 className="font-semibold text-strong">{rt.asPathAnalysis}</h2>
               <span className="text-xs text-muted ml-auto">
                 {asPathVariants.length === 1
-                  ? 'single path'
-                  : `${asPathVariants.length} distinct paths`}
+                  ? rt.singlePath
+                  : rt.distinctPaths(asPathVariants.length)}
               </span>
             </div>
             <div className="flex-1 overflow-auto p-3 space-y-2">
@@ -728,7 +733,7 @@ export function RoutesPage() {
                         <span className="font-mono rounded bg-surface-sunken px-1.5 py-0.5 text-body">
                           AS{hop.asn}
                           {hop.repeat > 1 && (
-                            <span className="text-muted" title={`prepended ${hop.repeat} times`}>
+                            <span className="text-muted" title={rt.prependedTitle(hop.repeat)}>
                               {' '}×{hop.repeat}
                             </span>
                           )}
@@ -739,8 +744,7 @@ export function RoutesPage() {
                   <span className="ml-auto text-xs text-muted whitespace-nowrap">
                     {/* The most seen path first; the others are what makes this
                         panel worth looking at. */}
-                    {idx === 0 ? '' : 'alternate, '}
-                    seen {variant.count} time{variant.count > 1 ? 's' : ''}
+                    {rt.pathSeen(idx > 0, variant.count)}
                   </span>
                 </div>
               ))}

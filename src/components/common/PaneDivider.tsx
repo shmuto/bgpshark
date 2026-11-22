@@ -1,3 +1,5 @@
+import { useI18n } from '../../i18n'
+
 interface PaneDividerProps {
   onDragStart: () => void
   onReset: () => void
@@ -18,13 +20,15 @@ export function PaneDivider({
   onReset,
   onNudge,
   isDragging,
-  label = 'Resize panes',
+  label,
 }: PaneDividerProps) {
+  const { t } = useI18n()
+
   return (
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label={label}
+      aria-label={label ?? t.common.resizePanes}
       tabIndex={0}
       onMouseDown={(e) => {
         e.preventDefault()
@@ -43,7 +47,7 @@ export function PaneDivider({
           onReset()
         }
       }}
-      title="Drag to resize, double-click to reset"
+      title={t.common.resizeHint}
       className={`hidden lg:flex shrink-0 basis-1.5 cursor-col-resize items-stretch justify-center
                   focus:outline-none focus-visible:bg-accent
                   ${isDragging ? 'bg-accent' : 'bg-hair hover:bg-accent/50'}`}

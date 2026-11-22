@@ -10,38 +10,14 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { useI18n, type Locale } from '../i18n'
 import manualHtml from './manual/manual.md'
 import manualHtmlJa from './manual/manual.ja.md'
 
-type Language = 'en' | 'ja'
-
-const LANGUAGE_KEY = 'bgpshark:manual-language'
-
-const MANUALS: Record<Language, string> = { en: manualHtml, ja: manualHtmlJa }
+const MANUALS: Record<Locale, string> = { en: manualHtml, ja: manualHtmlJa }
 
 /** Labels that have to read in the language they offer, not in the current one. */
-const LANGUAGE_LABELS: Record<Language, string> = { en: 'English', ja: '日本語' }
-
-const CONTENTS_HEADING: Record<Language, string> = { en: 'Contents', ja: '目次' }
-
-/**
- * Which manual to open with.
- *
- * A remembered choice wins, then the browser's languages. Someone reading the
- * app in Japanese is more likely to want the Japanese manual than to want to be
- * asked, and the toggle is right there for when the guess is wrong.
- */
-function initialLanguage(): Language {
-  try {
-    const stored = window.localStorage.getItem(LANGUAGE_KEY)
-    if (stored === 'en' || stored === 'ja') return stored
-  } catch {
-    // Storage can be unavailable — private mode, a blocked origin. Not knowing
-    // the reader's last choice is not a reason to fail to render the manual.
-  }
-  const languages = navigator.languages ?? [navigator.language]
-  return languages.some((tag) => tag.toLowerCase().startsWith('ja')) ? 'ja' : 'en'
-}
+const LANGUAGE_LABELS: Record<Locale, string> = { en: 'English', ja: '日本語' }
 
 interface Heading {
   id: string
@@ -94,19 +70,10 @@ function extractHeadings(html: string): Heading[] {
 export function ManualPage() {
   const { hash } = useLocation()
   const contentRef = useRef<HTMLDivElement>(null)
-  const [language, setLanguage] = useState<Language>(initialLanguage)
+  const { locale: language, setLocale: chooseLanguage, t } = useI18n()
   const html = MANUALS[language]
   const headings = useMemo(() => extractHeadings(html), [html])
   const [activeId, setActiveId] = useState<string>('')
-
-  const chooseLanguage = (next: Language) => {
-    setLanguage(next)
-    try {
-      window.localStorage.setItem(LANGUAGE_KEY, next)
-    } catch {
-      // As above: a reader who cannot be remembered can still read.
-    }
-  }
 
   // A link into a section has to work on first paint, and the content is
   // injected rather than rendered as elements, so the browser's own hash
@@ -154,14 +121,14 @@ export function ManualPage() {
     <div className="flex-1 overflow-y-auto bg-canvas">
       <div className="mx-auto flex w-full max-w-6xl gap-10 px-6 py-8">
         <nav
-          aria-label="Manual contents"
+          aria-label={t.manual.contentsAria}
           // The list grew past a screenful when the walkthroughs landed, and a
           // sticky column taller than the viewport puts its last entries out of
           // reach entirely.
           className="sticky top-6 hidden h-fit max-h-[calc(100vh-3rem)] w-60 shrink-0 overflow-y-auto lg:block"
         >
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">
-            {CONTENTS_HEADING[language]}
+            {t.manual.contentsHeading}
           </p>
           <ul className="space-y-0.5 border-l border-hair">
             {headings.map((heading) => (
@@ -189,7 +156,7 @@ export function ManualPage() {
               to the reader who wants it rather than only to the one already
               reading. */}
           <div className="mb-4 flex justify-end gap-1 text-sm">
-            {(['en', 'ja'] as Language[]).map((tag) => (
+            {(['en', 'ja'] as Locale[]).map((tag) => (
               <button
                 key={tag}
                 type="button"
@@ -220,14 +187,14 @@ export function ManualPage() {
               than a screen of its own, and the base path comes from Vite so the
               link survives the app being served from somewhere else. */}
           <footer className="mt-12 border-t border-hair pt-4 text-sm text-muted">
-            BGPShark ships fonts and libraries written by other people.{' '}
+            {t.manual.footerPrefix}{' '}
             <a
               href={`${import.meta.env.BASE_URL}THIRD-PARTY-LICENSES.txt`}
               className="text-accent underline underline-offset-2"
             >
-              Their licenses
+              {t.manual.footerLink}
             </a>
-            .
+            {t.manual.footerSuffix}
           </footer>
         </div>
       </div>

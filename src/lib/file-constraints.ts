@@ -21,19 +21,23 @@ export const ACCEPTED_EXTENSIONS = ['pcap', 'pcapng', 'cap'] as const
 /** File input `accept` attribute matching ACCEPTED_EXTENSIONS. */
 export const ACCEPT_ATTRIBUTE = ACCEPTED_EXTENSIONS.map((ext) => `.${ext}`).join(',')
 
+import { getMessages, type Locale } from '../i18n'
+
 /**
  * Validate a dropped or selected file.
  * Returns an error message, or null when the file is acceptable.
  */
-export function validateCaptureFile(file: File): string | null {
+export function validateCaptureFile(file: File, locale: Locale = 'en'): string | null {
+  const t = getMessages(locale).fileConstraints
+
   if (file.size > MAX_FILE_SIZE) {
     const actual = (file.size / 1024 / 1024).toFixed(1)
-    return `File too large. Maximum size is ${MAX_FILE_SIZE_LABEL} (got ${actual}MB)`
+    return t.tooLarge(MAX_FILE_SIZE_LABEL, actual)
   }
 
   const extension = file.name.toLowerCase().split('.').pop() ?? ''
   if (!ACCEPTED_EXTENSIONS.includes(extension as (typeof ACCEPTED_EXTENSIONS)[number])) {
-    return `Invalid file type. Please upload a ${ACCEPTED_EXTENSIONS.map((e) => `.${e}`).join(', ')} file.`
+    return t.invalidType(ACCEPTED_EXTENSIONS.map((e) => `.${e}`).join(', '))
   }
 
   return null

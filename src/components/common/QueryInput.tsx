@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import type { BgpPacket } from '../../lib/bgp/types'
 import { getSuggestions, type Suggestion } from '../../lib/filter'
 import { suggestionsAreSettled } from '../../lib/filter/parser'
+import { useI18n } from '../../i18n'
 
 interface QueryInputProps {
   value: string
@@ -18,6 +19,7 @@ interface QueryInputProps {
 const NO_SELECTION = -1
 
 export function QueryInput({ value, onChange, packets, placeholder, hasError, inputRef: externalRef, ariaLabel }: QueryInputProps) {
+  const { locale, t } = useI18n()
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   /**
    * Which suggestion the user has picked, not merely which one is first.
@@ -40,14 +42,14 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError, in
         setShowSuggestions(false)
         return
       }
-      const newSuggestions = getSuggestions(query, cursorPos, packets)
+      const newSuggestions = getSuggestions(query, cursorPos, packets, locale)
       setSuggestions(newSuggestions)
       setSelectedIndex(NO_SELECTION)
       setShowSuggestions(
         newSuggestions.length > 0 && !suggestionsAreSettled(query.slice(0, cursorPos), newSuggestions)
       )
     },
-    [packets, isComposing]
+    [packets, isComposing, locale]
   )
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -218,7 +220,7 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError, in
         {value && (
           <button
             type="button"
-            aria-label="Clear filter"
+            aria-label={t.messages.clearFilterAria}
             onClick={() => {
               onChange('')
               inputRef.current?.focus()

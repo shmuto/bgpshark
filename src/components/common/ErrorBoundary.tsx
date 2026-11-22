@@ -1,5 +1,6 @@
-import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { Component, type ContextType, type ErrorInfo, type ReactNode } from 'react'
 import { clearPcapFile } from '../../lib/storage'
+import { I18nContext } from '../../i18n'
 
 interface ErrorBoundaryProps {
   children: ReactNode
@@ -11,6 +12,9 @@ interface ErrorBoundaryState {
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  static contextType = I18nContext
+  declare context: ContextType<typeof I18nContext>
+
   state: ErrorBoundaryState = { error: null, errorInfo: null }
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
@@ -40,6 +44,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     const { error, errorInfo } = this.state
 
     if (error) {
+      const t = this.context.t.errorBoundary
       return (
         <div className="flex-1 flex flex-col items-center justify-center p-8 bg-canvas">
           <div className="max-w-lg w-full text-center">
@@ -54,14 +59,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               </svg>
             </div>
 
-            <div className="text-critical text-lg font-medium mb-2">Something went wrong</div>
-            <p className="text-muted mb-4">
-              The app hit an unexpected error, possibly while parsing the loaded pcap file.
-            </p>
+            <div className="text-critical text-lg font-medium mb-2">{t.title}</div>
+            <p className="text-muted mb-4">{t.description}</p>
 
             <details className="mb-6 text-left bg-surface-sunken border border-hair rounded">
               <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-body hover:bg-surface">
-                Error details
+                {t.details}
               </summary>
               <div className="px-3 pb-3 max-h-48 overflow-auto">
                 <pre className="text-xs font-mono text-body whitespace-pre-wrap break-words">
@@ -76,13 +79,13 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                 onClick={this.handleReload}
                 className="px-4 py-2 bg-accent text-accent-fg rounded hover:bg-accent-hover"
               >
-                Reload
+                {t.reload}
               </button>
               <button
                 onClick={this.handleClearAndReset}
                 className="px-4 py-2 bg-critical text-on-solid rounded hover:opacity-90"
               >
-                Clear stored file and reset
+                {t.clearAndReset}
               </button>
             </div>
           </div>

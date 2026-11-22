@@ -8,6 +8,7 @@ import {
 import type { GenericPacket } from '../../lib/pcap'
 import { formatDelta } from '../../lib/format-time'
 import type { PacketColumnId } from '../../hooks/usePacketColumns'
+import { useI18n, type Messages } from '../../i18n'
 
 /**
  * A row in the packet list: either a packet the BGP parser understood, or a
@@ -21,9 +22,6 @@ type ColumnId = PacketColumnId
 
 interface ColumnDef {
   id: ColumnId
-  label: string
-  /** Hover text for the header, for a column whose meaning is not its name. */
-  title?: string
   width?: string
   /**
    * `previousTimestamp` is the packet *before this one in the list data*, not
@@ -33,6 +31,7 @@ interface ColumnDef {
   getValue: (
     dp: DisplayPacket,
     index: number,
+    t: Messages,
     baseTime?: Date,
     previousTimestamp?: Date
   ) => React.ReactNode
@@ -41,7 +40,6 @@ interface ColumnDef {
 const ALL_COLUMNS: ColumnDef[] = [
   {
     id: 'index',
-    label: '#',
     width: 'w-12',
     getValue: (dp) => {
       const frameIndex = dp.kind === 'bgp' ? dp.packet.frameIndex : dp.packet.frameIndex
@@ -50,18 +48,15 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'time',
-    label: 'Relative',
-    title: 'Seconds since the first frame of the capture — fixed, whatever the filter',
     width: 'w-20',
-    getValue: (dp, _, base) => (
+    getValue: (dp, _index, _t, base) => (
       <span className="font-mono text-muted">{formatRelativeTime(dp.timestamp, base)}</span>
     ),
   },
   {
     id: 'delta',
-    label: 'Delta',
     width: 'w-20',
-    getValue: (dp, _index, _base, previousTimestamp) => {
+    getValue: (dp, _index, _t, _base, previousTimestamp) => {
       // The first row of the list has nothing to be a delta from.
       if (!previousTimestamp) return <span className="font-mono text-dim">-</span>
       return (
@@ -73,7 +68,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'absTime',
-    label: 'Absolute (UTC)',
     width: 'w-28',
     getValue: (dp) => (
       <span className="font-mono text-muted">{formatAbsoluteTime(dp.timestamp)}</span>
@@ -81,7 +75,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'src',
-    label: 'Source',
     getValue: (dp) => {
       const ip = dp.kind === 'bgp' ? dp.packet.srcIp : dp.packet.srcIp
       return <span className="font-mono">{ip}</span>
@@ -89,7 +82,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'srcPort',
-    label: 'Src Port',
     width: 'w-16',
     getValue: (dp) => {
       const port = dp.kind === 'bgp' ? dp.packet.srcPort : dp.packet.srcPort
@@ -98,7 +90,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'dst',
-    label: 'Destination',
     getValue: (dp) => {
       const ip = dp.kind === 'bgp' ? dp.packet.dstIp : dp.packet.dstIp
       return <span className="font-mono">{ip}</span>
@@ -106,7 +97,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'dstPort',
-    label: 'Dst Port',
     width: 'w-16',
     getValue: (dp) => {
       const port = dp.kind === 'bgp' ? dp.packet.dstPort : dp.packet.dstPort
@@ -115,7 +105,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'protocol',
-    label: 'Proto',
     width: 'w-16',
     getValue: (dp) => {
       // Protocol is a category, not a state, so it is ranked by prominence
@@ -131,7 +120,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'type',
-    label: 'Type',
     width: 'w-28',
     getValue: (dp) => {
       if (dp.kind === 'bgp') {
@@ -173,8 +161,7 @@ const ALL_COLUMNS: ColumnDef[] = [
     // Info repeating them as counts ("2 withdrawn") or repeating the Type
     // column's "+3" as "4 msgs".
     id: 'info',
-    label: 'Info',
-    getValue: (dp) => {
+    getValue: (dp, _index, t) => {
       if (dp.kind === 'bgp') {
         const messages = dp.packet.messages
         const summary = summarizePacketPrefixes(messages)
@@ -195,7 +182,7 @@ const ALL_COLUMNS: ColumnDef[] = [
         if (summary?.endOfRib) {
           return <span className="text-xs bg-accent-subtle text-accent px-1.5 rounded">End-of-RIB</span>
         }
-        const text = messages.map(getMessageSummary).filter(Boolean).join('; ')
+        const text = messages.map((m) => getMessageSummary(m, t)).filter(Boolean).join('; ')
         return <span className="text-muted truncate">{text}</span>
       }
       // For generic packets, show port info
@@ -206,7 +193,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'length',
-    label: 'Len',
     width: 'w-14',
     getValue: (dp) => {
       if (dp.kind === 'generic') {
@@ -217,7 +203,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'asPath',
-    label: 'AS Path',
     getValue: (dp) => {
       if (dp.kind !== 'bgp') return null
       // Find first UPDATE message with AS_PATH
@@ -234,7 +219,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'nlriCount',
-    label: 'NLRI',
     width: 'w-12',
     getValue: (dp) => {
       if (dp.kind !== 'bgp') return null
@@ -250,7 +234,6 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'withdrawnCount',
-    label: 'WR',
     width: 'w-12',
     getValue: (dp) => {
       if (dp.kind !== 'bgp') return null
@@ -330,7 +313,7 @@ function formatAbsoluteTime(timestamp: Date): string {
   return timestamp.toISOString().slice(11, 23)
 }
 
-function getMessageSummary(message: BgpMessage): string {
+function getMessageSummary(message: BgpMessage, t: Messages): string {
   switch (message.type) {
     case 'OPEN': {
       const as = message.fourByteAs ?? message.myAs
@@ -341,9 +324,9 @@ function getMessageSummary(message: BgpMessage): string {
       if (eor) return `End-of-RIB (${eor})`
       const { announced, withdrawn } = countUpdatePrefixes(message)
       const parts = []
-      if (announced > 0) parts.push(`${announced} announced`)
-      if (withdrawn > 0) parts.push(`${withdrawn} withdrawn`)
-      return parts.join(', ') || 'empty'
+      if (announced > 0) parts.push(t.messages.updateAnnouncedCount(announced))
+      if (withdrawn > 0) parts.push(t.messages.updateWithdrawnCount(withdrawn))
+      return parts.join(', ') || t.messages.updateEmpty
     }
     case 'NOTIFICATION':
       return `${message.errorCodeName}/${message.errorSubcodeName}`
@@ -364,6 +347,7 @@ export function PacketList({
   highlightedIndex,
   visibleColumns,
 }: PacketListProps) {
+  const { t } = useI18n()
   const listRef = useRef<HTMLDivElement>(null)
   // The scroll container (listRef) and the grid (gridRef) are separate elements:
   // scrolling happens on the div, focus and grid semantics live on the table.
@@ -528,10 +512,10 @@ export function PacketList({
               <th
                 key={col.id}
                 role="columnheader"
-                title={col.title}
+                title={col.id === 'time' ? t.messages.columns.timeTitle : undefined}
                 className={`px-2 py-2 font-medium whitespace-nowrap ${col.width ?? ''}`}
               >
-                {col.label}
+                {t.messages.columns[col.id]}
               </th>
             ))}
           </tr>
@@ -566,7 +550,7 @@ export function PacketList({
               >
                 {columns.map((col) => (
                   <td key={col.id} role="gridcell" className={`px-2 py-1.5 ${col.width ?? ''}`}>
-                    {col.getValue(dp, index, base, packets[index - 1]?.timestamp)}
+                    {col.getValue(dp, index, t, base, packets[index - 1]?.timestamp)}
                   </td>
                 ))}
               </tr>

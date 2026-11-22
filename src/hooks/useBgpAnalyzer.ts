@@ -4,6 +4,7 @@ import { parseBgpFromPackets, type BgpPacket } from '../lib/bgp'
 import { initDatabase, loadPackets, isInitialized, isDataLoaded } from '../lib/db'
 import { savePcapFile, loadPcapFile, clearPcapFile } from '../lib/storage'
 import { loadProgress, type LoadProgress } from '../lib/load-progress'
+import { useI18n } from '../i18n'
 
 interface AnalyzerState {
   status: 'idle' | 'initializing' | 'loading' | 'ready' | 'error'
@@ -64,6 +65,12 @@ function nextPaint(): Promise<void> {
 }
 
 export function useBgpAnalyzer() {
+  const { locale, t } = useI18n()
+  const localeRef = useRef(locale)
+  const messagesRef = useRef(t)
+  localeRef.current = locale
+  messagesRef.current = t
+
   const [state, setState] = useState<AnalyzerState>(initialState)
   const restoredRef = useRef(false)
   // Latest parsed packets, for the backfill below — a capture dropped while
@@ -84,7 +91,7 @@ export function useBgpAnalyzer() {
 
       try {
         // Detect format and parse
-        await report(loadProgress('parsing'))
+        await report(loadProgress('parsing', undefined, undefined, localeRef.current))
         const pcapResult = isPcapng(buffer) ? parsePcapng(buffer) : parsePcap(buffer)
 
         if (pcapResult.errors.length > 0) {
@@ -98,7 +105,7 @@ export function useBgpAnalyzer() {
         }
 
         // Parse BGP messages from BGP-specific packets
-        await report(loadProgress('decoding'))
+        await report(loadProgress('decoding', undefined, undefined, localeRef.current))
         const bgpResult = parseBgpFromPackets(pcapResult.packets)
 
         // If no packets at all, show error
@@ -106,7 +113,7 @@ export function useBgpAnalyzer() {
           setState((prev) => ({
             ...prev,
             status: 'error',
-            error: 'No IP packets found in the pcap file.',
+            error: messagesRef.current.warnings.noIpPackets,
             progress: null,
           }))
           return false
@@ -116,27 +123,27 @@ export function useBgpAnalyzer() {
         const dbWarnings: string[] = []
         if (isInitialized() && bgpResult.packets.length > 0) {
           try {
-            await report(loadProgress('database'))
+            await report(loadProgress('database', undefined, undefined, localeRef.current))
             // Not `report`: batches arrive between worker round trips, which
             // already give the browser its chance to paint.
             await loadPackets(bgpResult.packets, (done, total) =>
-              setState((prev) => ({ ...prev, progress: loadProgress('database', done, total) }))
+              setState((prev) => ({
+                ...prev,
+                progress: loadProgress('database', done, total, localeRef.current),
+              }))
             )
           } catch (err) {
             console.error('Failed to load packets into DuckDB:', err)
             // Continue without DuckDB — but say so. Filtering falls back to
             // the in-memory evaluator; only the SQL console is actually lost.
-            dbWarnings.push(
-              'Packets could not be loaded into DuckDB. ' +
-                'Filtering works in-memory; the SQL console is unavailable for this capture.'
-            )
+            dbWarnings.push(messagesRef.current.warnings.duckdbFailed)
           }
         }
 
         // Save to IndexedDB if requested
         if (options?.saveToStorage) {
           try {
-            await report(loadProgress('saving'))
+            await report(loadProgress('saving', undefined, undefined, localeRef.current))
             await savePcapFile(fileName, buffer)
           } catch (err) {
             console.error('Failed to save file to storage:', err)
@@ -162,7 +169,7 @@ export function useBgpAnalyzer() {
         setState((prev) => ({
           ...prev,
           status: 'error',
-          error: e instanceof Error ? e.message : 'Unknown error occurred',
+          error: e instanceof Error ? e.message : messagesRef.current.warnings.unknownError,
           progress: null,
         }))
         return false
@@ -208,7 +215,7 @@ export function useBgpAnalyzer() {
               ...prev,
               status: 'loading',
               fileName: stored.fileName,
-              progress: loadProgress('reading'),
+              progress: loadProgress('reading', undefined, undefined, localeRef.current),
             }))
             await processBuffer(stored.data, stored.fileName, { saveToStorage: false })
             return
@@ -237,7 +244,7 @@ export function useBgpAnalyzer() {
         status: 'loading',
         fileName: file.name,
         error: null,
-        progress: loadProgress('reading'),
+        progress: loadProgress('reading', undefined, undefined, localeRef.current),
       }))
 
       const buffer = await file.arrayBuffer()

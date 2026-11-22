@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { PACKET_COLUMNS, type PacketColumnId } from '../../hooks/usePacketColumns'
+import { useI18n } from '../../i18n'
 
 interface ColumnPickerProps {
   visibleColumns: PacketColumnId[]
@@ -15,6 +16,7 @@ interface ColumnPickerProps {
  * offer it.
  */
 export function ColumnPicker({ visibleColumns, onToggle, onReset }: ColumnPickerProps) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -40,8 +42,8 @@ export function ColumnPicker({ visibleColumns, onToggle, onReset }: ColumnPicker
         type="button"
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1 text-muted hover:text-strong px-1.5 py-0.5 rounded hover:bg-surface-raised"
-        title="Configure columns"
-        aria-label="Configure columns"
+        title={t.messages.columnsTitle}
+        aria-label={t.messages.columnsTitle}
         aria-expanded={open}
       >
         <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -52,12 +54,14 @@ export function ColumnPicker({ visibleColumns, onToggle, onReset }: ColumnPicker
             d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
           />
         </svg>
-        <span className="text-xs font-medium">Columns</span>
+        <span className="text-xs font-medium">{t.messages.columnsButton}</span>
       </button>
 
       {open && (
         <div className="absolute top-full right-0 mt-1 bg-surface-raised border border-hair rounded-lg shadow-lg p-2 z-30 min-w-48">
-          <div className="text-xs font-medium text-dim uppercase tracking-wide mb-2 px-2">Visible Columns</div>
+          <div className="text-xs font-medium text-dim uppercase tracking-wide mb-2 px-2">
+            {t.messages.visibleColumns}
+          </div>
           {PACKET_COLUMNS.map((col) => (
             <label
               key={col.id}
@@ -69,12 +73,12 @@ export function ColumnPicker({ visibleColumns, onToggle, onReset }: ColumnPicker
                 onChange={() => onToggle(col.id)}
                 className="rounded border-hair-strong text-accent focus:ring-accent"
               />
-              <span className="text-sm text-body">{col.label}</span>
+              <span className="text-sm text-body">{t.messages.columns[col.id]}</span>
             </label>
           ))}
           <div className="border-t border-hair mt-2 pt-2 px-2">
             <button onClick={onReset} className="text-xs text-accent hover:text-accent-hover">
-              Reset to default
+              {t.messages.resetColumns}
             </button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AppProvider, useApp } from './context/AppContext'
+import { I18nProvider, useI18n } from './i18n'
 import { AppHeader } from './components/layout/AppHeader'
 import { ErrorBoundary, LoadProgressBar, WarningBanner } from './components/common'
 import { useFileDropzone } from './hooks/useFileDropzone'
@@ -48,6 +49,7 @@ const ManualPage = lazy(() =>
  */
 function RequireCapture({ children }: { children: ReactNode }) {
   const { status, progress } = useApp()
+  const { t } = useI18n()
   const location = useLocation()
 
   // A capture restored on reload, or one dropped onto this screen, is a load
@@ -61,7 +63,7 @@ function RequireCapture({ children }: { children: ReactNode }) {
   }
 
   if (status === 'initializing' || status === 'loading') {
-    return <ScreenSpinner label="Restoring capture…" />
+    return <ScreenSpinner label={t.app.restoringCapture} />
   }
 
   if (status !== 'ready') {
@@ -84,6 +86,7 @@ function ScreenSpinner({ label }: { label?: string }) {
 
 function AppContent() {
   const { status, loadFile, warnings } = useApp()
+  const { t } = useI18n()
 
   // Enable global drag & drop (disabled during loading)
   const { isDragOver, error: dropError, clearError } = useFileDropzone({
@@ -166,7 +169,7 @@ function AppContent() {
                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
               />
             </svg>
-            <p className="text-lg font-medium text-strong">Drop pcap file to load</p>
+            <p className="text-lg font-medium text-strong">{t.app.dropToLoad}</p>
           </div>
         </div>
       )}
@@ -191,11 +194,13 @@ function AppContent() {
 
 function App() {
   return (
-    <BrowserRouter basename="/bgpshark">
-      <AppProvider>
-        <AppContent />
-      </AppProvider>
-    </BrowserRouter>
+    <I18nProvider>
+      <BrowserRouter basename="/bgpshark">
+        <AppProvider>
+          <AppContent />
+        </AppProvider>
+      </BrowserRouter>
+    </I18nProvider>
   )
 }
 

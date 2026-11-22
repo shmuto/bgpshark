@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { validateCaptureFile } from '../lib/file-constraints'
+import { useI18n } from '../i18n'
 
 interface UseFileDropzoneOptions {
   onFileLoad: (file: File) => void
@@ -7,6 +8,7 @@ interface UseFileDropzoneOptions {
 }
 
 export function useFileDropzone({ onFileLoad, disabled = false }: UseFileDropzoneOptions) {
+  const { locale } = useI18n()
   const [isDragOver, setIsDragOver] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -14,7 +16,7 @@ export function useFileDropzone({ onFileLoad, disabled = false }: UseFileDropzon
     (file: File) => {
       setError(null)
 
-      const validationError = validateCaptureFile(file)
+      const validationError = validateCaptureFile(file, locale)
       if (validationError) {
         setError(validationError)
         return
@@ -22,7 +24,7 @@ export function useFileDropzone({ onFileLoad, disabled = false }: UseFileDropzon
 
       onFileLoad(file)
     },
-    [onFileLoad]
+    [onFileLoad, locale]
   )
 
   const handleDragOver = useCallback(

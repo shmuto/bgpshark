@@ -222,12 +222,48 @@ export const BGP_ERROR_CODES: Record<number, ErrorCode> = {
   },
 }
 
+import {
+  BGP_ERROR_HINTS_JA,
+  UNKNOWN_ERROR_CODE_HINT_JA,
+  UNKNOWN_ERROR_SUBCODE_HINT_JA,
+} from '../../i18n/bgp-error-hints.ja'
+import type { Locale } from '../../i18n'
+
+/**
+ * Get localized troubleshooting hint for a given BGP NOTIFICATION code and subcode.
+ */
+export function getErrorHint(
+  errorCode: number,
+  errorSubcode: number,
+  locale: Locale = 'en'
+): string {
+  const code = BGP_ERROR_CODES[errorCode]
+  if (!code) {
+    return locale === 'ja'
+      ? UNKNOWN_ERROR_CODE_HINT_JA
+      : 'Unknown error code. This may be a proprietary extension.'
+  }
+
+  const subcode = code.subcodes[errorSubcode]
+  if (!subcode) {
+    return locale === 'ja'
+      ? UNKNOWN_ERROR_SUBCODE_HINT_JA
+      : 'Unknown error subcode. Check vendor documentation.'
+  }
+
+  if (locale === 'ja') {
+    return BGP_ERROR_HINTS_JA[errorCode]?.[errorSubcode] ?? subcode.hint
+  }
+  return subcode.hint
+}
+
 /**
  * Get error information for given code and subcode
  */
 export function getErrorInfo(
   errorCode: number,
-  errorSubcode: number
+  errorSubcode: number,
+  locale: Locale = 'en'
 ): {
   codeName: string
   subcodeName: string
@@ -238,7 +274,7 @@ export function getErrorInfo(
     return {
       codeName: `Unknown (${errorCode})`,
       subcodeName: `Unknown (${errorSubcode})`,
-      hint: 'Unknown error code. This may be a proprietary extension.',
+      hint: getErrorHint(errorCode, errorSubcode, locale),
     }
   }
 
@@ -247,13 +283,13 @@ export function getErrorInfo(
     return {
       codeName: code.name,
       subcodeName: `Unknown (${errorSubcode})`,
-      hint: 'Unknown error subcode. Check vendor documentation.',
+      hint: getErrorHint(errorCode, errorSubcode, locale),
     }
   }
 
   return {
     codeName: code.name,
     subcodeName: subcode.name,
-    hint: subcode.hint,
+    hint: getErrorHint(errorCode, errorSubcode, locale),
   }
 }

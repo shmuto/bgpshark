@@ -1,30 +1,32 @@
 import { useTheme, type ThemePreference } from '../../hooks/useTheme'
-
-const NEXT_LABEL: Record<ThemePreference, string> = {
-  light: 'Switch to dark theme',
-  dark: 'Follow system theme',
-  system: 'Switch to light theme',
-}
-
-const STATE_LABEL: Record<ThemePreference, string> = {
-  light: 'Light',
-  dark: 'Dark',
-  system: 'Auto',
-}
+import { useI18n } from '../../i18n'
 
 export function ThemeToggle() {
   const { preference, isDark, cycleTheme } = useTheme()
+  const { t } = useI18n()
+
+  const nextLabel: Record<ThemePreference, string> = {
+    light: t.theme.nextDark,
+    dark: t.theme.nextSystem,
+    system: t.theme.nextLight,
+  }
+
+  const stateLabel: Record<ThemePreference, string> = {
+    light: t.theme.light,
+    dark: t.theme.dark,
+    system: t.theme.system,
+  }
 
   return (
     <button
       type="button"
       onClick={cycleTheme}
-      title={NEXT_LABEL[preference]}
-      aria-label={NEXT_LABEL[preference]}
+      title={nextLabel[preference]}
+      aria-label={nextLabel[preference]}
       className="flex items-center gap-1.5 rounded px-2 py-1.5 text-xs text-muted transition-colors hover:bg-surface-raised hover:text-strong"
     >
       {isDark ? <MoonIcon /> : <SunIcon />}
-      <span className="hidden sm:inline tabular-nums">{STATE_LABEL[preference]}</span>
+      <span className="hidden sm:inline tabular-nums">{stateLabel[preference]}</span>
     </button>
   )
 }
