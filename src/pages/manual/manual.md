@@ -59,7 +59,7 @@ UPDATE path attributes open expanded; collapsing them is remembered as you move 
 
 ### Neighbors
 
-Groups sessions by Router ID. Click a router, then select one of its sessions to open **Capability Diff**, which compares the two OPEN messages side by side.
+Groups sessions by Router ID. The **Sent** column counts messages the router sent; the detail pane's **Message Summary** counts both directions. Click a router to see its sessions, messages and announced prefixes (click a prefix to open its route history). Then select one of its sessions to switch the pane to that session: a breadcrumb (**← Router overview** goes back), **Capability Diff**, which compares the two OPEN messages side by side, the session's prefix activity, and its messages with the time since the previous one.
 
 Capabilities are compared per address family (AFI/SAFI), with mismatches listed first. Different Hold Times are marked informational (the lower value is negotiated), while duplicate BGP Identifiers are flagged as errors.
 

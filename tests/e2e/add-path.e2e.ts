@@ -62,7 +62,10 @@ test.describe('what ADD-PATH was actually negotiated', () => {
     await expect(diff).toContainText('No capability mismatches detected')
     await expect(diff).toContainText('ADD-PATH Result')
     await expect(diff).toContainText('did not advertise receive for this family')
-    await expect(diff).not.toContainText('Sent')
+    // Scoped to the ADD-PATH rows: the router list's "Sent" column header is
+    // on the same screen.
+    const outcomes = page.getByRole('row').filter({ hasText: 'IPv4 / Unicast' })
+    await expect(outcomes.filter({ has: page.getByText('Sent', { exact: true }) })).toHaveCount(0)
   })
 
   test('a working session says so, in both directions', async ({ page }) => {
