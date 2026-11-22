@@ -106,7 +106,13 @@ function comparisonToSql(expr: Comparison): string {
     case 'evpn_type':
       return evpnNumberSql('evpn_route_type', operator, value)
 
+    // Announced or withdrawn, as the in-memory evaluator has always read it:
+    // following a route means seeing it go away as well as arrive, and a link
+    // to a withdrawal filtered by its prefix must not filter the withdrawal out.
     case 'prefix':
+      return prefixSql('both', operator, value)
+
+    case 'nlri':
       return prefixSql('nlri', operator, value)
 
     case 'withdrawn':
@@ -718,7 +724,11 @@ function largeCommunitySql(operator: MatchOperator, value: FilterValue): string 
  * `10.0.0.0/8` selects the routes inside it, and a bare address selects the
  * routes that cover it.
  */
-function prefixSql(table: 'nlri' | 'withdrawn', operator: MatchOperator, value: FilterValue): string {
+function prefixSql(
+  table: 'nlri' | 'withdrawn' | 'both',
+  operator: MatchOperator,
+  value: FilterValue
+): string {
   const strValue = String(value)
   const query = parsePrefix(strValue)
 
@@ -735,8 +745,14 @@ function prefixSql(table: 'nlri' | 'withdrawn', operator: MatchOperator, value: 
     condition = `t.prefix || '/' || t.prefix_length LIKE '%${escapeString(strValue)}%'`
   }
 
+  const source =
+    table === 'both'
+      ? `(SELECT message_id, prefix, prefix_length, prefix_bits FROM nlri
+          UNION ALL
+          SELECT message_id, prefix, prefix_length, prefix_bits FROM withdrawn)`
+      : table
   const exists = `EXISTS (
-    SELECT 1 FROM ${table} t
+    SELECT 1 FROM ${source} t
     JOIN messages m ON t.message_id = m.id
     WHERE m.frame_index = p.frame_index
     AND ${condition}

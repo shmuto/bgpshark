@@ -82,7 +82,7 @@ function createUpdatePacket(): BgpPacket {
 describe('filter field definitions', () => {
   test('every alias resolves to a defined field', () => {
     const aliases = [
-      'src', 'dst', 'as', 'aspath', 'nexthop', 'nlri', 'my_as',
+      'src', 'dst', 'as', 'aspath', 'nexthop', 'my_as',
       'route-target', 'ext-community', 'evpn-type',
     ]
     for (const alias of aliases) {
@@ -235,6 +235,7 @@ describe('SQL compilation', () => {
       local_pref: '200',
       next_hop: '10.0.0.1',
       prefix: '10.0.0.0/8',
+      nlri: '10.0.0.0/8',
       withdrawn: '10.0.0.0/8',
       community: '65000:100',
       rt: '65000:100',
@@ -908,5 +909,42 @@ describe('what people type out of habit', () => {
     expect(fields).toContain('ip')
     expect(fields).toContain('peer')
     expect(getSuggestions('ip = ', 5, [outbound]).map((s) => s.text)).toContain('10.0.13.3')
+  })
+})
+
+describe('prefix follows a route through its withdrawal', () => {
+  const update = (nlri: string[], withdrawn: string[]): BgpPacket => {
+    const toPrefix = (t: string) => ({ prefix: t.split('/')[0], length: Number(t.split('/')[1]) })
+    const msg = {
+      type: 'UPDATE',
+      withdrawnRoutesLength: 0,
+      withdrawnRoutes: withdrawn.map(toPrefix),
+      totalPathAttributeLength: 0,
+      pathAttributes: [],
+      nlri: nlri.map(toPrefix),
+    } as unknown as BgpUpdateMessage
+    return { ...createOpenPacket(), messages: [msg] }
+  }
+  const announce = update(['1.1.1.1/32'], [])
+  const withdraw = update([], ['1.1.1.1/32'])
+  const matches = (q: string, p: BgpPacket) => matchPacket(p, parseQuery(q))
+
+  test('prefix matches the announcement and the withdrawal', () => {
+    expect(matches('prefix = 1.1.1.1/32', announce)).toBe(true)
+    expect(matches('prefix = 1.1.1.1/32', withdraw)).toBe(true)
+  })
+
+  test('nlri and withdrawn keep to their own side', () => {
+    expect(matches('nlri = 1.1.1.1/32', announce)).toBe(true)
+    expect(matches('nlri = 1.1.1.1/32', withdraw)).toBe(false)
+    expect(matches('withdrawn = 1.1.1.1/32', withdraw)).toBe(true)
+    expect(matches('withdrawn = 1.1.1.1/32', announce)).toBe(false)
+  })
+
+  test('the SQL backend asks both tables for prefix, and one each for the others', () => {
+    const sql = (q: string) => expressionToSql(parseQuery(q).expression)
+    expect(sql('prefix = 1.1.1.1/32')).toMatch(/FROM nlri[\s\S]*FROM withdrawn/)
+    expect(sql('nlri = 1.1.1.1/32')).not.toContain('withdrawn')
+    expect(sql('withdrawn = 1.1.1.1/32')).not.toMatch(/FROM nlri/)
   })
 })

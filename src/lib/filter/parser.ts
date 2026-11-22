@@ -155,12 +155,17 @@ export const FILTER_FIELDS = {
 
   // Prefixes (SQL: nlri, withdrawn tables)
   prefix: {
-    description: 'NLRI prefix (nlri.prefix)',
+    description: 'Prefix announced or withdrawn — the whole history of a route',
+    values: [] as string[],
+    valueType: 'string' as const,
+  },
+  nlri: {
+    description: 'Announced prefix only (nlri.prefix)',
     values: [] as string[],
     valueType: 'string' as const,
   },
   withdrawn: {
-    description: 'Withdrawn prefix (withdrawn.prefix)',
+    description: 'Withdrawn prefix only (withdrawn.prefix)',
     values: [] as string[],
     valueType: 'string' as const,
   },
@@ -223,7 +228,6 @@ export const FIELD_ALIASES: Record<string, string> = {
   as: 'src_as',
   aspath: 'asn',
   nexthop: 'next_hop',
-  nlri: 'prefix',
   'large-community': 'community', // Same handling as community
   'route-target': 'rt',
   route_target: 'rt',
@@ -898,6 +902,13 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
       }
       return false
 
+    case 'nlri':
+      for (const msg of packet.messages) {
+        if (msg.type !== 'UPDATE') continue
+        if (matchPrefixes(getNlriPrefixes(msg as BgpUpdateMessage), operator, value)) return true
+      }
+      return false
+
     case 'withdrawn':
       for (const msg of packet.messages) {
         if (msg.type !== 'UPDATE') continue
@@ -1510,7 +1521,6 @@ function getFieldSuggestions(filter: string): Suggestion[] {
     as: 'Source AS (alias for src_as)',
     aspath: 'AS in path (alias for asn)',
     nexthop: 'Next hop (alias for next_hop)',
-    nlri: 'NLRI prefix (alias for prefix)',
   }
 
   for (const [alias, desc] of Object.entries(aliasDescriptions)) {
@@ -1545,6 +1555,7 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
     rd: new Set(),
     evpn_type: new Set(),
     prefix: new Set(),
+    nlri: new Set(),
     withdrawn: new Set(),
   }
 
@@ -1591,8 +1602,10 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
         }
         for (const p of getNlriPrefixes(updateMsg)) {
           values.prefix.add(formatPrefix(p))
+          values.nlri.add(formatPrefix(p))
         }
-        for (const p of updateMsg.withdrawnRoutes) {
+        for (const p of getWithdrawnPrefixes(updateMsg)) {
+          values.prefix.add(formatPrefix(p))
           values.withdrawn.add(formatPrefix(p))
         }
       }
