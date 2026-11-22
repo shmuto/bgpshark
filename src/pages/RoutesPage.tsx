@@ -356,40 +356,58 @@ export function RoutesPage() {
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-canvas">
-      {/* Search Bar */}
-      <div className="p-4 bg-surface border-b border-hair">
-        <div className="max-w-3xl mx-auto">
-          <div className="flex items-center gap-3">
-            <span className="text-dim">🔍</span>
-            <span className="text-sm font-medium text-strong">Prefix Search</span>
-          </div>
+      {/* Search Bar — one row: the box applies itself as you type, so it
+          needs neither a heading to explain it nor a button to submit it, and
+          the Match control sits beside the query it qualifies. */}
+      <div className="px-4 py-2 bg-surface border-b border-hair">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <form
+            role="search"
             onSubmit={(e) => {
               e.preventDefault()
               updateParams({ q: searchDraft.trim() || null })
             }}
-            className="mt-2 flex items-center gap-3"
+            className="relative flex-1 min-w-[16rem]"
           >
+            <svg
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-dim pointer-events-none"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
             <input
               type="text"
+              aria-label="Prefix search"
               value={searchDraft}
               onChange={(e) => {
                 setSearchDraft(e.target.value)
-                // Clearing the box should restore the full list without also
-                // having to press Search.
+                // Clearing the box restores the full list at once rather than
+                // after the typing pause.
                 if (!e.target.value.trim()) updateParams({ q: null })
               }}
-              placeholder="10.0.0.0/8, 10.0.13.1, AS65001 or a MAC"
-              className="flex-1 px-3 py-2 border border-hair-strong rounded-lg focus:ring-2 focus:ring-accent focus:border-accent text-sm"
+              placeholder="Filter by prefix (10.0.0.0/8), IP, AS65001 or MAC"
+              className="w-full pl-8 pr-8 py-1.5 border border-hair-strong rounded focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-sm font-mono placeholder:font-sans placeholder:text-dim"
             />
-            <button
-              type="submit"
-              className="px-4 py-2 bg-accent text-accent-fg rounded-lg hover:bg-accent-hover text-sm"
-            >
-              Search
-            </button>
+            {searchDraft && (
+              <button
+                type="button"
+                aria-label="Clear search"
+                onClick={() => {
+                  setSearchDraft('')
+                  updateParams({ q: null })
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-dim hover:text-strong"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </form>
-          <div className="mt-2 flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             {/* Radios rather than a checkbox: these are three different
                 questions about the block typed, not one question with a
                 modifier on it. */}

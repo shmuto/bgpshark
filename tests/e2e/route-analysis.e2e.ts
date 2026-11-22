@@ -93,8 +93,23 @@ test.describe('what you are looking at is in the URL', () => {
 
   test('the search is', async ({ page }) => {
     await page.locator('input[placeholder*="10.0.0.0"]').first().fill('10.0.0.0/8')
-    await page.getByRole('button', { name: 'Search' }).click()
+    await page.keyboard.press('Enter')
     await expect(page).toHaveURL(/q=10/)
+  })
+
+  test('the search applies itself, and its toolbar is one row', async ({ page }) => {
+    const box = page.getByRole('textbox', { name: 'Prefix search' })
+    await box.fill('10.0.0.0/8')
+    // No Search button to press: the pause in typing is the submit.
+    await expect(page.getByRole('button', { name: 'Search', exact: true })).toHaveCount(0)
+    await expect(page).toHaveURL(/q=10/)
+
+    const match = page.getByRole('radiogroup', { name: 'Match' })
+    const [boxBox, matchBox] = [await box.boundingBox(), await match.boundingBox()]
+    expect(Math.abs(boxBox!.y + boxBox!.height / 2 - (matchBox!.y + matchBox!.height / 2))).toBeLessThan(8)
+
+    await page.getByRole('button', { name: 'Clear search' }).click()
+    await expect(page).not.toHaveURL(/q=/)
   })
 
   test('the selection is', async ({ page }) => {
@@ -110,7 +125,7 @@ test.describe('what you are looking at is in the URL', () => {
   test('a link restores all of it in a session that never set it', async ({ page, context }) => {
     await page.getByRole('button', { name: /^Announced/ }).click()
     await page.locator('input[placeholder*="10.0.0.0"]').first().fill('10.0.0.0/8')
-    await page.getByRole('button', { name: 'Search' }).click()
+    await page.keyboard.press('Enter')
     await page.locator('tbody tr').first().click()
     await expect(page).toHaveURL(/prefix=/)
     const shared = page.url()
