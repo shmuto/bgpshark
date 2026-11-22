@@ -1,189 +1,52 @@
 # Working on BGPShark
 
-Notes for an AI agent starting a session here. The [README](README.md) covers
-what the app is and how it is put together; this covers what is not obvious from
-reading the code, and what will waste your time if you discover it the hard way.
+Quick orientation and invariants for contributors and AI agents working in this repository. For product overview and architecture, see [`README.md`](README.md); for specifications, see [`docs/design.md`](docs/design.md) and [`docs/troubleshooting-scenarios.md`](docs/troubleshooting-scenarios.md).
 
-## Orientation
-
-A browser-based pcap analyzer for BGP session troubleshooting. Everything runs
-client-side: parse in the browser, query with DuckDB WASM, persist in IndexedDB.
-No server, no third-party requests.
+## Commands
 
 ```bash
 bun install
-bun run dev        # http://localhost:5173/bgpshark/
-bun test           # parsers and prefix arithmetic, no browser  (~350 tests, fast)
-bun run test:e2e   # drives the real app in Chromium — see the caveat below
-bun run lint
-bun run build      # tsc -b && vite build
+bun run dev          # Dev server at http://localhost:5173/bgpshark/ (no CSP)
+bun test             # Unit tests under tests/lib
+bun run test:e2e     # Playwright e2e suite under tests/e2e (Chromium + DuckDB WASM)
+bun run lint         # ESLint
+bun run build        # Type-check (src, tests, testlab) + production build to dist/
+bun run preview      # Serve production build (with real CSP) at http://localhost:4173/bgpshark/
+bun run screenshots  # Regenerate manual screenshots in public/manual/
 ```
 
-`README.md` has the architecture table and the filter syntax reference.
-`docs/design.md` is the requirements and technical design;
-`docs/troubleshooting-scenarios.md` maps fourteen real BGP faults to what the
-tool does and does not say about each, and is the fastest way to understand what
-this app is *for*.
-
-## Running the browser tests
-
-`bun run test:e2e` fails out of the box in a container that cannot download
-browsers, with *"Looks like Playwright was just installed or updated"*. This one
-ships Chromium revision **1194** at `/opt/pw-browsers`, the pinned
-`@playwright/test` 1.61.1 wants revision **1228**, the directory layout changed
-between the two, and `bunx playwright install` cannot fix it because the CDN is
-blocked by the agent proxy (403 `host not permitted`).
-
-Point `CHROMIUM_PATH` at the binary and the revision lookup is skipped:
+In environments where Playwright cannot download its pinned browser or a system Chromium/Chrome binary is preinstalled, pass `CHROMIUM_PATH` to skip the revision lookup:
 
 ```bash
-CHROMIUM_PATH=/opt/pw-browsers/chromium bun run test:e2e
+CHROMIUM_PATH=/path/to/chromium bun run test:e2e
 ```
 
-Same for a one-off script:
+## Critical invariants
 
-```ts
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
-```
+- **Strict production CSP & zero third-party requests:**
+  - `vite.config.ts` injects the Content Security Policy at **build time only**—the dev server ships no CSP.
+  - Production forbids all off-origin fetches (`connect-src 'self' blob: data:`) and forbids dynamic code evaluation (`script-src 'self' 'wasm-unsafe-eval'`, no `eval` or `new Function`).
+  - Never use DuckDB features that download remote extensions (e.g. `read_json_auto`) or libraries that rely on `new Function` (e.g. `apache-arrow` high-level builders—`src/lib/db/loader.ts` constructs Arrow IPC buffers manually for this reason).
+  - Whenever touching asset loading, DuckDB queries, or dependencies, verify with `bun run build && bun run preview` and `tests/e2e/offline.e2e.ts`.
+- **Dual filter backends:** Filter expressions are parsed once into an AST (`src/lib/filter/parser.ts`) and executed either via DuckDB SQL (`src/lib/db/filter-to-sql.ts`) or in memory when DuckDB is unavailable. Any change to filter fields or semantics must be applied to **both** backends.
+  - *Known difference on negation:* In memory, `prefix != 10.0.0.0/8` matches only UPDATE packets, whereas the SQL backend also returns OPENs and KEEPALIVEs (pinned by `tests/e2e/prefix-matching.e2e.ts`).
+- **Dashboard alert rules are specified:** [`docs/design.md`](docs/design.md) §2.1.14 defines every rule's trigger conditions and required false-positive exclusions. When adding or modifying an alert rule, update that table and test against the scenario corpus in `testlab/scenarios.ts`.
+- **Manual prose & screenshots:**
+  - The user manual (`src/pages/manual/manual.md` and `manual.ja.md`) is converted to HTML at build time by `markdownPlugin` in `vite.config.ts`. Edit the Markdown files, not `ManualPage.tsx`.
+  - Keep `h2`/`h3` anchor IDs strictly synchronized between English and Japanese (Japanese headings use explicit `{#id}` suffixes; enforced by `tests/e2e/manual.e2e.ts`).
+  - Manual screenshots (`public/manual/*.png`) are committed. Re-run `bun run screenshots` after changing any UI referenced by the manual and commit updated images.
 
-Expect **132 passing**. If more than a couple fail, something is actually wrong.
+## Testing & conventions
 
-One test is flaky *in this container* and nowhere else:
-`navigation.e2e.ts:21` ("reloading keeps the screen you were on") waits on an
-IndexedDB restore, and loses the race under parallel load. It passes reliably at
-`--workers=2` and always in isolation. Re-run it alone before believing it.
-
-## What used to bite here, and does not any more
-
-Worth knowing because the symptoms are memorable and you may find them in older
-notes or a stale branch.
-
-Loading any capture used to raise *"1 warning loading this capture"* and
-*"This capture could not be loaded into DuckDB, so SQL is unavailable"*, with a
-wasm trap in the console. That was not an environment quirk: the loader inserted
-rows via `read_json_auto`, DuckDB's JSON reader is an **extension**, and DuckDB
-WASM downloads extensions from `extensions.duckdb.org` on first use. The
-production CSP is `connect-src 'self' blob: data:`, so the download could not
-succeed there either — **the SQL console was broken on the deployed site**, and
-this container merely surfaced it early by blocking the same request.
-
-Its replacement, literal `VALUES`, touched no network but was the next
-memorable symptom: an 18MB capture sat on the loading spinner for nearly two
-minutes, because DuckDB spends about 0.1ms *parsing* each row of a VALUES list.
-The loader now inserts through Arrow IPC (`insertRows` in
-`src/lib/db/loader.ts`), which is core to the WASM build and loads the same
-capture in a few seconds. It lays the Arrow buffers out by hand: Arrow's builders
-(`vectorFromArray`, `tableFromArrays`, …) compile code with `new Function`,
-which the production CSP's `script-src 'self' 'wasm-unsafe-eval'` refuses — a
-second failure the dev server cannot show.
-
-`tests/e2e/offline.e2e.ts` holds both lines: no request leaves the origin while
-a capture is loaded and queried, and nothing is compiled from a string (the test
-makes `eval` and `Function` throw). Those are the assertions that generalise:
-they hold whether or not a CSP is there to catch the violation.
-
-**The e2e suite drives the dev server, which ships no CSP** (`vite.config.ts`
-injects it at build time only). That is the gap that let this ship, twice. When
-touching anything that fetches or pulls in a new library, verify against the real
-thing:
-
-```bash
-bun run build && bun run preview     # http://localhost:4173/bgpshark/
-```
-
-## Driving the app from a script
-
-Much of this app's behaviour is only visible in a browser, and reading the
-components is a poor substitute for loading a capture and looking. A throwaway
-Playwright script beats adding a test when you are still investigating:
-
-```ts
-import { chromium } from 'playwright'
-import { readFileSync } from 'node:fs'
-
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })
-const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } })
-page.on('console', (m) => console.log(`[${m.type()}] ${m.text()}`))
-
-await page.goto('http://localhost:5173/bgpshark/', { waitUntil: 'networkidle' })
-await page.locator('input[type="file"]').first().setInputFiles({
-  name: 'x.pcap', mimeType: 'application/vnd.tcpdump.pcap', buffer: readFileSync(path),
-})
-await page.waitForURL('**/messages')
-await page.waitForTimeout(2500)          // parse + DuckDB load
-console.log(await page.locator('body').innerText())
-```
-
-`page.locator('body').innerText()` is the highest-signal assertion available —
-the screens are text-dense, so one dump usually answers the question. See
-`tests/e2e/helpers.ts` for the same moves written properly.
-
-Generate captures to feed it with `bun run testlab/scenarios.ts` (fourteen
-troubleshooting scenarios) or the `src/lib/build` library directly. Do not go
-looking for pcaps to download.
-
-### UI facts that cost time to rediscover
-
-- **Capability Diff** lives at Neighbors → click a *router* → click a *session*.
-  It does not appear at the router level.
-- **Filter errors** render next to the "Showing N of M packets" counter, not
-  under the input. An invalid expression shows the error *and* leaves the list
-  unfiltered — "Showing 5 of 5" next to a red message means the filter did not
-  apply, not that everything matched.
-- **TCP-level frames** (SYN, RST, FIN) only appear with the packet list switched
-  to **All Packets**; the default is BGP only.
-
-## Conventions
-
-- **Comments explain why, at length.** This codebase leans on prose — file-level
-  docblocks that state what a module is for and which failure it exists to
-  prevent. Match that register; do not strip it back to terse one-liners.
-- **Tests mirror source.** `tests/lib/**` mirrors `src/lib/**` and runs under
-  `bun test`. Browser tests are `tests/e2e/*.e2e.ts` — named `.e2e.ts` and not
-  `.spec.ts` precisely so `bun test` cannot pick them up.
-- **Fixtures are built, not committed.** See `evpnCapture()` in
-  `tests/e2e/helpers.ts`: a capture written next to the assertions that depend on
-  it, so what it contains stays legible. `testlab/scenarios.ts` follows the same
-  rule and gitignores its output.
-- **Filters have two backends.** A filter expression is parsed to an AST once,
-  then either evaluated in memory (`src/lib/filter/parser.ts`) or compiled to SQL
-  (`src/lib/db/filter-to-sql.ts`). A change to filter semantics has to land in
-  both, and the e2e suite only covers the SQL path when DuckDB is up.
-- **`tsconfig.json` includes `src`, `tests` and `testlab`**, so `bun run build`
-  typechecks scripts too.
-- **Dashboard alert rules are specified, not just implemented.** `design.md`
-  §2.1.14 lists every rule with what it fires on *and* what it must stay quiet
-  about. Adding a rule means adding a row and naming the capture that would
-  make it a false positive — the corpus in `testlab/scenarios.ts` usually
-  already holds one.
-- **Prose ships as Markdown, converted at build time.** The user manual is
-  `src/pages/manual/manual.md`; `markdownPlugin` in `vite.config.ts` turns an
-  imported `.md` into a string of HTML, so `marked` is a devDependency and no
-  Markdown parser reaches the browser. Edit the Markdown, not the component.
-  The plugin also slugs `h2`/`h3` ids, which is how the page builds its own
-  table of contents and how `/manual#filters` works.
-- **The manual's screenshots are generated, and are not optional.** `bun run
-  screenshots` (`testlab/screenshots.ts`) drives the real app over the scenario
-  captures and writes `public/manual/*.png`, which *are* committed. Re-run it
-  after changing any screen the manual points at, and commit what changes — the
-  script fails rather than photographing the wrong thing when a click path
-  breaks, but nothing re-runs it for you. It starts its own dev server if one is
-  not already up, and takes `CHROMIUM_PATH` like the e2e suite does.
-  In the Markdown the images are written `![alt](manual/x.png)`: the plugin
-  prefixes the base path, reads the PNG's dimensions so lazy loading does not
-  shift the page under a `#anchor`, and turns the alt text into a caption.
-
-### Known inconsistency
-
-The two filter backends disagree on negation. In memory, `prefix != 10.0.0.0/8`
-only ever matches UPDATE packets — the evaluator loops over UPDATE messages and
-returns false when there are none (`parser.ts`, the `prefix` case) — while the
-SQL backend also returns OPENs and KEEPALIVEs, which carry no prefix and
-therefore do not match the negated condition. `prefix-matching.e2e.ts:34` pins
-the SQL answer; the in-memory answer is only visible when DuckDB is unavailable.
-Worth knowing before concluding a filter is broken.
+- **Tests mirror source:** Unit tests live in `tests/lib/**` (`bun test`). Browser specs live in `tests/e2e/*.e2e.ts` (named `.e2e.ts` so `bun test` does not execute them). See `tests/e2e/helpers.ts` for shared capture-loading helpers.
+- **Build test fixtures in code:** Generate captures using `src/lib/build` or `bun run testlab/scenarios.ts` rather than committing opaque binary pcaps.
+- **Type-checking covers scripts:** `tsconfig.json` includes `src`, `tests`, and `testlab`, so `bun run build` validates test and lab scripts too.
+- **Comments explain *why*:** Preserve and match the codebase's existing docblocks explaining module rationale and prevented failure modes.
+- **UI navigation notes for debugging:**
+  - **Capability Diff** appears only after selecting **Neighbors → router → session**.
+  - **Filter errors** render next to the `"Showing N of M packets"` counter and leave the list unfiltered.
+  - **TCP-level frames** (`SYN`, `RST`, `FIN`) appear only when the packet list is switched to **All Packets**.
 
 ## Git
 
-Branch, commit and push as instructed for the session. Do not open a pull request
-unless asked.
+Branch, commit, and push as instructed for the session. Do not open a pull request unless asked.

@@ -1,47 +1,24 @@
 # 🦈 BGPShark
 
 A browser-based pcap analyzer specialized for BGP session troubleshooting.
-Inspect OPEN, UPDATE, NOTIFICATION, KEEPALIVE and ROUTE-REFRESH messages without
-launching Wireshark.
+Inspect OPEN, UPDATE, NOTIFICATION, KEEPALIVE, and ROUTE-REFRESH messages without launching Wireshark.
 
-**Everything runs in the browser** — the capture file is parsed locally and never
-uploaded to a server.
+**Everything runs locally in the browser** — capture files are never uploaded to a server.
 
 ## Features
 
-- **pcap / pcapng** input, auto-detected. Ethernet and Linux SLL link types,
-  802.1Q / QinQ tags stripped
-- **Full BGP decode** — OPEN capabilities, UPDATE path attributes (AS_PATH,
-  communities, large communities, MP_REACH/MP_UNREACH including IPv6 NLRI, …),
-  NOTIFICATION error codes with troubleshooting hints, and — on a Hold Timer
-  Expired — how long the peer had actually been quiet, against the hold time the
-  two OPENs negotiated
-- **EVPN** — MAC/IP Advertisement and Inclusive Multicast routes decoded to
-  their RD, MAC, VNI and ESI; the other route types identified
-- **Dashboard** — message counts, severity-sorted alerts, neighbor table and a
-  message timeline
-- **Message Explorer** — packet list, hierarchical detail view, hex dump
-- **Neighbor Analysis** — sessions grouped by Router ID with capability summaries
-  and a side-by-side OPEN / capability diff
-- **Route Analysis** — per-prefix announce / withdraw history and flap counts
-- **SQL Console** — query the capture directly with DuckDB WASM
-- **Export** — save the filtered packet list back out as a pcap, for attaching
-  to a ticket or handing to a vendor
-- **Capture builder** — describe a BGP session and get a pcap of it, without a
-  lab. Eight starting scenarios (clean establishment, hold timer expiry, AS
-  mismatch, TCP rejected, IPv6 transport, route flap, 4-byte AS, segmented
-  UPDATEs), then edit the peers, routes and message sequence
-- **Filter expressions** — `type = NOTIFICATION and src_ip = 10.0.0.1`, with
-  autocomplete and a rule-builder mode. `src_port` / `dst_port` separate two TCP
-  sessions between the same IP pair, and `frame` takes `<`, `<=`, `>`, `>=` for a
-  frame range (`frame >= 100 and frame < 200`)
-- **User manual** — a Help page inside the app at `/manual`, readable before
-  anything is loaded, covering the screens, the filter language and a dozen
-  screenshotted walkthroughs that take a complaint — "it flaps every few
-  minutes", "traffic leaves by the wrong upstream" — to the screen that answers
-  it
-- Light / dark theme, following the system preference by default
-- Loaded captures persist in IndexedDB and are restored on reload
+- **pcap / pcapng support** — Auto-detected (`.pcap`, `.pcapng`, `.cap` up to 50 MB). Handles Ethernet and Linux SLL link types, strips 802.1Q / QinQ tags, reassembles TCP segments, and supports IPv4/IPv6 transport as well as BGP on non-standard ports.
+- **Full BGP decoding** — OPEN capabilities, UPDATE path attributes (AS_PATH, communities, large/extended communities, MP_REACH/MP_UNREACH including IPv6 NLRI, ADD-PATH), NOTIFICATION error codes with decoded data fields and troubleshooting hints, Hold Timer silence analysis, and ROUTE-REFRESH diffs.
+- **EVPN decoding** — Decodes MAC/IP Advertisement and Inclusive Multicast routes (RD, MAC, VNI, ESI) and identifies other EVPN route types.
+- **Dashboard** — Summary counts, severity-sorted problem alerts, neighbor status table, and message timeline.
+- **Message Explorer** — Packet list, hierarchical message detail, hex dump, and filtered pcap export.
+- **Neighbor Analysis** — Sessions grouped by Router ID with side-by-side OPEN / capability diffs and ADD-PATH negotiation results.
+- **Route Analysis** — Per-prefix announce/withdraw history, flap counts, and best-path attributes (AS_PATH, Next Hop, MED, LOCAL_PREF, communities).
+- **SQL Console** — Query the capture directly in the browser with DuckDB WASM.
+- **Filter expressions** — Simple rule-builder and Advanced expression syntax (e.g. `type = NOTIFICATION and src_ip = 10.0.0.1`) with autocomplete and CIDR-aware prefix matching. See the in-app manual ([`src/pages/manual/manual.md`](src/pages/manual/manual.md)) for the full filter reference.
+- **Capture Builder** — Generate realistic BGP pcap files directly in the browser from presets or custom peer/message sequences.
+- **In-app User Manual** — Available at `/manual` in English and Japanese, covering every screen, the filter language, and symptom-based troubleshooting walkthroughs.
+- **Light / dark theme** and **IndexedDB persistence** across reloads.
 
 ## Getting started
 
@@ -52,321 +29,93 @@ bun install
 bun run dev        # http://localhost:5173/bgpshark/
 ```
 
-On Nix, `nix develop` gets you Bun, Node and a working Playwright browser in one
-step — see [On Nix](#on-nix).
-
-Other scripts:
+### Scripts
 
 ```bash
-bun test           # Run the parser test suite
-bun run test:e2e   # Drive the app in a browser (see below)
+bun test           # Run unit tests (tests/lib)
+bun run test:e2e   # Run Playwright end-to-end tests in Chromium (tests/e2e)
 bun run build      # Type-check and build to dist/
-bun run preview    # Serve the production build
-bun run lint       # ESLint
+bun run preview    # Serve the production build locally
+bun run lint       # Run ESLint
 ```
 
-## Tests
+### Running end-to-end tests
 
-`bun test` covers the parsers and the prefix arithmetic — everything under
-`tests/lib`, with no browser involved.
-
-`bun run test:e2e` drives the real app in Chromium against real DuckDB WASM.
-That is the only place some of this app's failure modes are visible: SQL that
-compiles but will not run, a route guard that redirects before the capture has
-finished loading, a layout that only breaks below a breakpoint. The dev server
-is started automatically. Specs live in `tests/e2e` and are named `*.e2e.ts`
-rather than `*.spec.ts` so that `bun test` cannot pick them up.
+Install Playwright's Chromium binary once, then run the suite:
 
 ```bash
-bunx playwright install chromium    # once
+bunx playwright install chromium
 bun run test:e2e
-bun run test:e2e --ui               # pick through them interactively
-bun run test:e2e layout             # one file
 ```
 
-Where `playwright install` cannot run — an offline machine, or one that ships a
-Chromium of its own — `CHROMIUM_PATH` skips the revision lookup entirely:
+In offline environments or when using a system Chromium, set `CHROMIUM_PATH` to skip Playwright's browser lookup:
 
 ```bash
 CHROMIUM_PATH=/usr/bin/chromium bun run test:e2e
 ```
 
-The suite drives the **dev server**, which by design ships no Content Security
-Policy. Anything that fetches — a wasm module, a DuckDB extension — therefore
-needs checking against the built app too, where the policy is real:
+> [!NOTE]
+> The dev server does not apply the production Content Security Policy. After changes that affect asset loading, WASM, or dependencies, verify the built app with `bun run build && bun run preview`.
+
+### Nix development shell
+
+`flake.nix` provides a dev shell with Bun, Node, and pre-configured Playwright browsers (on Linux):
 
 ```bash
-bun run build && bun run preview
-```
-
-### On Nix
-
-`flake.nix` provides a dev shell with Bun, Node and — on Linux — a Playwright
-browser set that actually runs:
-
-```bash
-nix develop           # or `direnv allow`, using the .envrc
+nix develop        # or `direnv allow`
 bun install
 bun run dev
-bun run test:e2e      # no `playwright install` step needed
+bun run test:e2e   # no `playwright install` step required
 ```
 
-The shell exports `PLAYWRIGHT_BROWSERS_PATH` at the nixpkgs browsers and skips
-both the browser download during `bun install` and Playwright's host-requirement
-check, which does not recognise a Nix system.
+When upgrading `@playwright/test` in `package.json`, keep the nixpkgs revision in `flake.nix` aligned with the same Playwright driver version (`nix eval github:NixOS/nixpkgs/<rev>#playwright-driver.version`).
 
-That matters because the browsers Playwright downloads are dynamically linked
-against libraries a Nix system does not put where they expect, so they fail to
-start. The nixpkgs build works, but only with the driver version it was built
-for — so the nixpkgs revision in `flake.nix` and the `@playwright/test` pin in
-`package.json` (1.61.1) are two halves of one decision. **Bump them together**:
-point the flake input at a revision, check what it ships, and match the npm
-package to it.
+## Capture builder
 
-```bash
-nix eval github:NixOS/nixpkgs/<rev>#playwright-driver.version   # what a revision ships
-```
+The **Build** screen (`/build`) lets you synthesize valid BGP captures without a lab. Choose one of the eight presets (established session, hold timer expiry, bad peer AS, refused TCP connection, IPv6 transport, route flap, 4-byte AS, segmented UPDATEs), adjust peers, routes, and message steps, and preview or download the resulting `.pcap` file.
 
-If they drift, `nix develop` warns on entry and Playwright later reports that it
-cannot find a browser build it expects.
+![Capture builder: session configuration on the left and parsed preview on the right](docs/images/builder.png)
 
-Without flakes, the older route still works:
-
-```bash
-export PLAYWRIGHT_BROWSERS_PATH=$(nix-build '<nixpkgs>' -A playwright-driver.browsers --no-out-link)
-export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1
-bun run test:e2e
-```
-
-(`nix-shell -p playwright-driver.browsers` is not enough on its own — it puts the
-browsers in the store without pointing `PLAYWRIGHT_BROWSERS_PATH` at them.)
-
-The flake stops at a dev shell: there is no package output, because nixpkgs has
-no builder for a `bun.lock` and a from-scratch offline build would mean
-maintaining a second, converted lockfile. `bun run build` inside the shell is
-the build.
-
-There is no committed `flake.lock` either — the one input is pinned to an exact
-revision, so the shell is already reproducible without it. The lock Nix writes
-on first use is yours to keep or delete.
-
-## Filter syntax
-
-```
-type = OPEN
-type = NOTIFICATION and src_ip = 10.0.0.1
-src_ip = 10.0.0.1 or dst_ip = 10.0.0.1
-asn = 65001
-prefix = 10.0.0.0/8
-community = 65000:100
-capability contains "Route Refresh"
-not (type = KEEPALIVE)
-```
-
-| Field | Matches |
-|-------|---------|
-| `type` | Message type (`OPEN`, `UPDATE`, `NOTIFICATION`, `KEEPALIVE`, `ROUTE_REFRESH`) |
-| `src_ip` / `dst_ip` | Source / destination IP; a CIDR matches any address inside it |
-| `router_id` | BGP Identifier from an OPEN message |
-| `src_as` | AS number advertised in an OPEN message |
-| `asn` | AS number appearing anywhere in AS_PATH |
-| `origin` | `IGP` / `EGP` / `INCOMPLETE` |
-| `next_hop` | NEXT_HOP or MP_REACH next hop |
-| `med` | MULTI_EXIT_DISC; takes `<`, `<=`, `>`, `>=` |
-| `local_pref` | LOCAL_PREF; takes `<`, `<=`, `>`, `>=` |
-| `prefix` | Announced or withdrawn NLRI prefix |
-| `withdrawn` | Withdrawn prefix |
-| `community` | Standard or large community |
-| `rt` | Route Target, e.g. `rt = 65001:100` |
-| `ext_community` | Any extended community as displayed, e.g. `ext_community contains "MAC Mobility"` |
-| `mac` | MAC in an EVPN route, announced or withdrawn |
-| `vni` | VNI carried by an EVPN route |
-| `rd` | Route Distinguisher of an EVPN route |
-| `evpn_type` | EVPN route type (1 A-D, 2 MAC/IP, 3 IMET, 4 Ethernet Segment, 5 IP Prefix) |
-| `capability` | Capability name from an OPEN message |
-
-Aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `nlri`, `router-id`, `my_as`,
-`large-community`, `route-target`, `ext-community`, `evpn-type`.
-Operators: `=`, `!=`, `contains`, `not contains`, combined with `and` / `or` / `not`
-and parentheses.
-
-Address and prefix fields compare numerically, not as text, and the mask is
-honoured to the bit — `src_ip = 192.168.0.0/23` covers 192.168.0.0 through
-192.168.1.255 and nothing else. For `prefix` and `withdrawn`:
-
-- `prefix = 10.0.0.0/8` — routes **inside** 10.0.0.0/8, so 10.0.12.0/24 matches
-- `prefix = 10.0.12.7` — routes that **cover** that address
-- `prefix contains "10.0.1"` — substring search, for when you are still typing
-
-The route analysis screen answers the same way, so a prefix that shows up there
-also shows up in a filter using the same text.
-
-EVPN carries no prefix, so the `mac`, `vni`, `rd` and `evpn_type` fields address
-its routes instead. They look at announcements and withdrawals together: a MAC
-move is a withdrawal from one leaf and an advertisement from another, and
-`mac = 00:0c:29:aa:bb:cc` has to show both halves of it.
+UPDATE encoding (4-byte AS width, ADD-PATH Path Identifiers) is derived automatically from the OPEN capabilities, and TCP segmentation follows the configured MTU. All IPv4/TCP checksums are computed properly, so exported captures work in Wireshark and other tools. The same generator is also available programmatically via `src/lib/build`.
 
 ## Architecture
 
 ```
 pcap/pcapng → BGP parser → ┬→ React state (AppContext)
-                           ├→ DuckDB WASM (SQL queries, filtering)
+                           ├→ DuckDB WASM (SQL console, SQL-accelerated filtering)
                            └→ IndexedDB (reload persistence)
 ```
 
-Filter expressions are parsed once into an AST, then either evaluated in memory or
-compiled to SQL depending on whether DuckDB initialized. If DuckDB is unavailable the
-app still works, minus the SQL console.
+Filter expressions parse once into an AST and run either against DuckDB WASM or in memory if DuckDB is unavailable.
 
 | Path | Contents |
 |------|----------|
-| `src/lib/pcap/` | pcap and pcapng parsers, pcap writer, binary reader |
-| `src/lib/bgp/` | BGP message and path attribute parsers, error hints |
-| `src/lib/build/` | BGP message encoders, TCP/IP/Ethernet framing, scenario compiler |
-| `src/lib/db/` | DuckDB schema, loader, queries, filter→SQL compiler |
-| `src/lib/filter/` | Filter expression lexer, parser and evaluator |
-| `src/lib/net/` | Prefix arithmetic shared by the filter, the DB and the UI |
-| `src/pages/` | One component per route; `manual/manual.md` is the user manual |
-| `src/components/` | `builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/` |
-| `testlab/` | ContainerLab topology, and `scenarios.ts` for building fault captures |
-| `docs/` | Design documents |
+| `src/lib/pcap/` | pcap and pcapng parsers, pcap writer, IPv6 & non-standard port detection |
+| `src/lib/bgp/` | BGP message and path attribute parsers, error hints, session & prefix analysis |
+| `src/lib/build/` | BGP message encoders, TCP/IP/Ethernet framing, scenario builder & presets |
+| `src/lib/db/` | DuckDB WASM setup, schema, Arrow IPC loader, query API, filter-to-SQL compiler |
+| `src/lib/filter/` | Filter expression lexer, parser, and in-memory evaluator |
+| `src/lib/net/` | Prefix parsing and CIDR containment arithmetic |
+| `src/pages/` | Page components and the in-app manual (`manual/manual.md`, `manual/manual.ja.md`) |
+| `src/components/` | UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`) |
+| `testlab/` | ContainerLab topology, fault scenario generator (`scenarios.ts`), screenshot script |
+| `docs/` | Technical design and troubleshooting scenario assessment |
 
-## Capture builder
+## Documentation & test lab
 
-The **Build** screen goes the other way: you describe a session and it writes the
-pcap. It needs no capture loaded, which is the state you are in when you come
-looking for one.
-
-![The capture builder: a session described on the left, the built pcap read back on the right](docs/images/builder.png)
-
-A scenario is two peers and a sequence of things that happen between them — the
-TCP handshake, the OPEN exchange, some UPDATEs, a NOTIFICATION, a reset. Pick one
-of the presets for the shape of the problem, then change the addresses, AS
-numbers and routes to match the one in front of you. The preview is the built
-file read back through the same parsers the analysis screens use, so what you see
-there is what you will get.
-
-Two things are decided from the scenario rather than asked for, because both are
-consequences of it:
-
-- **How UPDATEs are encoded.** AS number width and ADD-PATH Path Identifiers are
-  negotiated in the OPENs, so they are derived from the two peers' capabilities.
-  A capture whose OPENs and UPDATEs disagree is one no session could produce.
-- **Where TCP segment boundaries fall.** Messages sent in one step are packed
-  into a byte stream and cut at the MSS. Lowering the MTU is therefore how you
-  build a capture whose BGP messages span segments.
-
-![Editing a step: the messages inside one write, and the frames they produce](docs/images/builder-sequence.png)
-
-The same thing is available as a library, which is the better route for
-generating fixtures in bulk:
-
-```ts
-import { buildScenario, announce } from './src/lib/build'
-
-const { bytes } = buildScenario({
-  a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1' },
-  b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2' },
-  steps: [
-    { kind: 'handshake' },
-    { kind: 'open', from: 'a' },
-    { kind: 'open', from: 'b' },
-    { kind: 'keepalive', from: 'a' },
-    { kind: 'keepalive', from: 'b' },
-    {
-      kind: 'send',
-      from: 'a',
-      messages: [announce(['10.1.0.0/24'], { nextHop: '10.0.0.1', asPath: [65001] })],
-    },
-    { kind: 'send', from: 'b', messages: [{ type: 'NOTIFICATION', errorCode: 6, errorSubcode: 2 }] },
-  ],
-})
-```
-
-Output is a real capture, not one only this app can read: IPv4 and TCP checksums
-are computed properly over the pseudo-header, short frames are padded to
-Ethernet's minimum, and `tests/lib/build/checksums.test.ts` verifies every built
-frame the way a receiving stack would. Ethernet and Linux SLL, IPv4 and IPv6
-transport, and VLAN/QinQ tagging are all available.
-
-## Test lab
-
-`testlab/` contains a ContainerLab topology of four SR Linux nodes (two ASes, iBGP
-plus a full eBGP mesh) for producing realistic captures, including session flaps and
-administrative shutdowns. See [testlab/README.md](testlab/README.md).
-
-The builder covers the cases the lab makes awkward — a peer that never answers, a
-specific NOTIFICATION subcode, a 576-byte MTU — while the lab produces the
-traffic no description would think to include.
-
-`testlab/scenarios.ts` sits between the two: fourteen fixed reproductions of real
-faults, built through the library rather than the lab, described in
-[docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md).
-
-```bash
-bun run testlab/scenarios.ts          # all of them, into testlab/scenarios/
-bun run testlab/scenarios.ts s3 s11   # just these
-```
-
-The same scenarios are what the user manual is illustrated with.
-`testlab/screenshots.ts` loads each one into the real app, walks the click path
-the manual describes, and photographs the answer:
-
-```bash
-bun run screenshots                   # every shot, into public/manual/
-bun run screenshots s2 s11            # just these
-```
-
-Those PNGs are committed, unlike the captures — a browser cannot generate its
-own illustrations. Re-run this after changing a screen the manual points at.
-The script starts a dev server if one is not already listening, and honours
-`CHROMIUM_PATH` the same way the e2e suite does.
-
-## Documentation
-
-- [docs/design.md](docs/design.md) — requirements and technical design
-- [docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md) —
-  fourteen BGP faults, what you want from a capture of each, and what BGPShark
-  says about it today. `bun run testlab/scenarios.ts` builds all of them
-- [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — why DuckDB, and how
-  the implementation diverged from the proposal; `design.md` describes what shipped
+- [docs/design.md](docs/design.md) — Requirements, alert specifications, and technical design
+- [docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md) — Fourteen BGP fault scenarios and coverage assessment
+- [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — Architectural record for the DuckDB WASM integration
+- [testlab/README.md](testlab/README.md) — ContainerLab topology, synthetic scenario captures, and manual screenshot generation
 
 ## Deployment
 
-Pull requests run lint, unit tests, build and the end-to-end suite via
-`.github/workflows/ci.yml`. Pushes to `main` run the same checks and then deploy
-to GitHub Pages via `.github/workflows/deploy.yml`. The app is served under the
-`/bgpshark/` base path.
+Pull requests run lint, unit tests, build, and end-to-end tests via `.github/workflows/ci.yml`. Pushes to `main` run the same checks and deploy to GitHub Pages under `/bgpshark/` via `.github/workflows/deploy.yml`.
 
 ## Privacy
 
-The app makes no third-party requests. Captures are parsed in the browser and stored
-only in IndexedDB, and the DuckDB WASM runtime is self-hosted rather than loaded from
-a CDN. The production build ships a Content Security Policy restricting every fetch
-to the app's own origin.
-
-That constrains how the database may be used, not just how it is served: DuckDB
-fetches its **extensions** from `extensions.duckdb.org` on first use, so anything
-outside the core engine — the JSON reader among them — is unavailable by
-construction. The loader inserts through Arrow IPC, which is built into the WASM
-runtime, for exactly that reason — and builds the Arrow buffers by hand, because
-Arrow's own builders use `new Function`, which the CSP's `script-src` forbids.
-`tests/e2e/offline.e2e.ts` holds the line, asserting that loading and querying a
-capture sends nothing off-origin.
+BGPShark makes no third-party network requests. Captures are parsed in the browser and persisted only in IndexedDB, the DuckDB WASM runtime is self-hosted, and the production build enforces a strict Content Security Policy restricting all fetches to the app's own origin.
 
 ## Third-party licenses
 
-Making no third-party requests has a consequence that is easy to miss: the
-typefaces and the libraries are copied into the build and served from this
-origin, so the app *redistributes* them rather than linking to them. The SIL
-Open Font License and the MIT License both ask that the copyright notice and the
-licence text accompany a redistributed copy.
-
-They do. `public/THIRD-PARTY-LICENSES.txt` holds the notices and the full licence
-texts. It is in `public/` rather than at the repository root on purpose: that
-directory is copied verbatim into the build, so one file covers both audiences —
-anyone reading the source, and anyone whose browser has just downloaded the
-fonts from the deployed site, where a root-level file would never be served. The
-start screen and the foot of the manual link to it.
-
-Adding a bundled font or a runtime dependency means adding it to that file.
+Bundled fonts and third-party library notices are listed in [`public/THIRD-PARTY-LICENSES.txt`](public/THIRD-PARTY-LICENSES.txt) and linked from the app's start screen and user manual.

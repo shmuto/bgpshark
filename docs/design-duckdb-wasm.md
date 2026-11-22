@@ -1,102 +1,51 @@
-# DuckDB WASM: the migration proposal
+# DuckDB WASM — Architecture Decision Record
 
-> **What this is.** The proposal written before DuckDB WASM was introduced, kept
-> for the reasoning rather than the design. The migration is done and the
-> implementation did not follow the proposal. **`design.md` §4.3 is authoritative**,
-> and the only definition of the schema is `src/lib/db/schema.ts`.
->
-> The original document carried full listings of `loader.ts`, `filter-to-sql.ts`,
-> `queries.ts` and a `useDuckDB` hook, plus a copy of the schema and a week-by-week
-> plan. None of that survived contact with the implementation, and all of it now has
-> a real version in the repository, so it has been cut rather than kept as a second
-> answer to questions the code already answers. What is left is the part with no
-> other home: why DuckDB, what changed on the way, and what was turned down.
+> Records why DuckDB WASM was adopted, how the shipped implementation diverged from the initial proposal, and the trade-offs accepted.
+> For the current architecture, see [`design.md` §4.3](design.md#43-data-flow). The authoritative schema is [`src/lib/db/schema.ts`](../src/lib/db/schema.ts).
 
-## Why a database at all
+## Why an in-browser database
 
-The app used to hold parsed packets in React state and filter them by walking the
-array. Four things were pushing against that:
+Earlier revisions held parsed packets in React state and filtered them with a linear array scan. That broke down in four ways:
 
-1. **Scale.** Captures beyond ~100,000 packets got slow.
-2. **Filtering.** A linear scan, with no index, on every keystroke.
-3. **Query complexity.** Every new question meant extending a bespoke evaluator.
-4. **Aggregation.** AS_PATH statistics and per-prefix history were awkward to
-   express and re-derived per render.
+1. **Scale:** Captures beyond ~100,000 packets became sluggish.
+2. **Filtering:** Unindexed full-array scans on every filter edit.
+3. **Extensibility:** Every new query shape required extending a custom evaluator.
+4. **Ad-hoc analysis:** Cross-prefix and AS_PATH aggregations were awkward to express without a query language.
 
-DuckDB WASM is an embedded OLAP database that runs in the browser: columnar
-storage, real SQL, no server. The bet was that the questions this app asks —
-"every prefix inside 10.0.0.0/8", "which AS numbers appear in any path",
-"how often did this route go away" — are the questions a column store is good at,
-and are cheaper to maintain as SQL than as another branch of a hand-written
-evaluator.
+DuckDB WASM provides columnar in-browser storage and full SQL with no server component, fitting BGPShark's aggregate- and filter-heavy queries while keeping everything client-side.
 
-## What changed between the proposal and the implementation
+## Proposal vs. implementation
 
-| Topic | Proposed | Implemented |
-|-------|----------|-------------|
-| Bundle delivery | jsDelivr CDN | Self-hosted — imported with Vite's `?url` and served from `dist/assets/`, because of the CSP |
+| Topic | Initial proposal | Shipped implementation |
+|-------|------------------|------------------------|
+| Bundle delivery | jsDelivr CDN | Self-hosted in `dist/assets/` via Vite `?url` imports to comply with CSP |
 | Query API | `getPackets`, `getNeighborSummary`, `getAsPathStats`, `getPrefixStats` | Two entry points: `getMatchingFrameIndexes` and `executeRawSql` |
-| SQL results | Rebuild `BgpPacket` objects from rows | Return frame indexes only, resolved against the already-parsed objects |
-| Aggregation screens | Aggregate in DuckDB | In memory (`useMemo`), so the screens survive DuckDB failing |
-| React integration | A new `useDuckDB` hook | No new hook; folded into `useBgpAnalyzer` and `useFilter` |
-| CIDR matching | PostgreSQL `inet` operators | DuckDB has no `inet` type — bit-string columns plus `LIKE 'bits%'` |
-| Row loading | Prepared statements per row | Arrow IPC through a staging table (see below) |
+| Filter results | Reconstruct `BgpPacket` objects from SQL rows | Return `frameIndex` values only; resolve against parsed objects in memory |
+| Aggregation views | Compute in DuckDB | Compute in memory (`useMemo`) so screens stay functional if DuckDB fails |
+| React integration | Dedicated `useDuckDB` hook | Folded into `useBgpAnalyzer` and `useFilter` |
+| CIDR matching | PostgreSQL `inet` operators | Bit-string columns (`prefix_bits`) with `LIKE 'bits%'` |
+| Row ingestion | Per-row prepared statements | Arrow IPC into a staging table, then `INSERT ... SELECT` |
 
-The first four are one decision seen from four sides, and `design.md` §4.3
-explains it under "DuckDB's role is intentionally narrow": DuckDB selects, it does
-not reconstitute. The flattened tables cannot represent everything the parser
-produces, so anything that round-trips through them loses fidelity — which is
-exactly what the proposed `getPackets` did, silently, until a filtered OPEN with an
-ADD-PATH capability threw.
+### Key lessons
 
-The last row is the more recent correction, and the sharper lesson. The loader
-originally inserted through `read_json_auto`. That reads well and is fast, but
-DuckDB's JSON reader is an **extension**, and DuckDB WASM downloads extensions from
-`extensions.duckdb.org` on first use. Under the production CSP that download cannot
-happen, so every capture failed to load and the SQL console was dead on the deployed
-site — invisible in development, where there is no CSP and the download succeeds.
-Self-hosting the runtime was necessary but not sufficient: the constraint applies to
-how the database is *used*, not only to how it is served.
-
-Literal `VALUES` replaced it, needed nothing from the network, and was far too slow:
-DuckDB spends about 0.1ms parsing each row of a VALUES list — measured with and
-without the tables' indexes and primary keys, which barely mattered. An 18MB capture
-of 120,000 UPDATEs flattens to 1.6 million rows and took close to two minutes to
-load, with the app showing only a spinner. Arrow IPC (`insertArrowFromIPCStream`)
-skips the parser, is core to the WASM build, and loads the same capture in about six
-seconds. Two details carry the constraint forward. The Arrow vectors are built by
-hand, because Arrow's builders compile their null checks with `new Function` and the
-CSP's `script-src` forbids it. And rows land in a staging table and reach the real
-one through a named-column `INSERT ... SELECT`, so columns bind by name rather than
-position and DuckDB casts each to its declared type.
+- **Select, do not reconstitute:** The SQL tables are a flattened projection that cannot losslessly represent every nested capability or attribute. Returning only `frameIndex` values prevents data loss when filters are active (`design.md` §4.3).
+- **CSP applies to database features, not just static assets:**
+  - Loading via `read_json_auto` failed in production because DuckDB's JSON reader is a dynamically downloaded extension blocked by `connect-src 'self'`.
+  - Loading via literal `VALUES` avoided the network but spent ~0.1 ms per row parsing SQL (nearly 2 minutes for an 18 MB / 1.6M-row capture).
+  - Loading via built-in **Arrow IPC** (`insertArrowFromIPCStream`) requires no extension and loads the same capture in a few seconds. Arrow buffers are assembled manually because `apache-arrow`'s high-level builders use `new Function`, which the production CSP's `script-src` forbids. Staging tables + named-column `INSERT ... SELECT` let DuckDB bind and cast columns safely.
 
 ## Trade-offs accepted
 
-**In favour.** Columnar storage for filtering; scale; SQL as an extension point that
-needs no parser work; `GROUP BY` / `COUNT` / `JOIN` for analysis; query planning
-handled for us.
+**Benefits:** Columnar filtering at scale, built-in query planning, and ad-hoc SQL without maintaining custom query syntax.
 
-**Against.**
+**Costs:**
+1. **Bundle size & load time:** Self-hosting adds two WASM bundles (`mvp` and `eh`) to `dist/`; browsers download only one, and loading is deferred until a capture is opened (`design.md` §3.3).
+2. **Memory overhead:** DuckDB holds table copies alongside the in-memory `BgpPacket[]`.
+3. **JS/SQL boundary conversion** and harder query debugging compared to plain predicates.
+4. **Possible initialization failure:** Handled by keeping aggregation views in memory and falling back to the in-memory filter evaluator so only the SQL Console is lost.
 
-1. **Initial load.** The WASM binary has to be fetched. Self-hosting makes `dist/`
-   carry two bundles, but a browser downloads only the one it selects, and the
-   import is deferred so the upload screen does not pay for it (`design.md` §3.3).
-2. **Memory.** DuckDB's own overhead, on top of the parsed packets that are kept
-   anyway.
-3. **Type conversion** between SQL and JS at every boundary.
-4. **Debugging** a failing query is harder than debugging a predicate.
-5. **Initialization can fail.** Some environments will not run the WASM at all, so
-   filtering falls back to in-memory evaluation and only the SQL console goes away.
+## Alternatives rejected
 
-Points 1 and 5 are the reasons the aggregation screens were kept in memory. A
-design where every screen needed DuckDB would make item 5 fatal instead of partial.
-
-## Alternatives considered
-
-- **IndexedDB with hand-built indexes.** Lighter, but the query capability would
-  have to be written and maintained by us — which is the cost the migration existed
-  to remove.
-- **sql.js (SQLite WASM).** Smaller than DuckDB, but row-oriented, so the
-  aggregate-heavy queries this app asks are the ones it is worst at.
-- **Web Workers, keeping the array scan.** Moves the work off the main thread
-  without making it less work. Helps responsiveness, not scale.
+- **IndexedDB with custom indexes:** Lighter footprint, but requires building and maintaining a custom query engine.
+- **sql.js (SQLite WASM):** Smaller binary, but row-oriented and poorly suited to aggregate-heavy analytical queries.
+- **Web Workers with linear scans:** Improves UI responsiveness without improving algorithmic scale or ad-hoc querying.

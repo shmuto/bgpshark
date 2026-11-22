@@ -1,26 +1,15 @@
-# BGP Packet Analyzer - Requirements & Design Document
+# BGPShark — Requirements & Technical Design
 
-> This document describes the current design of the application. `design-duckdb-wasm.md`
-> keeps the reasoning behind the DuckDB WASM migration; this document is authoritative
-> where the two differ. `troubleshooting-scenarios.md` is the counterpart from the
-> user's side: the faults this tool is pointed at, and which of them it answers.
+> Authoritative design reference for the current implementation.
+> For the rationale behind the DuckDB WASM architecture, see [`design-duckdb-wasm.md`](design-duckdb-wasm.md).
+> For fault-coverage tracking across 14 troubleshooting scenarios, see [`troubleshooting-scenarios.md`](troubleshooting-scenarios.md).
 
 ## 1. Project Overview
 
-### 1.1 Product Name
-BGP Packet Analyzer (repository / package name: `bgpshark`)
-
-### 1.2 Concept
-A lightweight, web-based pcap analyzer specialized for BGP session troubleshooting. Quickly inspect and analyze BGP messages in the browser without launching Wireshark.
-
-### 1.3 Target Users
-- IXP operators
-- ISP NOC engineers
-- Network engineers working with BGP
-- Networking students
-
-### 1.4 Hosting
-GitHub Pages (fully static site)
+- **Name:** BGPShark (package / repository: `bgpshark`)
+- **Concept:** A browser-based pcap analyzer specialized for BGP session troubleshooting without installing Wireshark.
+- **Target users:** IXP operators, ISP NOC engineers, network engineers, and networking students.
+- **Hosting:** Static SPA on GitHub Pages (`/bgpshark/`).
 
 ---
 
@@ -28,483 +17,134 @@ GitHub Pages (fully static site)
 
 ### 2.1 Implemented Features
 
-#### 2.1.1 Pcap File Loading
-- Drag & drop (anywhere in the app) or file picker to upload
-- Supported formats: libpcap (.pcap) and pcapng (.pcapng), auto-detected by magic number
-- Client-side parsing (no server upload)
-- The loaded file is persisted in IndexedDB and restored automatically on reload
+#### 2.1.1 Capture Loading
+- Drag & drop anywhere in the app or file picker on the upload screen
+- Supported formats: libpcap (`.pcap`, `.cap`) and pcapng (`.pcapng`), auto-detected by magic number, up to 50 MB (`src/lib/file-constraints.ts`)
+- Client-side parsing only; the loaded file is persisted in IndexedDB and restored on reload
 
 #### 2.1.2 BGP Message Extraction
-- Auto-filter packets on TCP port 179; non-BGP IP packets are also retained and can
-  be shown in the message list ("show all packets")
-- Multiple BGP messages inside a single TCP segment are all extracted
-- Identify BGP message types:
-  - OPEN (Type 1)
-  - UPDATE (Type 2)
-  - NOTIFICATION (Type 3)
-  - KEEPALIVE (Type 4)
-  - ROUTE-REFRESH (Type 5)
+- Extracts BGP sessions on TCP port 179 and detects BGP on non-standard ports by the 16-byte marker (`src/lib/pcap/bgp-detect.ts`)
+- Retains non-BGP IP/TCP frames so **All Packets** mode can display TCP handshakes, RSTs, and FINs
+- Supports IPv4 and IPv6 transport (`src/lib/pcap/ipv6.ts`), Ethernet II and Linux SLL link types, and strips 802.1Q / QinQ tags
+- Reassembles BGP messages split across TCP segments and extracts multiple BGP messages from a single TCP segment
+- Recognizes all five BGP message types: `OPEN` (1), `UPDATE` (2), `NOTIFICATION` (3), `KEEPALIVE` (4), and `ROUTE_REFRESH` (5)
 
 #### 2.1.3 OPEN Message Analysis
-| Field | Display |
-|-------|---------|
-| Version | BGP version (typically 4) |
-| My Autonomous System | ASN (2-byte/4-byte support) |
-| Hold Time | Seconds |
-| BGP Identifier | Router ID (IPv4 format) |
-| Optional Parameters | Expanded Capabilities view |
+Decodes Version, My Autonomous System (2-byte/4-byte), Hold Time, BGP Identifier, and Optional Parameters.
 
-**Capabilities parsed into structured values**
-- Multiprotocol Extensions (Code 1) - AFI/SAFI display
+Structured capability parsers (`src/lib/bgp/open.ts`):
+- Multiprotocol Extensions (Code 1) — AFI/SAFI
 - Route Refresh (Code 2)
 - Extended Next Hop Encoding (Code 5)
 - Graceful Restart (Code 64)
 - 4-byte AS Number (Code 65)
-- ADD-PATH (Code 69) - per AFI/SAFI send/receive
+- ADD-PATH (Code 69) — per-AFI/SAFI send/receive
 - Enhanced Route Refresh (Code 70)
 
-Other IANA-assigned codes are recognised by name (`CapabilityCodeNames` in
-`src/lib/bgp/constants.ts`) and shown with their raw value; anything unassigned is
-listed as an unknown capability rather than dropped.
+Other IANA-assigned capability codes are named via `CapabilityCodeNames` (`src/lib/bgp/constants.ts`) with raw bytes; unassigned codes are displayed as unknown rather than dropped.
 
 #### 2.1.4 NOTIFICATION Message Analysis
-| Field | Display |
-|-------|---------|
-| Error Code | Code value + name |
-| Error Subcode | Subcode value + name |
-| Data | Decoded per error code where RFC 4271 §6 defines one, over a hex dump |
-| Hint | Common causes & troubleshooting tips |
-| Silence before the teardown | Hold Timer Expired only — see below |
+Displays Error Code, Error Subcode, decoded Data (above the raw hex dump), a troubleshooting hint (`src/lib/bgp/errors.ts`), and—for Hold Timer Expired—silence analysis.
 
-**The data field is where the answer usually is**, and RFC 4271 §6 says what it
-holds per error. `lib/bgp/notification-data.ts` decodes the defined cases: the
-rejected message length or type (code 1), the highest version the peer supports,
-the AS number that did not match, the capabilities it refused (code 2), the
-attribute that caused an UPDATE error complete with its flags (code 3), and the
-RFC 9003 shutdown communication a Cease may carry in words (code 6).
+- **Data field decoding (`src/lib/bgp/notification-data.ts`):** Implements RFC 4271 §6 and RFC 9003 decodings for rejected message length/type (code 1), unsupported version / bad peer AS / unsupported capabilities (code 2), offending UPDATE attribute with flags (code 3), and Cease shutdown communication text (code 6). Malformed or unspecified payloads fall back to raw hex; raw bytes are always shown underneath the decoded view.
+- **Hold Timer Expired silence (`src/lib/bgp/hold-timer.ts`):** Measures elapsed time from the last message sent by the **NOTIFICATION's destination** (the peer that went quiet) to the teardown, compared against the lower Hold Time from the most recent OPEN pair preceding that teardown.
+  - Silence ≥ negotiated hold time: normal hold-timer expiry (points to one-way reachability).
+  - Silence < negotiated hold time: flagged as firing early (possible packet loss in capture or differing active hold time).
+  - Missing OPENs: reports silence without a hold-time comparison.
+  - No prior peer messages: reported explicitly rather than as `0s`.
+  - Computed against the unfiltered packet list so active filters do not alter the result.
 
-Anything else keeps its hex dump, and so does a field that does not read as what
-it should be — an attribute whose length runs past the data, a Bad Peer AS field
-that is neither two nor four bytes wide. The decode is always shown *over* the
-bytes rather than instead of them, since a NOTIFICATION is the message people
-most want to check an interpretation against.
+#### 2.1.4b ROUTE-REFRESH Diff (`src/lib/bgp/route-refresh.ts`)
+Selecting a ROUTE-REFRESH message compares the peer's advertised table before and after the refresh (always against the unfiltered packet list):
 
-**Silence before a Hold Timer Expired** (`src/lib/bgp/hold-timer.ts`)
-
-Error code 4 says a speaker stopped hearing from the other end, and the number
-that decides what to do about it is the one the message does not carry: how long
-the silence was, against the hold time in force. Both are already in the capture,
-so the detail panel does the subtraction rather than leaving it to SQL.
-
-| Rule | Behaviour |
-|------|-----------|
-| Whose silence | Measured from the last message whose source is the **NOTIFICATION's destination** — the end that went quiet. Not the previous packet in the capture; on a healthy session that is usually the sender's own KEEPALIVE, and is a different number. |
-| Hold time | The **lower of the two OPENs** (RFC 4271 §4.2), taken from the last OPEN each end sent *before* this teardown. A later session's OPENs, on a flapping capture, describe a different timer and are not consulted. |
-| Silence ≥ hold time | Stated as the session timing out as specified; points at one-way reachability rather than BGP. |
-| Silence < hold time | Flagged as the timer firing early — a capture missing packets, or a hold time not matching the OPENs on record. |
-| OPENs not in capture | Silence still reported; the comparison is declined rather than guessed. |
-| Nothing from the peer at all | Reported as nothing, not as a zero-second silence. |
-
-Indexed against the unfiltered packet list, so an active filter cannot change
-the answer.
-
-**Supported Error Codes**
-| Code | Name | Example Subcodes |
-|------|------|------------------|
-| 1 | Message Header Error | Bad Message Length, Bad Message Type |
-| 2 | OPEN Message Error | Unsupported Version, Bad Peer AS, Bad BGP Identifier, Unsupported Capability |
-| 3 | UPDATE Message Error | Malformed Attribute List, Invalid NEXT_HOP, etc. |
-| 4 | Hold Timer Expired | - |
-| 5 | FSM Error | - |
-| 6 | Cease | Admin Shutdown, Peer De-configured, etc. |
-
-#### 2.1.4b ROUTE-REFRESH: what the re-advertisement changed
-
-(`src/lib/bgp/route-refresh.ts`)
-
-A refresh is only ever sent after a policy change, and the question that follows
-is whether the routes that came back are the ones expected. Both halves are in
-the capture, so selecting the ROUTE-REFRESH shows the difference between them.
-
-Selecting the message is also how a capture holding several refreshes picks the
-interval: each one compares its own.
-
-| Rule | Behaviour |
-|------|-----------|
-| Whose table | The refresh's **destination** — the end being asked to re-advertise. The request travels one way and the answer the other, and reading it backwards compares the sender's own announcements and finds nothing on every capture. |
-| The window | From the refresh to the peer's End-of-RIB, or to the next refresh, or to the end of the capture, whichever comes first. |
-| Added | In the re-advertisement, not in the table before it. |
-| No longer advertised | In the table before, absent from the re-advertisement. **Not** read from withdrawals: after a refresh the peer re-sends its whole table, and a route it no longer has is simply not in it. This is the "my soft clear lost routes" case, and a rule watching for withdrawals would find nothing wrong. |
-| Attributes changed | In both, with a different AS_PATH, MED, LOCAL_PREF, next hop or community set. |
-| Unchanged | Counted, not listed. |
-| Capture began mid-session | Said: the "before" side is only what the capture caught, so a removal may be a route announced before recording started. |
-| No End-of-RIB | Said: anything not re-sent by the end of the capture is listed as removed whether or not it was on its way. |
-
-Indexed against the unfiltered packet list, for the same reason the hold timer
-is: what the peer had advertised is a property of the capture, not of what the
-reader is filtering for.
+| Property | Behavior |
+|----------|----------|
+| Target table | The refresh's **destination** (the peer asked to re-advertise) |
+| Re-advertisement window | From the refresh until the peer's End-of-RIB, the next refresh, or end of capture |
+| Diff categories | **Added**, **No longer advertised** (inferred from absence in the re-advertisement, not withdrawals), **Attributes changed** (AS_PATH, MED, LOCAL_PREF, Next Hop, or communities), and a count of unchanged routes |
+| Boundary warnings | Explicitly notes when the capture began mid-session (incomplete "before" table) or ended without an End-of-RIB |
 
 #### 2.1.5 Packet List View
-- Timestamp
-- Source/Destination IP
-- BGP message type
-- Summary info (e.g., "OPEN AS65001 Hold=90")
+Virtualized grid showing frame number, timestamp, source/destination IP (plus optional port columns), BGP message type, and a concise **Info** summary (`src/lib/packet-columns.ts`), with **Export** to write the filtered frames back to `.pcap` (`src/lib/pcap/writer.ts`).
 
 #### 2.1.6 Detail View
-- Click packet to show detail panel
-- Hierarchical field display
-- Hex dump of relevant bytes
+Structured per-message-type view (`src/components/message/`) paired with a raw hex dump.
 
-#### 2.1.7 UPDATE Message Analysis
-Path attributes parsed into structured values:
+#### 2.1.7 UPDATE Message Analysis (`src/lib/bgp/update.ts`)
+Parses standard and multiprotocol path attributes: `ORIGIN` (1), `AS_PATH` (2), `NEXT_HOP` (3), `MULTI_EXIT_DISC` (4), `LOCAL_PREF` (5), `ATOMIC_AGGREGATE` (6), `AGGREGATOR` (7), `COMMUNITIES` (8), `ORIGINATOR_ID` (9), `CLUSTER_LIST` (10), `MP_REACH_NLRI` (14), `MP_UNREACH_NLRI` (15), `EXTENDED_COMMUNITIES` (16), `AS4_PATH` (17), `AS4_AGGREGATOR` (18), and `LARGE_COMMUNITIES` (32), plus EVPN NLRI decoding (`src/lib/bgp/evpn.ts`).
 
-| Code | Attribute | Code | Attribute |
-|------|-----------|------|-----------|
-| 1 | ORIGIN | 10 | CLUSTER_LIST |
-| 2 | AS_PATH | 14 | MP_REACH_NLRI |
-| 3 | NEXT_HOP | 15 | MP_UNREACH_NLRI |
-| 4 | MULTI_EXIT_DISC | 16 | EXTENDED_COMMUNITIES |
-| 5 | LOCAL_PREF | 17 | AS4_PATH |
-| 6 | ATOMIC_AGGREGATE | 18 | AS4_AGGREGATOR |
-| 7 | AGGREGATOR | 32 | LARGE_COMMUNITIES |
-| 8 | COMMUNITIES | | |
-| 9 | ORIGINATOR_ID | | |
+**Mid-session decoding for 4-byte AS and ADD-PATH (RFC 7911):**
+Because AS width and ADD-PATH Path Identifiers are negotiated in OPEN and absent from UPDATE headers, `UpdateDecoding` distinguishes "ruled out by OPEN" from "OPENs not captured" (`null`). When OPENs are missing, the parser infers the encoding structurally:
+1. If only one reading consumes the NLRI block cleanly, use it and attach a packet parse warning.
+2. If both readings fit but plain decoding fabricates multiple default routes (`0.0.0.0/0` from zero-padded Path IDs), decode as ADD-PATH with a warning.
+3. If neither criterion distinguishes them, fall back to plain decoding with a warning.
+4. If neither fits, surface the underlying prefix-length error.
 
-NLRI and withdrawn routes are expanded per prefix, including IPv6 prefixes carried
-in MP_REACH_NLRI / MP_UNREACH_NLRI.
-
-**ADD-PATH Path Identifiers (RFC 7911).** Whether each NLRI entry is preceded by a
-4-byte Path Identifier is settled in the OPEN and invisible in the UPDATE, so reading
-an UPDATE without the session is a guess — and a wrong guess is not a parse failure.
-The identifier's four bytes become a prefix length and an address, every fabricated
-length is legal, and the prefix-length guard never trips: measured on a capture with
-the OPENs removed, three announced prefixes decoded as fourteen, five of them
-0.0.0.0/0, with no warning.
-
-| Situation | Behaviour |
-|---|---|
-| Both OPENs captured | The negotiated answer, per direction and AFI/SAFI (`addPathDirections`). Nothing is guessed and nothing is said. |
-| OPENs missing, one reading fits | That reading, and a warning naming it — usually only one consumes the block exactly, the same test `asPathFits` applies to AS width. |
-| OPENs missing, both fit, plain invents default routes | Read as ADD-PATH, with a warning. A small Path Identifier is mostly zero bytes and a zero byte is a default route; one UPDATE does not carry several 0.0.0.0/0. |
-| OPENs missing, both fit, nothing to choose by | The plain reading, declared a guess. |
-| Neither reading fits | Neither is claimed; the prefix-length validation reports what is actually wrong. |
-
-The identifier is kept on the prefix rather than stepped over, because two paths to one
-prefix are two routes: it is shown on the packet detail's prefix chips and as a Path ID
-column in the route history, which appears only when the selected route carries one. A
-withdraw of one path otherwise reads as the prefix going away.
-
-`UpdateDecoding.addPath` is `ReadonlySet<string> | null`, mirroring `fourByteAs`, so
-"the OPENs ruled it out" and "the OPENs were not captured" are different values —
-collapsing them into an empty set is what made the mis-decode silent.
-
-Warnings raised while parsing an UPDATE are attached to the packet, alongside the
-marker and message-length warnings, and surface in the parser-warning banner.
+Path Identifiers are retained per prefix and displayed on packet detail chips and in the Route Analysis **Path ID** column.
 
 #### 2.1.8 Analysis Views
-- **Dashboard** (`/dashboard`): summary counts, severity-sorted alerts (§2.1.14),
-  neighbor table and a message timeline. Aggregations are computed in memory, so the
-  screen works even when DuckDB failed to initialize
-- **Message Explorer** (`/messages`): packet list, detail view, hex dump, filtering
-- **Neighbor Analysis** (`/neighbors`): sessions grouped by Router ID, capability and
-  session-event summaries, plus the capability diff (§2.1.10)
-- **Route Analysis** (`/routes`): per-prefix announce/withdraw history and flap count,
-  with the best-path attributes per announcement — AS_PATH, Next Hop, MED,
-  LOCAL_PREF and communities. Each of those columns appears only when the
-  selected route carries it, and ORIGIN only when it *differs* between
-  announcements, since a column of identical values costs width the others need
-- **SQL Console** (`/sql`): raw SQL against the DuckDB tables, with query templates
-- **Capture Builder** (`/build`): §2.1.12
-- **Manual** (`/manual`): §2.1.13, in English or Japanese
+- **Dashboard (`/dashboard`):** Summary counters, severity-sorted alerts (§2.1.14), neighbor table, and message timeline. Computed in memory so it stays functional without DuckDB.
+- **Message Explorer (`/messages`):** Filter bar, virtualized packet list, detail view, hex dump, and filtered `.pcap` export.
+- **Neighbor Analysis (`/neighbors`):** Sessions grouped by Router ID, session event summary, and Capability Diff (§2.1.10).
+- **Route Analysis (`/routes`):** Per-prefix announce/withdraw history, flap counts, AS_PATH analysis, and best-path attribute columns (shown only when present on the selected route; `ORIGIN` shown only when values differ).
+- **SQL Console (`/sql`):** Ad-hoc SQL queries against DuckDB WASM with schema sidebar and templates.
+- **Capture Builder (`/build`):** §2.1.12.
+- **User Manual (`/manual`):** §2.1.13.
+
+Screen state is synchronized with URL query parameters (`?filter=`, `?selected=`, `?frame=`, `?all=1`, `?router=`, `?peer=`, and route search/sort/mode).
 
 #### 2.1.9 Filtering
-Two modes over the same expression language:
-- **Simple**: field/operator/value rules built from dropdowns
-- **Advanced**: free-form expression with autocomplete
+Two UI modes (**Simple** rule builder and **Advanced** expression editor with autocomplete) share one grammar: `field (= | != | contains | not contains | < | <= | > | >=) value`, combined with `and`, `or`, `not`, and parentheses. Ordered operators apply to numeric fields only.
 
-Grammar: `field (= | != | contains | not contains) value`, combined with
-`and` / `or` / `not` and parentheses. The integer fields also take `<`, `<=`,
-`>`, `>=`. Fields are defined by `FILTER_FIELDS` in `src/lib/filter/parser.ts`.
-The expression is evaluated either in memory (`filter/parser.ts`) or compiled to
-SQL (`db/filter-to-sql.ts`) when DuckDB is available.
+Expressions parse once into an AST (`src/lib/filter/parser.ts`) and run either via DuckDB SQL (`src/lib/db/filter-to-sql.ts`) or in memory when DuckDB is unavailable. Optional numeric attributes (`med`, `local_pref`) are never coerced to `0`: an UPDATE lacking the attribute matches no comparison on that field in either backend.
 
-**An attribute that was not sent matches nothing.** `med` and `local_pref` are
-optional on an UPDATE, and absent is not zero: `med < 100` must not select every
-route in an eBGP capture, and `med = 0` must select only the routes deliberately
-made unattractive. The SQL side gets this from NULL failing every comparison;
-the in-memory side tests for the attribute before comparing. Both are pinned by
-tests, because this is exactly the kind of difference that would otherwise make
-a filter's answer depend on whether DuckDB happened to start.
-
-#### 2.1.10 Capability Diff
-
-On the Neighbor Analysis page (`/neighbors`), selecting a peer within a session shows a
-side-by-side diff of the two OPEN messages exchanged on that session
-(`CapabilityDiff` in `src/components/neighbor/CapabilityDiff.tsx`):
-
-- Non-capability fields (BGP version, My AS, Hold Time, BGP Identifier) are compared
-  first. Hold Time differences are marked informational, not an error, since only the
-  minimum is negotiated. A BGP Identifier collision (same Router ID on both sides) and
-  an internally inconsistent 4-byte/2-byte AS field are flagged as errors; version
-  mismatches are flagged as errors too.
-- Capabilities are compared as a three-state diff — advertised by both, only the local
-  side, or only the remote side — using an icon *and* text label so the states don't
-  rely on colour alone. Multiprotocol Extensions and ADD-PATH are compared per AFI/SAFI
-  pair rather than by capability code, so "both support Multiprotocol" doesn't hide one
-  side offering IPv4 unicast and the other IPv6 unicast. Repeated capability entries
-  within one OPEN are deduplicated.
-- Mismatches are listed before matches, since that's what an operator troubleshooting a
-  session is scanning for.
-- **ADD-PATH gets a result as well as a diff.** Comparing advertisements does not answer
-  the question for a capability that is directional and negotiated crosswise: identifiers
-  flow one way only if the sender advertised *send* and the receiver advertised *receive*.
-  Two routers both configured to send them advertise the same family, diff as a match, and
-  exchange no Path Identifiers at all. So an **ADD-PATH Result** section states the outcome
-  per direction and AFI/SAFI, naming which half of the exchange is missing when it is not
-  negotiated. It appears only when both OPENs were captured — half an exchange cannot
-  answer a crosswise question — and only when at least one side asked for ADD-PATH.
-  The negotiation itself lives in `addPathDirections` (`lib/bgp/session.ts`), which the
-  UPDATE decoder also calls, so the screen and the prefixes on it cannot disagree.
-- A missing OPEN on one or both sides is handled without breaking the page (one-sided
-  comparison notice, or an empty-state message when neither side has one).
+#### 2.1.10 Capability Diff (`src/components/neighbor/CapabilityDiff.tsx`)
+Selecting a router and then a session on `/neighbors` compares the two OPEN messages side by side:
+- Compares session header fields first (version mismatch, duplicate BGP Identifier, and inconsistent 2-byte/4-byte AS are errors; differing Hold Time is informational).
+- Compares capabilities as a three-state diff (both, local only, remote only) with both icon and text label, sorting mismatches before matches. Multiprotocol Extensions and ADD-PATH are compared per AFI/SAFI pair and deduplicated within each OPEN.
+- Renders an **ADD-PATH Result** section when both OPENs are present and at least one peer advertises ADD-PATH, reporting the crosswise send/receive outcome per direction and AFI/SAFI via `addPathDirections` (`src/lib/bgp/session.ts`).
+- Handles one-sided or missing OPENs gracefully with an informational notice.
 
 #### 2.1.11 Theming
+Light and dark themes following the system preference by default, with a header toggle cycling `light → dark → system` persisted in `localStorage` (`src/hooks/useTheme.ts`). Semantic CSS custom properties in `src/index.css` are mapped to Tailwind tokens in `tailwind.config.js`.
 
-Light and dark themes, following the system preference by default. The header
-toggle cycles light → dark → system (`useTheme` in `src/hooks/useTheme.ts`), and the
-choice is persisted in localStorage. Colours are defined once as CSS custom
-properties in `src/index.css` and consumed through the semantic Tailwind names in
-`tailwind.config.js`, so components never name a theme.
+#### 2.1.12 Capture Builder (`src/lib/build/`)
+Synthesizes valid `.pcap` files from a peer and step specification (`scenario.ts`, `bgp-encode.ts`, `frame.ts`, `presets.ts`) without requiring a loaded capture. UPDATE encoding (4-byte AS width, ADD-PATH Path Identifiers) is derived from the OPEN capabilities, TCP segment boundaries follow the configured MTU, and IPv4/TCP checksums and Ethernet minimum padding are computed cleanly (`tests/lib/build/checksums.test.ts`). Also used as a library by `testlab/scenarios.ts`.
 
-#### 2.1.12 Capture Builder
+#### 2.1.13 User Manual (`src/pages/ManualPage.tsx`)
+Embedded offline Help page outside `RequireCapture` so it is accessible before loading a capture.
 
-The one screen that runs in the other direction: describe a session and it writes the
-pcap. It needs no capture loaded, which is the state you are in when you come looking
-for one.
+- Authored in Markdown (`src/pages/manual/manual.md` and `manual.ja.md`) and converted to HTML at build time by `markdownPlugin` in `vite.config.ts` (`marked` is a devDependency only).
+- Headings (`h2`/`h3`) receive slug IDs (or explicit `{#id}` markers in Japanese) used to build the sidebar table of contents and support hash links such as `/manual#filters`. Both language manuals are verified by `tests/e2e/manual.e2e.ts` to publish the exact same ordered list of heading IDs.
+- Screenshots in `public/manual/` are shared across languages with localized captions and intrinsic dimensions injected at build time to prevent layout shifts with lazy loading.
 
-A scenario is two peers and a sequence of things that happen between them — the TCP
-handshake, the OPEN exchange, UPDATEs, a NOTIFICATION, a reset — compiled to frames by
-`lib/build/scenario.ts`. Two properties are derived from the scenario rather than asked
-for, because a capture that got them wrong is one no session could have produced: how
-UPDATEs are encoded (AS width and ADD-PATH Path Identifiers follow from the negotiated
-capabilities) and where TCP segment boundaries fall (messages sent in one step are
-packed into a byte stream and cut at the MSS).
-
-Output is a real capture, not one only this app can read: IPv4/TCP checksums are
-computed over the pseudo-header and short frames are padded to Ethernet's minimum, both
-verified in `tests/lib/build/checksums.test.ts`.
-
-The same thing is available as a library, which is the better route for fixtures in
-bulk — `testlab/scenarios.ts` uses it to build the fourteen captures behind
-`docs/troubleshooting-scenarios.md`.
-
-#### 2.1.13 User Manual
-
-A Help page inside the app rather than a link out of it, because the app's whole
-premise is that it works with nothing else available — a manual that needed the
-network would be missing exactly when the rest of the tool still worked.
-
-It sits outside `RequireCapture`: the reader most likely to want it has just
-arrived and has nothing loaded, and every gated screen would redirect that person
-to the upload page.
-
-The prose is Markdown (`src/pages/manual/manual.md`) converted to HTML by
-`markdownPlugin` in `vite.config.ts`, so `marked` runs during the build and no
-Markdown parser is shipped. The plugin also gives every `h2`/`h3` an id, which is
-what lets the page build its table of contents by reading its own output back —
-a section cannot be added to the prose and forgotten in the contents — and what
-makes `/manual#filters` land on the right section.
-
-**In English and Japanese.** `manual.ja.md` is the same document translated;
-both are converted at build time and the page holds both, so switching is
-instant and neither costs a request. The choice is remembered, and the opening
-language comes from the browser when there is nothing remembered.
-
-The two are kept in step by their **anchors**, which the Japanese headings name
-explicitly with a `{#id}` marker rather than having them derived. They have to
-be: the slug comes from the letters in the heading and a Japanese heading has
-none that the slugger keeps, so every id would come out empty — a blank contents
-list, and `/manual#filters` landing at the top of the page. Naming them by hand
-also means one link serves both languages, and an e2e test asserts the two
-manuals publish exactly the same set of ids, since a section added to one and
-forgotten in the other is the silent failure of any translated document.
-
-The screenshots are shared rather than re-shot: the app's own labels are English
-whichever manual you are reading, so a translated screenshot would show a screen
-that does not exist. The captions are translated, being prose.
-
-#### 2.1.14 Dashboard alert rules
-
-The alert panel is the first thing read on a capture, so what fires and what
-stays quiet is a specification rather than an implementation detail. All of it
-lives in `src/components/dashboard/alerts.ts` and is unit-tested in
-`tests/lib/dashboard/alerts.test.ts`.
-
-**One row per problem, not per packet.** A peer that retried a rejected OPEN
-forty times is one row saying forty. Rows are sorted by severity, then by the
-number of occurrences they stand for, then by recency — counting before recency
-so a peer that failed forty times outranks one that failed once a second later.
-
-**Two kinds of rule.** Most fire on something *present* in the capture: a
-message that arrived, a route that went away. Two fire on something *absent*,
-which is how a fault at the far end appears when the capture was taken on one
-router (see `troubleshooting-scenarios.md`, "Where the capture was taken") and
-is why captures of outright broken sessions were once summarised as healthy.
+#### 2.1.14 Dashboard Alert Rules (`src/components/dashboard/alerts.ts`)
+Alerts are grouped **one row per problem** (not per packet) and sorted by severity, occurrence count, and recency.
 
 | Rule | Severity | Fires when | Must stay quiet about |
-|------|----------|-----------|-----------------------|
-| NOTIFICATION | critical | Any NOTIFICATION; grouped per sender → receiver, code and subcode | — |
-| Session flapping | warning | ≥ 4 OPENs between one pair | A single establishment, and a re-establishment after a clean Cease |
-| Withdrawn burst | warning | ≥ 10 prefixes withdrawn inside 10s | Steady-state withdrawals spread over a long capture |
-| Route flapping | warning | A prefix withdrawn at least once, per announcing peer; worst 5 plus a summary row | A widely announced route that never went away |
-| AS_PATH changed | warning | More than one distinct AS_PATH for a prefix; worst 5 plus a summary row | Prepends that never varied |
-| One direction | critical | A peering with TCP frames in only one direction | Anything with both directions present |
-| Accepted, no BGP | critical | A SYN-ACK was seen and only one end sent BGP | A refused connection — `computeTransportAlerts` owns that, and a second explanation of the same packets is a worse one |
-| Graceful restart | warning, critical when a promise was broken | A teardown with no NOTIFICATION followed by both ends re-OPENing with the Graceful Restart capability; reports the negotiated Restart Time, whether forwarding state was preserved, and the measured re-establishment→End-of-RIB convergence | A flap between peers that never advertised the capability, and a teardown a NOTIFICATION explained — a speaker that sent a Cease was leaving, not restarting |
-| Silent teardown | critical | A connection that carried BGP *in both directions* ends in RST or FIN with no NOTIFICATION on it; grouped per peering and teardown kind | Every teardown that a NOTIFICATION already explains, and a session that never established — `s14-open-unanswered` resets three connections and belongs to "Accepted, no BGP" |
+|------|----------|------------|-----------------------|
+| NOTIFICATION | critical | Any NOTIFICATION, grouped by sender → receiver, code, and subcode | — |
+| Session flapping | warning | ≥ 4 OPENs between a peer pair | Single establishment; re-establishment after clean Cease; peerings fully accounted for by Graceful Restart |
+| Withdrawn burst | warning | ≥ 10 prefixes withdrawn within 10s | Steady-state withdrawals spread over time |
+| Route flapping | warning | Prefix withdrawn at least once per announcing peer (top 5 + summary row) | Stable routes never withdrawn |
+| AS_PATH changed | warning | Multiple distinct AS_PATHs for a prefix (top 5 + summary row) | Constant AS prepends |
+| One direction | critical | Peering has TCP frames in only one direction | Bidirectional captures |
+| Accepted, no BGP | critical | TCP SYN-ACK observed, but only one end sent BGP | Refused connections (handled by `computeTransportAlerts`) |
+| Graceful restart | warning (critical if broken) | Teardown without NOTIFICATION followed by both peers re-OPENing with Graceful Restart; reports Restart Time, forwarding-state preservation, and convergence to End-of-RIB. Escalates to critical if forwarding state was not preserved or convergence exceeded Restart Time | Flaps without GR capability; teardowns explained by a NOTIFICATION |
+| Silent teardown | critical | A TCP connection that carried BGP **in both directions** ends in RST or FIN with no NOTIFICATION; grouped by `(peering, kind)` | Teardowns explained by a NOTIFICATION (`s3-holdtimer-flap`), sessions that never established (`s14-open-unanswered`), and teardowns accounted for by Graceful Restart (`s8-graceful-restart`) |
 
-`computeTransportAlerts` is separate and runs only when a capture holds no BGP
-at all: with nothing above TCP to report, the interesting question is what
-answers the SYN.
+When a capture contains **no BGP messages at all**, `computeTransportAlerts` runs instead and classifies TCP port 179 SYNs (refused by RST vs. unanswered).
 
-##### Two rules that deliberately silence others
-
-The panel prefers rules that do not suppress each other — "why is this alert not
-firing" with no answer short of reading both is a bad place to end up. Two
-exceptions are worth the cost, and both are cases where the quieter rule would
-be actively *wrong* rather than merely redundant.
-
-**Graceful restart replaces the flapping row** for a peering whose
-re-establishments it accounts for. "Session flapping detected" is not a
-second opinion there, it is the confusion S8 exists to end: a reload that kept
-forwarding and a crash loop that did not read identically. The restart row
-carries its own count, so a router restarting thirty times is still visible as
-thirty — the signal moves rather than disappearing.
-
-**Graceful restart replaces the silent-teardown row** for the reset it came back
-from. The teardown rule's premise is that *nothing* explained the reset; a
-restart is an explanation, in the same way a NOTIFICATION is. Leaving both would
-put a row pointing at firewalls next to a row saying the router came back with
-forwarding intact.
-
-Both rules read the same connection list from `connectionsByPeering`, which is
-what makes the interlock exact: they cannot disagree about where one connection
-ended and the next began.
-
-##### The rule, in detail
-
-S11 in `troubleshooting-scenarios.md` is a session that drops twice with nothing
-at the BGP layer recording it. The evidence was in the capture — an `[AR]` and a
-`[F]` under **All Packets** — but the dashboard said only "Session flapping
-detected" and marked the pair `✓ OK`.
-
-Four decisions the implementation has to get right, each of which the corpus
-already argues for:
-
-1. **Both shapes count.** A firewall that times out a session closes it with FIN
-   as often as it resets it. A BGP speaker that meant to go away would have sent
-   Cease first, so a FIN on its own is the same missing explanation as an RST.
-   `s11-silent-teardown` holds one of each precisely so a rule that only looked
-   for RST fails a test rather than shipping.
-2. **Scope is a connection, not a peer pair.** Every other rule here keys on the
-   pair, which cannot work: one pair holds several connections that ended
-   differently. `s11-silent-teardown` is `SYN RST · SYN FIN FIN · SYN`, and
-   `s3-holdtimer-flap` is three connections that each ended in RST *after* a
-   NOTIFICATION explained it.
-3. **Connections are delimited by SYN, not by the four-tuple.** Both captures
-   above hold three connections and exactly one four-tuple, because the scenario
-   builder reuses the ephemeral port — and so do real captures, over a long
-   enough window. A new SYN starts a new connection; the teardown that ends a
-   segment belongs to that segment.
-
-4. **Both ends had to have spoken.** A connection where only one side ever sent
-   BGP is not a session that came down; it is one that never came up.
-   `s14-open-unanswered` is exactly that — an OPEN out, nothing back, and our
-   own side resetting three times — and it already has a row, "TCP connects but
-   the peer sends no BGP", which says the useful thing. Firing here as well
-   would put two criticals on the same three connections, and the rule above
-   for "Accepted, no BGP" already states the principle: *a second explanation of
-   the same packets is a worse one*. This is the one condition the rule adds
-   beyond what the S11 gap asked for, and `s14` is the capture that asks for it.
-
-Put together: split each peering's TCP frames at every bare SYN, and for each
-segment that carried BGP in both directions, fire when it ends in RST or FIN and
-no NOTIFICATION appears within it. `s3-holdtimer-flap` and `s14-open-unanswered`
-are the false positives to check against — both must stay silent.
-
-A SYN-ACK does not open a segment, only a SYN without ACK does; otherwise every
-handshake would be split down its middle and the teardown would be attributed to
-a segment that began with the answer to its own SYN. Within a segment RST
-outranks FIN, so a connection that was closing politely and then got reset is
-reported as the reset, and only the first FIN counts — a graceful close carries
-one from each end and is one teardown, not two.
-
-`s8-graceful-restart` fires this rule too, since a GR restart is also a teardown
-without a NOTIFICATION. That is correct as far as this rule goes and is left
-alone deliberately: telling a graceful restart apart from a crash is S8's
-question, and the row it should get instead is specified when that rule lands.
-
-##### Grouping: one row per peering and teardown kind
-
-`s11-silent-teardown` drops twice, once by RST and once by FIN, and gets **two
-rows** — not one row counting two, and not one row per teardown.
-
-The key is (peering, kind), counted within it. That is the same shape the
-NOTIFICATION rule already uses, which groups per sender → receiver, error code
-and subcode: split by the *kind* of failure, count within the kind. It holds up
-on the capture that decides it, a session dying every ten minutes for six hours:
-at most two rows, each carrying its own count, rather than thirty-six rows.
-
-Splitting by kind is worth the second row because the two shapes point
-somewhere different. An RST is something actively rejecting the connection — a
-middlebox, a stack with no socket left. A FIN is something deciding the session
-was finished and closing it politely, which is what an idle timeout looks like.
-The next thing to check differs, so merging them into "dropped twice" would cost
-the reader the more useful half.
-
-##### It will sit next to "Session flapping detected", and that is fine
-
-On `s11-silent-teardown` the panel will show a critical teardown row above the
-existing flapping warning. They are not duplicates: flapping counts how many
-times the session came *up*, the teardown row says how it went *down* and that
-nothing explained it. Symptom and cause, in that order once sorted.
-
-Suppressing one from the other was considered and rejected. Rules that silence
-each other are the kind of thing that later produces "why is this alert not
-firing" with no answer short of reading both.
-
-##### `View →` has to reach the frame it is talking about
-
-The packet list shows BGP only until it is switched to **All Packets**, and
-`showAllPackets` is component state that no URL can set — while `filter` and
-`selected` are both in the query string. So an alert that says "there was an
-RST" would today land the reader on a list that cannot contain it.
-
-The implementation therefore also puts that toggle in the URL as `?all=1`, and
-this rule's rows set it. Without that the alert names evidence it then refuses
-to show, which is half of the S11 gap left in place — the complaint there was
-never that the reset is unfindable, only that nothing points at it.
-
-Addressing the frame needs a second parameter. `?selected=` indexes the *BGP*
-packet array, and an RST is not in it, so these rows travel with `?frame=`,
-which names a frame by its index in the capture and is resolved against
-whatever list is on screen. Both are honoured once, so the reader's own clicks
-own the selection afterwards.
+**Key rule details:**
+- **Connection delimiting (`connectionsByPeering`):** TCP frames for a peering are split at every bare `SYN` (excluding `SYN-ACK`) rather than by 4-tuple, because ephemeral ports can be reused across reconnects. Within a connection, `RST` outranks `FIN`, and only the first `FIN` counts.
+- **Graceful restart interlock:** Graceful Restart deliberately suppresses both **Session flapping** and **Silent teardown** for connections it accounts for, using the shared `connectionsByPeering` segmentation so the rules cannot disagree.
+- **Deep-linking to TCP frames:** Silent teardown alerts link to `/messages?all=1&frame=<n>` so **View →** switches the list to **All Packets** and selects the exact RST/FIN frame.
 
 ### 2.2 Future Features
 
 - Multiple captures loaded side by side
-
-IPv6 transport and pcap export of a filtered result set were both on this list and
-are now implemented — `lib/pcap/ipv6.ts` and `lib/pcap/writer.ts` respectively.
-`docs/troubleshooting-scenarios.md` tracks what the tool still cannot answer, which
-is a more useful backlog than this section: a one-sided capture reported as healthy,
-a post-establishment TCP reset that never reaches the dashboard, and best-path
-attributes that stop at AS_PATH and Next Hop.
-
-Screen state is already shareable through the URL query string: the Message Explorer
-keeps `?filter=` and `?selected=`, Neighbor Analysis `?router=` / `?peer=`, and Route
-Analysis its search term, selection, sort and match direction.
+- Filter field for TCP flags (to narrow **All Packets** to RST/FIN frames) and `hold_time`
+- Formatted timestamp display in the SQL Console results grid (currently renders raw epoch milliseconds)
 
 ---
 
@@ -512,50 +152,24 @@ Analysis its search term, selection, sort and match direction.
 
 ### 3.1 Performance
 
-Targets, in the sense of "if any of these stops holding, something regressed":
-
-| Measure | Target |
-|---------|--------|
-| DuckDB WASM ready | < 3s |
-| Parse a 1000-packet capture | < 2s |
+| Metric | Target |
+|--------|--------|
+| DuckDB WASM initialization | < 3s |
+| Parse 1,000-packet capture | < 2s |
 | Filter response | < 500ms |
-| SQL query response (ordinary query) | < 1s |
-| UI | 60fps |
+| Ordinary SQL query | < 1s |
+| UI rendering | 60fps |
 
-What buys them: the packet list is virtualized; each screen is a `React.lazy`
-chunk, so the upload screen loads only its own JS; DuckDB is a dynamic import and
-is not fetched until it is initialized; aggregations are `useMemo`d per capture and
-SQL filtering is debounced; and CIDR matching is answered from indexed bit-string
-columns (`prefix_bits` and friends) with `LIKE 'bits%'`.
-
-Parsing still runs on the main thread — moving it to a Web Worker is the obvious
-next lever and has not been needed.
+Key techniques: virtualized packet list (`useVirtualRows`), route-level `React.lazy` code splitting, dynamic DuckDB import, `useMemo` aggregations, debounced SQL filtering, and indexed bit-string columns (`prefix_bits`) for CIDR matching. Parsing currently runs on the main thread and can move to a Web Worker if needed.
 
 ### 3.2 Browser Support
-- Chrome/Edge (latest)
-- Firefox (latest)
-- Safari (latest)
+Latest Chrome/Edge, Firefox, and Safari.
 
-### 3.3 Security
-- All packet processing is client-side only; the pcap file is never uploaded
-- The loaded file is stored in IndexedDB on the user's machine and is cleared by
-  "New File"
-- No third-party requests. The DuckDB WASM runtime is self-hosted: `db/database.ts`
-  imports the `.wasm` modules and worker scripts with Vite's `?url` suffix, so they
-  are emitted into `dist/assets/` and served from the app's own origin
-- **Self-hosting the runtime is not the whole of it.** DuckDB fetches its
-  *extensions* from `extensions.duckdb.org` the first time one is used, so anything
-  outside the core engine is unavailable here by construction. This was not
-  theoretical: the loader inserted rows through `read_json_auto`, the JSON reader is
-  an extension, and behind the CSP that download failed — so every capture failed to
-  load and the SQL console was dead on the deployed site, while development looked
-  fine because the dev server ships no policy and the download succeeded.
-  `db/loader.ts` now inserts through Arrow IPC, which is core to the WASM build,
-  with the Arrow buffers laid out by hand because Arrow's builders use
-  `new Function` and `script-src` forbids it; `tests/e2e/offline.e2e.ts` asserts
-  that nothing leaves the origin and nothing is compiled from a string
-- Content Security Policy is injected into the built `index.html` by the `inject-csp`
-  plugin in `vite.config.ts`:
+### 3.3 Security & Privacy
+- **Local-only processing:** Capture files never leave the browser and are stored solely in IndexedDB until cleared with **New File**.
+- **Zero third-party requests:** DuckDB WASM binaries (only `mvp` and `eh` bundles; `coi` is omitted because GitHub Pages cannot send COOP/COEP headers) and workers are self-hosted via Vite `?url` imports into `dist/assets/`.
+- **CSP-compatible database loading:** Because DuckDB downloads extensions from `extensions.duckdb.org` on demand and `script-src` forbids `new Function`, `src/lib/db/loader.ts` loads rows via built-in Arrow IPC with hand-assembled Arrow buffers. `tests/e2e/offline.e2e.ts` enforces both zero off-origin requests and zero `eval`/`Function` usage.
+- **Production CSP:** Injected into built `index.html` by `cspPlugin` in `vite.config.ts` (disabled in dev for React Fast Refresh):
 
   ```
   default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:;
@@ -564,66 +178,22 @@ next lever and has not been needed.
   object-src 'none'; base-uri 'self'; form-action 'none'
   ```
 
-  Notes:
-  - `wasm-unsafe-eval` is required to compile the DuckDB WebAssembly module
-  - `style-src 'unsafe-inline'` is required by inline `style` attributes used for
-    resizable panes and timeline positioning
-  - The policy is applied to the production build only. In dev, `@vitejs/plugin-react`
-    injects the Fast Refresh preamble as an inline script, which the policy would block
-  - `frame-ancestors` is omitted because browsers ignore it in a `<meta>` policy;
-    clickjacking protection needs a real response header, which GitHub Pages
-    cannot set
-
-#### Bundle selection
-
-Only the `mvp` and `eh` DuckDB bundles are shipped. The `coi` bundle is omitted
-because it requires cross-origin isolation (COOP/COEP response headers) that GitHub
-Pages cannot provide. Self-hosting adds roughly 74 MB to `dist/` (two `.wasm` files);
-a browser downloads only the one bundle it selects.
+  `wasm-unsafe-eval` is required for WebAssembly compilation; `style-src 'unsafe-inline'` is used by resizable pane and timeline inline styles; `frame-ancestors` is omitted because browsers ignore it in `<meta>` tags.
 
 ### 3.4 Accessibility
-
-Implemented:
-
-- Keyboard: Tab moves focus; Enter presses a button, selects a row, or accepts an
-  autocomplete suggestion; arrow keys move through the packet list and the
-  suggestion list, scrolling a selection into view even when the row is outside the
-  rendered window; left/right nudge a pane divider that has focus
-- The packet list is exposed as a grid, with `aria-rowcount` reporting the total
-  packet count rather than the virtualized slice, plus `aria-rowindex`,
-  `aria-selected` and `aria-activedescendant`
-- Icon-only buttons (theme toggle, GitHub link) carry an `aria-label`, and the
-  timeline SVG has `role="img"` and a description
-- State is never carried by colour alone — the capability diff pairs every icon
-  with a text label
-
-Targets not yet met:
-
-- `aria-label` coverage on interactive elements outside the packet list
-- `scope` attributes on table headers
-- A live region for notifications
-- WCAG AA contrast: 4.5:1 for text, 3:1 for UI elements
+- **Implemented:** Full keyboard navigation (Tab, Enter, arrow keys with virtualized scroll-into-view, pane-divider nudging), ARIA grid semantics on the packet list (`aria-rowcount`, `aria-rowindex`, `aria-selected`, `aria-activedescendant`), `aria-label` on icon-only controls, `role="img"` on the timeline SVG, and non-color-only status indicators.
+- **Remaining targets:** Broader `aria-label` coverage outside the packet list, `scope` attributes on table headers, ARIA live region for notifications, and WCAG AA contrast verification.
 
 ### 3.5 Error Handling
+No failure is allowed to silently display empty data:
 
-Every failure has a place to appear and a way out. Nothing is allowed to fail
-silently, because a screen that shows an empty result for a broken reason is worse
-than one that shows an error.
-
-| Failure | Where it appears | Recovery |
-|---------|------------------|----------|
-| Unsupported file type or size | Message under the drop zone | Choose another file |
-| Partial parse failure | Warning banner under the header; parsing continues | What could be read is analysed |
-| DuckDB initialization failure | Notice on the SQL console, banner on load | Filtering falls back to in-memory; other screens unaffected |
-| SQL error | DuckDB's message in the results panel, not an empty result set | Fix the query |
-| Render exception | Error boundary screen | Reset, returning to the upload screen |
-
-Messages are written for the person reading them, not the code raising them:
-
-```
-✗ PCAP_MAGIC_MISMATCH: 0xd4c3b2a1 expected, got 0x00000000
-✓ This doesn't look like a valid pcap file. Please check the file format.
-```
+| Failure | User feedback | Recovery |
+|---------|---------------|----------|
+| Invalid file type or size | Inline error under drop zone | Select another file |
+| Partial parse failure | Warning banner under header; valid frames still load | Inspect warnings |
+| DuckDB init failure | Notice in SQL Console and load banner | Filtering falls back to in-memory |
+| SQL query error | DuckDB error message in results panel | Edit query |
+| Uncaught render error | Error boundary screen | Reset to upload screen |
 
 ---
 
@@ -633,439 +203,90 @@ Messages are written for the person reading them, not the code raising them:
 
 | Layer | Technology |
 |-------|------------|
-| Framework | React 18 |
-| Language | TypeScript |
-| Build Tool | Vite 6 |
-| Package Manager / Runtime | Bun |
+| Framework / Language | React 18, TypeScript |
+| Build / Runtime | Vite 6, Bun |
 | Routing | React Router v7 (`BrowserRouter`, basename `/bgpshark`) |
-| Styling | Tailwind CSS over CSS custom properties (light / dark themes) |
-| State Management | React Context (`AppContext`) over the `useBgpAnalyzer` hook |
-| Query Engine | DuckDB WASM (in-browser OLAP) |
-| Persistence | IndexedDB (loaded pcap file) |
-| Testing | `bun test` for `tests/lib` (+ happy-dom, Testing Library), Playwright for `tests/e2e` |
-| Deployment | GitHub Actions → GitHub Pages |
+| Styling | Tailwind CSS over semantic CSS custom properties |
+| State Management | React Context (`AppContext`) over `useBgpAnalyzer` |
+| Query Engine | DuckDB WASM (in-browser OLAP, Arrow IPC ingestion) |
+| Persistence | IndexedDB (raw capture file) |
+| Testing | `bun test` (`tests/lib`, happy-dom, Testing Library), Playwright (`tests/e2e`) |
+| Deployment | GitHub Actions → GitHub Pages (with `404.html` SPA fallback) |
 
 ### 4.2 Directory Structure
 
-```
-bgpshark/
-├── public/
-│   ├── favicon.svg
-│   └── sample.pcapng            # The "Load sample" capture, also an e2e fixture
-├── CLAUDE.md                    # Orientation for an agent starting a session
-├── docs/
-│   ├── design.md                # This document
-│   ├── troubleshooting-scenarios.md  # Fourteen BGP faults vs. what the tool says
-│   ├── design-duckdb-wasm.md    # Why DuckDB, and how it diverged from the proposal
-│   └── images/
-├── src/
-│   ├── App.tsx                  # Router and global drop overlay
-│   ├── main.tsx
-│   ├── index.css                # Theme custom properties + base styles
-│   ├── context/
-│   │   └── AppContext.tsx       # Global app state provider
-│   ├── pages/
-│   │   ├── FileUploadPage.tsx   # /
-│   │   ├── DashboardPage.tsx    # /dashboard
-│   │   ├── MessagesPage.tsx     # /messages
-│   │   ├── NeighborsPage.tsx    # /neighbors
-│   │   ├── RoutesPage.tsx       # /routes
-│   │   ├── SqlConsolePage.tsx   # /sql
-│   │   ├── BuilderPage.tsx      # /build — describe a session, get a pcap
-│   │   ├── ManualPage.tsx       # /manual — renders the Markdown below
-│   │   └── manual/manual.md     # The user manual, converted at build time
-│   ├── components/
-│   │   ├── builder/             # ScenarioEditor + its editing model
-│   │   ├── common/              # FileDropzone, PacketList, HexDump, QueryInput, ...
-│   │   ├── dashboard/           # SummaryCards, AlertList, NeighborSummaryTable, MessageTimeline
-│   │   ├── layout/              # AppHeader, ThemeToggle
-│   │   ├── message/             # PacketDetail + per-message-type views
-│   │   └── neighbor/            # CapabilityDiff
-│   ├── hooks/
-│   │   ├── useBgpAnalyzer.ts    # Load → parse → DuckDB → state
-│   │   ├── useFileDropzone.ts
-│   │   ├── useFilter.ts
-│   │   ├── useMediaQuery.ts     # Compact-layout detection
-│   │   ├── useSplitPane.ts      # Draggable two-pane divider
-│   │   ├── useVirtualRows.ts    # Row virtualization for long lists
-│   │   └── useTheme.ts          # Light / dark / system preference
-│   ├── lib/
-│   │   ├── pcap/
-│   │   │   ├── parser.ts        # libpcap parser
-│   │   │   ├── pcapng-parser.ts # pcapng parser
-│   │   │   ├── bgp-detect.ts    # BGP on non-standard ports, by marker
-│   │   │   ├── ipv6.ts          # IPv6 header walking and RFC 5952 formatting
-│   │   │   ├── writer.ts        # Frames → pcap, for filtered export
-│   │   │   ├── reader.ts        # Binary reading utilities
-│   │   │   └── types.ts
-│   │   ├── bgp/
-│   │   │   ├── parser.ts        # BGP message dispatch
-│   │   │   ├── open.ts          # OPEN + capability parsing
-│   │   │   ├── update.ts        # UPDATE + path attribute parsing
-│   │   │   ├── notification.ts  # NOTIFICATION parsing
-│   │   │   ├── evpn.ts          # EVPN NLRI (RFC 7432)
-│   │   │   ├── extended-communities.ts
-│   │   │   ├── errors.ts        # Error Code/Subcode definitions and hints
-│   │   │   ├── neighbor.ts      # Neighbor/session aggregation
-│   │   │   ├── session.ts       # Negotiated capabilities per session
-│   │   │   ├── session-events.ts
-│   │   │   ├── prefix-stats.ts  # Per-prefix history and flap counting
-│   │   │   ├── as-path-display.ts
-│   │   │   ├── constants.ts     # AFI/SAFI names
-│   │   │   └── types.ts
-│   │   ├── db/
-│   │   │   ├── database.ts      # DuckDB WASM lifecycle
-│   │   │   ├── schema.ts        # Table definitions
-│   │   │   ├── loader.ts        # BgpPacket[] → tables
-│   │   │   ├── queries.ts       # Query API + result mapping
-│   │   │   └── filter-to-sql.ts # Filter AST → SQL
-│   │   ├── filter/
-│   │   │   └── parser.ts        # Filter lexer/parser/evaluator
-│   │   ├── net/
-│   │   │   └── prefix.ts        # Prefix parsing, bit keys, containment
-│   │   ├── build/
-│   │   │   ├── bytes.ts         # Byte writer, address encoding, checksums
-│   │   │   ├── bgp-encode.ts    # BGP message encoders (mirror of lib/bgp)
-│   │   │   ├── frame.ts         # TCP / IPv4 / IPv6 / Ethernet / SLL framing
-│   │   │   ├── scenario.ts      # Described session → pcap frames
-│   │   │   └── presets.ts       # Ready-made failure scenarios
-│   │   ├── file-constraints.ts  # Accepted extensions and size limit
-│   │   ├── packet-columns.ts    # What the packet list's Info column shows
-│   │   ├── format-time.ts       # One timestamp format, used by every screen
-│   │   ├── range.ts
-│   │   └── storage.ts           # IndexedDB persistence
-├── tests/
-│   ├── lib/pcap/                # parser, reader
-│   ├── lib/bgp/                 # parser, neighbor, session events, EVPN
-│   ├── lib/build/               # encoder round trips, checksum verification
-│   ├── lib/db/                  # schema splitting, filter → SQL
-│   ├── lib/dashboard/           # alert grouping and thresholds
-│   ├── lib/filter/              # filter expressions
-│   ├── lib/net/                 # prefix arithmetic
-│   ├── e2e/                     # Playwright specs (*.e2e.ts)
-│   └── bgp.pcapng               # Test fixture
-├── testlab/
-│   ├── topology.clab.yml        # ContainerLab BGP topology for capture generation
-│   └── scenarios.ts             # Fourteen fault captures, built from lib/build
-├── .github/
-│   └── workflows/
-│       ├── ci.yml               # Pull request checks (lint, unit, build, e2e)
-│       └── deploy.yml           # GitHub Pages deployment
-├── index.html
-├── package.json
-├── tsconfig.json
-├── playwright.config.ts
-├── flake.nix                    # Nix dev shell (Bun, Node, Playwright browsers)
-├── vite.config.ts
-└── tailwind.config.js
-```
+| Directory | Responsibility |
+|-----------|----------------|
+| `public/` | Static assets (`favicon.svg`, `sample.pcapng`, `THIRD-PARTY-LICENSES.txt`, `manual/*.png`) |
+| `docs/` | Technical design, DuckDB ADR, troubleshooting scenario assessment |
+| `src/pages/` | Route-level pages and Markdown sources for the user manual (`manual/`) |
+| `src/components/` | Feature UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`) |
+| `src/hooks/` | State, filtering, virtualization, theming, split pane, and file drop hooks |
+| `src/lib/pcap/` | libpcap/pcapng parsers, IPv6 walking, BGP marker detection, pcap writer |
+| `src/lib/bgp/` | Message & path attribute parsers, EVPN, error hints, hold-timer, route-refresh, neighbor & prefix stats |
+| `src/lib/build/` | BGP encoders, TCP/IP/Ethernet framing, scenario compiler, presets |
+| `src/lib/db/` | DuckDB lifecycle, schema, Arrow IPC loader, query API, filter-to-SQL compiler |
+| `src/lib/filter/` | Filter expression lexer, parser, and in-memory evaluator |
+| `src/lib/net/` | Prefix parsing, bit keys, and CIDR containment |
+| `tests/lib/` | Unit tests mirroring `src/lib/` and dashboard alerts |
+| `tests/e2e/` | Playwright end-to-end specs (`*.e2e.ts`) |
+| `testlab/` | ContainerLab topology, fault scenario generator (`scenarios.ts`), screenshot generator (`screenshots.ts`) |
 
 ### 4.3 Data Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  User                                                           │
-└─────────────────────────────────────────────────────────────────┘
-        │ Drop pcap file (anywhere in the app)
-        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  useFileDropzone / FileDropzone                                 │
-│  - Get binary via File API                                      │
-│  - Read as ArrayBuffer                                          │
-└─────────────────────────────────────────────────────────────────┘
+User drops/selects file
         │ ArrayBuffer
         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  useBgpAnalyzer.processBuffer                                   │
-│  - isPcapng() → pcapng-parser.ts / parser.ts                    │
-│  - Parse headers, sequentially parse packets                    │
-│  - Strip Ethernet (or SLL) → VLAN/QinQ → IPv4 or IPv6 → TCP     │
-│  - Split into BGP packets (port 179, or by marker) and all IP   │
-└─────────────────────────────────────────────────────────────────┘
-        │ GenericPacket[]
-        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  bgp/parser.ts                                                  │
-│  - Validate BGP Marker                                          │
-│  - Determine Message Type                                       │
-│  - Dispatch to type-specific parsers (open/update/notification) │
-│  - Multiple messages per TCP segment                            │
-└─────────────────────────────────────────────────────────────────┘
-        │ BgpPacket[]
+useBgpAnalyzer.processBuffer
+  - pcap / pcapng parser (Ethernet/SLL → VLAN/QinQ → IPv4/IPv6 → TCP)
+  - TCP segment reassembly & BGP message dispatch (bgp/parser.ts)
+        │ BgpPacket[] + GenericPacket[]
         ├──────────────────────────────┐
         ▼                              ▼
-┌──────────────────────────┐  ┌────────────────────────────────────┐
-│  AppContext (React)      │  │  db/loader.ts → DuckDB WASM        │
-│  - packets: BgpPacket[]  │  │  - packets / messages / nlri / ... │
-│  - allPackets            │  │                                    │
-│  - selectedPacketIndex   │  │  storage.ts → IndexedDB            │
-└──────────────────────────┘  │  - raw file for reload restore     │
-        │                     └────────────────────────────────────┘
+AppContext (React)             db/loader.ts → DuckDB WASM (Arrow IPC)
+  - packets, allPackets        storage.ts   → IndexedDB (raw file)
         │                              │
         ▼                              ▼
-┌───────────────────────┬─────────────────────────────────────────┐
-│  Pages / Components   │  db/queries.ts                          │
-│  - PacketList         │  - getPackets(filter)                   │
-│  - PacketDetail       │  - executeRawSql (SQL console)          │
-│  - HexDump            │  - filter-to-sql.ts for filter → SQL    │
-└───────────────────────┴─────────────────────────────────────────┘
+Pages & Components             db/queries.ts
+  - Dashboard, Messages,         - getMatchingFrameIndexes(filter)
+    Neighbors, Routes, SQL       - executeRawSql(sql)
 ```
 
-If DuckDB WASM fails to initialize, the app stays usable: filtering falls back to
-in-memory evaluation in `filter/parser.ts` and only the SQL console is unavailable.
+If DuckDB WASM fails to initialize, filtering automatically falls back to `src/lib/filter/parser.ts` and all screens except the SQL Console remain usable.
 
 #### DuckDB's role is intentionally narrow
 
-`db/queries.ts` exposes exactly two entry points: `getMatchingFrameIndexes`
-(SQL-accelerated filtering, called from `useFilter.ts`) and `executeRawSql` (the SQL
-console, called from `SqlConsolePage.tsx`). Earlier revisions also had DuckDB-backed
-queries for packet counts, single-packet lookup, and neighbor/AS-path/prefix
-statistics, but nothing outside `src/lib/db/` ever called them and they were removed.
-Neighbor Analysis and Route Analysis compute their aggregations in memory with
-`useMemo` over the already-parsed `BgpPacket[]` instead of querying DuckDB, which is
-what keeps those screens usable when DuckDB fails to initialize.
+`src/lib/db/queries.ts` exposes only two entry points: `getMatchingFrameIndexes` (SQL-accelerated filtering) and `executeRawSql` (SQL Console).
 
-**DuckDB selects, it does not reconstitute.** `getMatchingFrameIndexes` returns frame
-indexes and nothing else; the caller resolves them against the `BgpPacket[]` it
-already holds. The tables are a flattened projection built for querying and cannot
-represent everything the parser produces — the `capabilities` table has columns for a
-single AFI/SAFI pair and one AS number, which cannot hold ADD-PATH's per-family list,
-Graceful Restart's forwarding state, or Extended Next Hop's entries, and
-`raw_data_base64` is not a substitute for the parsed structure.
-
-An earlier `getPackets` rebuilt whole `BgpPacket` objects from those rows. It cast
-every capability to `MULTIPROTOCOL | FOUR_OCTET_AS`, so any other capability came back
-with its list missing, and the OPEN detail view threw as soon as a filter was applied
-— visible only under a filter, because the unfiltered path used the parsed objects.
-Keeping frame indexes as the only thing crossing this boundary makes that class of
-loss structurally impossible rather than something each new field has to remember.
-
-### 4.4 Key Type Definitions
-
-Authoritative definitions live in `src/lib/pcap/types.ts` and `src/lib/bgp/types.ts`.
-The central shapes:
-
-```typescript
-// bgp/types.ts
-type BgpMessageTypeName =
-  | 'OPEN' | 'UPDATE' | 'NOTIFICATION' | 'KEEPALIVE' | 'ROUTE_REFRESH';
-
-interface BgpPacket {
-  frameIndex: number;      // 1-based index in the pcap file
-  timestamp: Date;
-  srcIp: string;
-  dstIp: string;
-  srcPort: number;
-  dstPort: number;
-  messages: BgpMessage[];  // One TCP segment may carry several BGP messages
-  rawData: Uint8Array;
-  parseWarnings: string[];
-}
-
-interface BgpOpenMessage {
-  type: 'OPEN';
-  version: number;
-  myAs: number;            // 2-byte AS field on the wire
-  holdTime: number;
-  bgpIdentifier: string;   // Router ID in dotted-decimal
-  optParamLength: number;
-  capabilities: BgpCapability[];
-  fourByteAs?: number;     // From the 4-byte AS capability, when present
-}
-
-interface BgpNotificationMessage {
-  type: 'NOTIFICATION';
-  errorCode: number;
-  errorSubcode: number;
-  errorCodeName: string;
-  errorSubcodeName: string;
-  data: Uint8Array;
-  hint: string;            // Troubleshooting hint from errors.ts
-}
-```
-
-`frameIndex` is the join key between the in-memory `BgpPacket[]` and the DuckDB
-`packets` table, so query results can be mapped back to the parsed objects.
-
-### 4.5 Pcap Format Specification
-
-#### Global Header (24 bytes)
-| Offset | Length | Field |
-|--------|--------|-------|
-| 0 | 4 | Magic Number (0xa1b2c3d4 or 0xd4c3b2a1) |
-| 4 | 2 | Version Major |
-| 6 | 2 | Version Minor |
-| 8 | 4 | Reserved1 (thiszone) |
-| 12 | 4 | Reserved2 (sigfigs) |
-| 16 | 4 | SnapLen |
-| 20 | 4 | Network (Link-Layer Type) |
-
-#### Packet Header (16 bytes)
-| Offset | Length | Field |
-|--------|--------|-------|
-| 0 | 4 | Timestamp (seconds) |
-| 4 | 4 | Timestamp (microseconds) |
-| 8 | 4 | Captured Length |
-| 12 | 4 | Original Length |
-
-### 4.6 BGP Message Structure
-
-#### Common Header (19 bytes)
-| Offset | Length | Field |
-|--------|--------|-------|
-| 0 | 16 | Marker (all 1s) |
-| 16 | 2 | Length |
-| 18 | 1 | Type |
-
-#### OPEN Message
-| Offset | Length | Field |
-|--------|--------|-------|
-| 0 | 1 | Version |
-| 1 | 2 | My Autonomous System |
-| 3 | 2 | Hold Time |
-| 5 | 4 | BGP Identifier |
-| 9 | 1 | Opt Param Length |
-| 10 | variable | Optional Parameters |
+**DuckDB selects; it does not reconstitute.** `getMatchingFrameIndexes` returns `frameIndex` values, which are resolved against the already-parsed `BgpPacket[]` in memory. Because the SQL tables are a flattened projection that cannot represent every nested capability or attribute losslessly, keeping `frameIndex` as the sole join key prevents field loss when filters are active. Authoritative TypeScript types live in `src/lib/pcap/types.ts` and `src/lib/bgp/types.ts`.
 
 ---
 
 ## 5. UI Design
 
-The screens are the code's business; this section fixes only the shape they share
-and the vocabulary they are built from.
+### 5.1 Color Tokens
 
-### 5.0 Colour tokens
+Components reference semantic roles rather than raw hex colors (`src/index.css` + `tailwind.config.js`):
 
-Colours change between light and dark, so components never name a hex value —
-they name a role. Definitions live in `src/index.css` as CSS custom properties and
-are exposed under semantic Tailwind names in `tailwind.config.js`.
-
-| Role | Token | Tailwind |
-|------|-------|----------|
-| Furthest-back background | `--canvas` | `bg-canvas` |
-| Surface / sunken / raised | `--surface`, `--surface-sunken`, `--surface-raised` | `bg-surface` |
-| Rules | `--hair`, `--hair-strong` | `border-hair` |
-| Text, strongest to faintest | `--text-strong`, `--text-body`, `--text-muted`, `--text-dim` | `text-muted` |
+| Role | CSS Variables | Tailwind Example |
+|------|---------------|------------------|
+| Canvas & surfaces | `--canvas`, `--surface`, `--surface-sunken`, `--surface-raised` | `bg-canvas`, `bg-surface` |
+| Borders | `--hair`, `--hair-strong` | `border-hair` |
+| Typography | `--text-strong`, `--text-body`, `--text-muted`, `--text-dim` | `text-muted` |
 | Accent | `--accent`, `--accent-hover`, `--accent-fg`, `--accent-subtle` | `bg-accent` |
-| Severity | `--critical`, `--warning`, `--ok` (each with `-subtle`) | `text-critical` |
-| BGP message type | `--msg-open`, `--msg-update`, `--msg-notification`, `--msg-keepalive`, `--msg-route-refresh` | `text-bgp-open` |
+| Severity | `--critical`, `--warning`, `--ok` (with `-subtle` variants) | `text-critical` |
+| BGP message types | `--msg-open`, `--msg-update`, `--msg-notification`, `--msg-keepalive`, `--msg-route-refresh` | `text-bgp-open` |
 
-Light is the default, the OS preference switches to dark, and `data-theme` on
-`<html>` overrides both.
+### 5.2 Layout
 
-### 5.1 Layout
-
-The app is a multi-page SPA: a persistent header with navigation, and one page per
-analysis view. The Message Explorer (`/messages`) uses the classic two-pane layout.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  🦈 BGPShark  [Dashboard][Messages][Neighbors][Routes][SQL]     │
-│               📁 file.pcap  [+ New File]  [☀ Light]  [GitHub]   │
-├─────────────────────────────────────────────────────────────────┤
-│  🔍 Filter: type = NOTIFICATION and src_ip = 10.0.0.1           │
-├────────────────────────────┬────────────────────────────────────┤
-│  Packet List               │  Packet Detail                     │
-│  ─────────────────────────│  ────────────────────────────────  │
-│  #  Time     Type    Info  │                                    │
-│  1  00:00.00 OPEN    AS65001│  ▼ BGP OPEN Message               │
-│  2  00:00.01 OPEN    AS65002│    Version: 4                     │
-│  3  00:05.00 KEEPALIVE     │    My AS: 65001                    │
-│ >4  00:10.00 NOTIFICATION  │    Hold Time: 90                   │
-│                            │    BGP Identifier: 10.0.0.1        │
-│                            │                                    │
-│                            │  ▼ Capabilities                    │
-│                            │    Multiprotocol: IPv4 Unicast     │
-│                            │    4-byte AS: 65001                │
-│                            │    Route Refresh: Supported        │
-│                            │                                    │
-│                            │  ▼ Hex Dump                        │
-│                            │  0000: ff ff ff ff ff ff ff ff     │
-│                            │  0008: ff ff ff ff ff ff ff ff     │
-└────────────────────────────┴────────────────────────────────────┘
-```
-
-The upload screen (`/`) is a separate page; the drop zone is not part of the
-analysis layout, though files can be dropped anywhere in the app at any time.
-
-### 5.2 NOTIFICATION Display Example
-
-```
-▼ BGP NOTIFICATION Message
-
-  Error Code: 2 (OPEN Message Error)
-  Error Subcode: 2 (Bad Peer AS)
-
-  ┌─────────────────────────────────────────────────────────┐
-  │ 💡 Common Cause                                         │
-  │                                                         │
-  │ The remote-as configured in your neighbor statement     │
-  │ does not match the ASN sent by the peer.                │
-  │                                                         │
-  │ Check:                                                  │
-  │ - Your "neighbor X.X.X.X remote-as" value               │
-  │ - Peer's "router bgp" configuration                     │
-  └─────────────────────────────────────────────────────────┘
-
-  Data (hex):
-  0000: 00 00 fd e9
-```
+The app is a multi-page SPA with a persistent navigation header. The upload screen (`/`) is shown when no capture is loaded, though files can be dropped anywhere at any time. **Messages** (`/messages`) uses a resizable two-pane layout (filter bar above a virtualized packet list on the left and structured detail + hex dump on the right).
 
 ---
 
-## 6. Development Status
+## 6. Constraints & Assumptions
 
-### Done
-
-- pcap and pcapng parsing, Ethernet / Linux SLL, VLAN and QinQ tags
-- BGP parsing: OPEN (with capabilities), UPDATE (with path attributes), NOTIFICATION,
-  KEEPALIVE, ROUTE-REFRESH
-- Dashboard, Message Explorer, Neighbor Analysis, Route Analysis, SQL Console
-- Sample capture offered on the upload screen
-- Filter expression language with in-memory and SQL backends
-- DuckDB WASM query engine, IndexedDB persistence
-- TCP segment reassembly, so messages split across segments are parsed
-- Virtualized packet list with grid accessibility semantics
-- Error boundary with a reset path out of a crash loop
-- GitHub Pages deployment via GitHub Actions
-- ContainerLab test topology (`testlab/`) for generating capture fixtures
-- Capability diff: side-by-side OPEN comparison on the Neighbor Analysis page
-- Light / dark theme following the system preference
-- Screen state in the URL query string (filter, selection, sort, match direction)
-- Playwright end-to-end suite, run on pull requests and before deploy
-- IPv6 transport, and BGP on non-standard ports detected by message marker
-- EVPN route decoding, and the filter fields that address it
-- Exporting the filtered packet list back to pcap
-- Capture Builder, and `testlab/scenarios.ts` on the same library
-- Establishment alerts: a session with one direction in the capture, and a TCP
-  connection accepted and then answered with no BGP — the first rules that fire
-  on something absent rather than something present
-
-### Next
-
-- Multiple captures loaded side by side
-- The gaps in `docs/troubleshooting-scenarios.md`: a post-establishment TCP reset
-  or FIN that never reaches the dashboard, and best-path attributes (MED,
-  LOCAL_PREF, communities) missing from the route history and the filter language
-
----
-
-## 7. Constraints & Assumptions
-
-- BGP messages spanning TCP segments are reassembled per directional flow. The
-  leftover buffer is capped at `BGP_MAX_MESSAGE_LENGTH`; beyond that the flow is
-  treated as desynced and dropped with a warning, so a permanently misaligned or
-  heavily retransmitting flow cannot grow it without bound
-- IPv4 transport only. IPv6 prefixes are supported inside UPDATE messages via
-  MP_REACH_NLRI / MP_UNREACH_NLRI, but BGP sessions carried over IPv6 are not parsed
-- Link layer: Ethernet II (link type 1) and Linux cooked capture / SLL (113).
-  802.1Q and QinQ tags are stripped
-- BGP over TCP port 179 only
-
----
-
-## 8. Success Criteria
-
-- Parse pcap and display BGP messages within 3 seconds
-- Correctly display all major fields for OPEN/NOTIFICATION
-- Enable first-level BGP session troubleshooting without Wireshark installed
+- **TCP reassembly cap:** Reassembly buffers per directional flow are capped at `BGP_MAX_MESSAGE_LENGTH`; flows exceeding this limit are treated as desynced and dropped with a warning.
+- **Link layers:** Ethernet II (link type 1) and Linux cooked capture / SLL (113), with 802.1Q and QinQ VLAN tags stripped.
+- **Transport:** IPv4 and IPv6 over TCP (port 179, plus non-standard ports detected by BGP message marker).
+- **File size:** Capped at 50 MB per capture to stay within comfortable browser memory limits across React state, IndexedDB, and DuckDB WASM.
