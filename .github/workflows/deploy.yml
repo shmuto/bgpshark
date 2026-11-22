@@ -52,6 +52,13 @@ jobs:
   # deploy. If it ever turns flaky, drop it from `deploy.needs` rather than
   # letting a red run become something to ignore.
   e2e:
+    # Sharded the same way as ci.yml; see the note there.
+    strategy:
+      # One failing shard should not cancel the others: the report of the
+      # whole suite is what tells a flake from a regression.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -81,14 +88,18 @@ jobs:
       - name: Install Chromium
         run: bunx playwright install --with-deps --only-shell chromium
 
+      # E2E_PREVIEW builds the app and tests the production bundle, CSP and
+      # all, rather than the dev server — see playwright.config.ts.
       - name: Run end-to-end tests
-        run: bun run test:e2e
+        run: bunx playwright test --shard=${{ matrix.shard }}/3
+        env:
+          E2E_PREVIEW: '1'
 
       - name: Upload report
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: playwright-report
           retention-days: 7
 

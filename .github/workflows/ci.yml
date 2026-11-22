@@ -7,6 +7,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push to a pull request makes the run for the previous one moot, and with
+# the e2e job split into shards each run holds four runners — so stacked pushes
+# would otherwise queue behind work nobody will read. Only this workflow:
+# deploy.yml must never be cancelled halfway through a deploy.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -32,6 +40,16 @@ jobs:
         run: bun run build
 
   e2e:
+    # Split across three runners. The suite is CPU-bound — each spec starts
+    # its own DuckDB — so more workers on one 4-core runner mostly make every
+    # spec slower, while another runner really does divide the wall clock.
+    # Each shard pays ~30s of setup and build, which is why it stops at three.
+    strategy:
+      # One failing shard should not cancel the others: the report of the
+      # whole suite is what tells a flake from a regression.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -67,13 +85,17 @@ jobs:
       - name: Install Chromium
         run: bunx playwright install --with-deps --only-shell chromium
 
+      # E2E_PREVIEW builds the app and tests the production bundle, CSP and
+      # all, rather than the dev server — see playwright.config.ts.
       - name: Run end-to-end tests
-        run: bun run test:e2e
+        run: bunx playwright test --shard=${{ matrix.shard }}/3
+        env:
+          E2E_PREVIEW: '1'
 
       - name: Upload report
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: playwright-report
           retention-days: 7

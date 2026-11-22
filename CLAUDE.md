@@ -9,6 +9,7 @@ bun install
 bun run dev          # Dev server at http://localhost:5173/bgpshark/ (no CSP)
 bun test             # Unit tests under tests/lib
 bun run test:e2e     # Playwright e2e suite under tests/e2e (Chromium + DuckDB WASM)
+E2E_PREVIEW=1 bun run test:e2e  # Same suite against the production build, with the real CSP (what CI runs)
 bun run lint         # ESLint
 bun run build        # Type-check (src, tests, testlab) + production build to dist/
 bun run preview      # Serve production build (with real CSP) at http://localhost:4173/bgpshark/

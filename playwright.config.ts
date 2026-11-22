@@ -16,7 +16,19 @@ import { defineConfig, devices } from '@playwright/test'
  * environment that ships a working Chromium but not the exact revision this
  * Playwright expects, and cannot download the one it wants. Point it at the
  * binary and the revision lookup is skipped entirely.
+ *
+ * E2E_PREVIEW=1 runs the suite against the production build (`vite build`,
+ * served by `vite preview`) instead of the dev server. CI sets it, for two
+ * reasons. The build is what the deployed site serves, CSP included — the dev
+ * server ships no CSP, which is how a DuckDB extension download once passed
+ * every spec here and broke the deployed SQL console (see offline.e2e.ts).
+ * And it is faster: the dev server transforms each module on request, and
+ * every spec opens a fresh page, so it pays that again for each one. Locally the
+ * dev server stays the default so a spec can be rerun without a rebuild.
  */
+const preview = Boolean(process.env.E2E_PREVIEW)
+const baseURL = preview ? 'http://localhost:4173/bgpshark/' : 'http://localhost:5173/bgpshark/'
+
 export default defineConfig({
   testDir: './tests/e2e',
   // Named .e2e.ts rather than .spec.ts so `bun test` — which claims *.spec.*
@@ -34,7 +46,7 @@ export default defineConfig({
     timeout: 15_000,
   },
   use: {
-    baseURL: 'http://localhost:5173/bgpshark/',
+    baseURL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
@@ -51,8 +63,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'bun run dev',
-    url: 'http://localhost:5173/bgpshark/',
+    // `vite build` rather than `bun run build`: the type-check is the check
+    // job's, and the bundle it emits is the same either way. --strictPort so a
+    // stale server on 4173 fails loudly instead of being tested by mistake.
+    command: preview ? 'bunx vite build && bunx vite preview --strictPort' : 'bun run dev',
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
