@@ -1,8 +1,9 @@
-export { parseQuery, matchPacket, getSuggestions, FILTER_FIELDS, tokenize } from './parser'
+export { parseQuery, matchPacket, matchTransportFrame, getSuggestions, FILTER_FIELDS, tokenize } from './parser'
 export type {
   Expression,
   Comparison,
   ParsedQuery,
+  TransportFrame,
   ParseError,
   Suggestion,
   FilterFieldName,

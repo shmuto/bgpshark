@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test'
 import {
   parseQuery,
   matchPacket,
+  matchTransportFrame,
   normalizeFieldName,
   getSuggestions,
   FILTER_FIELDS,
@@ -815,5 +816,32 @@ describe('best-path attribute fields', () => {
     // which reads as "no routes matched" rather than as a broken filter.
     expect(expressionToSql(parseQuery('med = 100').expression)).toContain('med_value')
     expect(expressionToSql(parseQuery('local_pref = 200').expression)).toContain('local_pref')
+  })
+})
+
+describe('filters applied to frames that carry no BGP', () => {
+  // A SYN from the peer to the speaker, the kind of frame All Packets shows.
+  const syn = { frameIndex: 7, srcIp: '10.0.13.1', dstIp: '10.0.13.3', srcPort: 39557, dstPort: 179 }
+  const icmp = { frameIndex: 8, srcIp: '10.0.13.1', dstIp: '10.0.13.3' }
+  const match = (frame: typeof syn | typeof icmp, query: string) =>
+    matchTransportFrame(frame, parseQuery(query))
+
+  test('address, port and frame conditions apply to it', () => {
+    expect(match(syn, 'src_ip = 10.0.13.1')).toBe(true)
+    expect(match(syn, 'dst_ip = 10.0.13.1')).toBe(false)
+    expect(match(syn, 'dst_port = 179')).toBe(true)
+    expect(match(syn, 'frame >= 7 and frame < 8')).toBe(true)
+    expect(match(syn, 'src_ip = 10.0.13.0/24')).toBe(true)
+  })
+
+  test('a BGP-only condition never matches it', () => {
+    expect(match(syn, 'type = UPDATE')).toBe(false)
+    expect(match(syn, 'prefix = 10.0.0.0/8')).toBe(false)
+    expect(match(syn, 'src_ip = 10.0.13.1 and type = KEEPALIVE')).toBe(false)
+  })
+
+  test('a frame with no ports equals no port', () => {
+    expect(match(icmp, 'src_port = 179 or dst_port = 179')).toBe(false)
+    expect(match(icmp, 'src_ip = 10.0.13.1')).toBe(true)
   })
 })

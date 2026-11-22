@@ -20,7 +20,7 @@ import type {
   LargeCommunitiesAttribute,
 } from '../lib/bgp/types'
 import { writePcap, sliceFileName, type GenericPacket } from '../lib/pcap'
-import { FILTER_FIELDS, type FilterFieldName } from '../lib/filter/parser'
+import { FILTER_FIELDS, matchTransportFrame, type FilterFieldName } from '../lib/filter/parser'
 
 const MESSAGE_TYPE_BADGE_COLORS: Record<string, string> = {
   OPEN: 'bg-bgp-open/15 text-bgp-open',
@@ -75,6 +75,7 @@ export function MessagesPage() {
     query,
     setQuery,
     filteredPackets,
+    parsedQuery,
     showParseErrors,
     parseErrors,
     isFiltering,
@@ -168,36 +169,48 @@ export function MessagesPage() {
     return counts
   }, [packets])
 
-  // Create display packets based on mode
+  /**
+   * The rows the list shows.
+   *
+   * In All Packets mode the BGP frames are looked up among *all* parsed
+   * packets, not only the ones the filter kept: a KEEPALIVE that does not match
+   * `type = UPDATE` is still a KEEPALIVE, and building the lookup from the
+   * filtered set used to render it as a bare TCP segment instead.
+   *
+   * With a filter active, a BGP frame is shown when the filter (DuckDB or in
+   * memory) kept it, and a non-BGP frame when the filter's transport fields
+   * (`src_ip`, `dst_ip`, `src_port`, `dst_port`, `frame`) match it — so
+   * `src_ip = 10.0.13.1` narrows to that peer's handshake, BGP and teardown,
+   * while a BGP-only condition such as `type = UPDATE` leaves just the BGP
+   * frames it names, exactly as in BGP Only mode.
+   */
+  const filterActive = query.trim() !== '' && parsedQuery.errors.length === 0
   const displayPackets = useMemo((): DisplayPacket[] => {
-    if (showAllPackets) {
-      // Show all packets, merging BGP-parsed with generic
-      // Create a map of BGP packets by frameIndex for matching
-      const bgpMap = new Map<number, BgpPacket>()
-      for (const p of filteredPackets) {
-        bgpMap.set(p.frameIndex, p)
-      }
-
-      // Filter allPackets based on whether any BGP packets match the current filter
-      // If no filter is active, show all. Otherwise, only show packets that are either:
-      // 1. BGP packets matching the filter
-      // 2. Non-BGP packets (always show when no filter or simple IP filter)
-      return allPackets.map((gp): DisplayPacket => {
-        const bgpPacket = bgpMap.get(gp.frameIndex)
-        if (bgpPacket) {
-          return { kind: 'bgp', packet: bgpPacket, timestamp: gp.timestamp }
-        }
-        return { kind: 'generic', packet: gp, timestamp: gp.timestamp }
-      })
-    } else {
-      // Show only BGP packets
+    if (!showAllPackets) {
       return filteredPackets.map((p): DisplayPacket => ({
         kind: 'bgp',
         packet: p,
         timestamp: p.timestamp,
       }))
     }
-  }, [filteredPackets, allPackets, showAllPackets])
+
+    const bgpMap = new Map<number, BgpPacket>()
+    for (const p of packets) bgpMap.set(p.frameIndex, p)
+    const kept = filterActive ? new Set(filteredPackets.map((p) => p.frameIndex)) : null
+
+    const rows: DisplayPacket[] = []
+    for (const gp of allPackets) {
+      const bgpPacket = bgpMap.get(gp.frameIndex)
+      if (bgpPacket) {
+        if (kept && !kept.has(gp.frameIndex)) continue
+        rows.push({ kind: 'bgp', packet: bgpPacket, timestamp: gp.timestamp })
+      } else {
+        if (filterActive && !matchTransportFrame(gp, parsedQuery)) continue
+        rows.push({ kind: 'generic', packet: gp, timestamp: gp.timestamp })
+      }
+    }
+    return rows
+  }, [filteredPackets, packets, allPackets, showAllPackets, filterActive, parsedQuery])
 
   /**
    * A `?frame=` link names a frame by its index in the capture, which is the
@@ -737,7 +750,16 @@ export function MessagesPage() {
         <div className="flex items-center justify-between text-xs text-muted">
           <span>
             Showing {displayPackets.length} of {showAllPackets ? allPackets.length : packets.length} packets
-            {showAllPackets && ` (${packets.length} BGP)`}
+            {showAllPackets && !filterActive && ` (${packets.length} BGP)`}
+            {/* Say how the filter was applied to frames that carry no BGP, so
+                a short list is not mistaken for a short capture. */}
+            {showAllPackets && filterActive && (
+              <span title="Non-BGP frames (SYN, ACK, FIN, RST) are matched on src_ip, dst_ip, src_port, dst_port and frame; BGP-only conditions never match them.">
+                {` (${displayPackets.filter((p) => p.kind === 'bgp').length} BGP + ${
+                  displayPackets.filter((p) => p.kind === 'generic').length
+                } non-BGP matched by address/port)`}
+              </span>
+            )}
           </span>
           {isFiltering && <span>filtering...</span>}
           {showParseErrors && (
