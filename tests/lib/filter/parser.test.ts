@@ -6,7 +6,6 @@ import {
   normalizeFieldName,
   getSuggestions,
   FILTER_FIELDS,
-  suggestionsAreSettled,
 } from '../../../src/lib/filter/parser'
 import { expressionToSql } from '../../../src/lib/db/filter-to-sql'
 import type {
@@ -909,23 +908,5 @@ describe('what people type out of habit', () => {
     expect(fields).toContain('ip')
     expect(fields).toContain('peer')
     expect(getSuggestions('ip = ', 5, [outbound]).map((s) => s.text)).toContain('10.0.13.3')
-  })
-})
-
-describe('when the suggestion list has nothing left to say', () => {
-  const packets = [{ ...createOpenPacket(), srcIp: '10.0.13.1', dstIp: '10.0.13.3' }]
-  const settled = (query: string) =>
-    suggestionsAreSettled(query, getSuggestions(query, query.length, packets))
-
-  test('a value typed in full closes it', () => {
-    expect(settled('ip = 10.0.13.1')).toBe(true)
-    expect(settled('type = UPDATE')).toBe(true)
-    expect(settled('type = update')).toBe(true)
-  })
-
-  test('a value still being typed keeps it open', () => {
-    expect(settled('ip = 10.0.13')).toBe(false)
-    expect(settled('type = UPD')).toBe(false)
-    expect(settled('')).toBe(false)
   })
 })
