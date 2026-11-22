@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { BgpPacket } from '../../lib/bgp/types'
 import { getSuggestions, type Suggestion } from '../../lib/filter'
+import { suggestionsAreSettled } from '../../lib/filter/parser'
 
 interface QueryInputProps {
   value: string
@@ -42,7 +43,9 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError, in
       const newSuggestions = getSuggestions(query, cursorPos, packets)
       setSuggestions(newSuggestions)
       setSelectedIndex(NO_SELECTION)
-      setShowSuggestions(newSuggestions.length > 0)
+      setShowSuggestions(
+        newSuggestions.length > 0 && !suggestionsAreSettled(query.slice(0, cursorPos), newSuggestions)
+      )
     },
     [packets, isComposing]
   )

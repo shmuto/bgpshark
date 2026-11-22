@@ -328,7 +328,7 @@ A healthy bidirectional session produces two rows of comparable size; a single r
 
 The filter bar is a single query box with autocomplete. Press `/` or `Ctrl+K` (`⌘K`) to jump to it. **+ Filter** builds one condition from menus and appends it with `and`; the message-type badges write their filter into the same box.
 
-In the packet detail, hover an address, prefix, AS number, next hop or community and click **＋** to narrow the current filter by it, or **=** to filter on it alone.
+In the packet detail, values that can become a filter have a dotted underline. Hover an address, prefix, AS number, next hop or community and click **＋** to narrow the current filter by it, or **=** to filter on it alone.
 
 ```
 type = NOTIFICATION and src_ip = 10.0.0.1
@@ -358,7 +358,8 @@ A value typed on its own is read as the comparison it most likely means: an addr
 | `next_hop` | NEXT_HOP or MP_REACH next hop |
 | `med` | MULTI_EXIT_DISC (supports ranges; absent MED matches nothing) |
 | `local_pref` | LOCAL_PREF (supports ranges; iBGP only, absent LOCAL_PREF matches nothing) |
-| `prefix` | Announced or withdrawn prefix |
+| `prefix` | Announced or withdrawn prefix — the whole history of a route |
+| `nlri` | Announced prefix only |
 | `withdrawn` | Withdrawn prefix only |
 | `community` | Standard or large community |
 | `rt` | Route Target (e.g. `rt = 65001:100`) |
@@ -366,7 +367,7 @@ A value typed on its own is read as the comparison it most likely means: an addr
 | `mac` / `vni` / `rd` / `evpn_type` | EVPN route attributes |
 | `capability` | Capability name from OPEN |
 
-Supported aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `nlri`, `router-id`, `my_as`, `large-community`, `route-target`, `ext-community`, `evpn-type`.
+Supported aliases: `src`, `dst`, `as`, `aspath`, `nexthop`, `router-id`, `my_as`, `large-community`, `route-target`, `ext-community`, `evpn-type`.
 
 ### How prefixes match
 

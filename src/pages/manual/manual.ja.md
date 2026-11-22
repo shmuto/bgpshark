@@ -328,7 +328,7 @@ from packets group by all order by frames desc
 
 フィルタバーは補完付きの 1 行の入力欄です。`/` または `Ctrl+K`（`⌘K`）で入力欄にフォーカスできます。**+ Filter** ではメニューから条件を 1 つ組み立てて `and` で追記でき、メッセージ種別のバッジも同じ入力欄にフィルタを書き込みます。
 
-パケット詳細では、アドレス・プレフィックス・AS 番号・ネクストホップ・コミュニティにマウスを合わせて **＋** をクリックすると現在のフィルタにその値の条件を追加し、**=** をクリックするとその値だけで絞り込みます。
+パケット詳細でフィルタに使える値には点線の下線が付いています。アドレス・プレフィックス・AS 番号・ネクストホップ・コミュニティにマウスを合わせて **＋** をクリックすると現在のフィルタにその値の条件を追加し、**=** をクリックするとその値だけで絞り込みます。
 
 ```
 type = NOTIFICATION and src_ip = 10.0.0.1
@@ -358,7 +358,8 @@ capability contains "Route Refresh"
 | `next_hop` | NEXT_HOP または MP_REACH のネクストホップ |
 | `med` | MULTI_EXIT_DISC（範囲比較可。MED を持たない UPDATE には不一致） |
 | `local_pref` | LOCAL_PREF（範囲比較可。iBGP のみ。属性がない UPDATE には不一致） |
-| `prefix` | 広告または取り消し（Withdraw）されたプレフィックス |
+| `prefix` | 広告または取り消し（Withdraw）されたプレフィックス（経路の履歴全体） |
+| `nlri` | 広告されたプレフィックスのみ |
 | `withdrawn` | 取り消し（Withdraw）されたプレフィックスのみ |
 | `community` | Standard / Large Community |
 | `rt` | Route Target（例：`rt = 65001:100`） |
@@ -366,7 +367,7 @@ capability contains "Route Refresh"
 | `mac` / `vni` / `rd` / `evpn_type` | EVPN 経路の各属性 |
 | `capability` | OPEN メッセージのケイパビリティ名 |
 
-以下のエイリアスも利用できます：`src`、`dst`、`as`、`aspath`、`nexthop`、`nlri`、`router-id`、`my_as`、`large-community`、`route-target`、`ext-community`、`evpn-type`。
+以下のエイリアスも利用できます：`src`、`dst`、`as`、`aspath`、`nexthop`、`router-id`、`my_as`、`large-community`、`route-target`、`ext-community`、`evpn-type`。
 
 ### プレフィックスと IP アドレスの照合ルール {#how-prefixes-match}
 
