@@ -108,7 +108,7 @@ function computeTimeline(packets: BgpPacket[]): TimelineData {
 }
 
 export function DashboardPage() {
-  const { packets, allPackets, fileName } = useApp()
+  const { packets, allPackets } = useApp()
   const navigate = useNavigate()
 
   const summary = useMemo(() => computeSummary(packets), [packets])
@@ -130,7 +130,7 @@ export function DashboardPage() {
   const timeline = useMemo(() => computeTimeline(packets), [packets])
 
   const handleSummarySelect = (filter: string | null) => {
-    // The PACKETS card means "everything": start from a clean list rather than
+    // The packet total means "everything": start from a clean list rather than
     // whatever Messages was last left showing.
     if (filter) navigate(`/messages?filter=${encodeURIComponent(filter)}`)
     else navigate('/messages', { state: { fresh: true } })
@@ -143,12 +143,10 @@ export function DashboardPage() {
   return (
     <div className="flex-1 overflow-auto bg-canvas">
       <div className="max-w-6xl mx-auto px-6 py-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">📊</span>
-            <h1 className="text-lg font-semibold text-strong">Dashboard</h1>
-          </div>
-          {fileName && <span className="text-sm text-muted">📁 {fileName}</span>}
+        {/* The file name is not repeated here: the header already shows it. */}
+        <div className="flex items-center gap-2">
+          <span className="text-xl">📊</span>
+          <h1 className="text-lg font-semibold text-strong">Dashboard</h1>
         </div>
 
         <SummaryCards summary={summary} onSelect={handleSummarySelect} />

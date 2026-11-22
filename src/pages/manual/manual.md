@@ -39,7 +39,7 @@ Each screen is designed around a specific troubleshooting question. If you are n
 
 ### Dashboard
 
-A loaded capture opens here. Displays message counts, a timeline, a neighbor summary table, and the **Alerts** panel. Alerts are sorted by severity and grouped per problem rather than per packet (for example, 40 rejected OPEN retries appear as a single row with a count of 40). The five most severe rows are shown; **Show N more alerts** expands the rest.
+A loaded capture opens here. Displays the packet and message totals with a count per message type (one TCP packet can carry several BGP messages, so the two totals differ; click a type to list those messages), a timeline, a neighbor summary table, and the **Alerts** panel. Alerts are sorted by severity and grouped per problem rather than per packet (for example, 40 rejected OPEN retries appear as a single row with a count of 40). The five most severe rows are shown; **Show N more alerts** expands the rest.
 
 Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping, AS_PATH changes from the same peer, EVPN MAC moves, graceful restarts, silent TCP teardowns, one-way sessions, and TCP connections that receive no BGP reply. Click **View →** on any alert to jump straight to the relevant packet with an appropriate filter applied.
 
