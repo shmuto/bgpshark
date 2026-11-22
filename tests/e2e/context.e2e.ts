@@ -54,6 +54,7 @@ test.describe('moving between screens', () => {
   test('a route history row opens Messages narrowed to that route', async ({ page }) => {
     await page.getByRole('link', { name: 'Routes', exact: true }).click()
     await page.locator('tbody tr').first().click()
+    await expect(page.getByRole('heading', { name: /Route History: / })).toBeVisible()
     await page.locator('table').last().locator('tbody tr').first().click()
 
     await page.waitForURL('**/messages**')

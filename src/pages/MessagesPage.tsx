@@ -81,10 +81,24 @@ function saveView(view: SavedView) {
 export function MessagesPage() {
   const { fileName } = useApp()
   const location = useLocation()
-  const fresh = (location.state as { fresh?: boolean } | null)?.fresh === true
-  if (!location.search && !fresh) {
-    const saved = loadSavedView(fileName)
-    if (saved) return <Navigate to={{ pathname: location.pathname, search: saved }} replace />
+  // Decided once, when the screen is entered. Re-deciding on every render
+  // would send the reader back to the saved view whenever the URL went bare
+  // again — clearing the filter, or going Back to the list on a phone.
+  const [restore, setRestore] = useState(() => {
+    const fresh = (location.state as { fresh?: boolean } | null)?.fresh === true
+    return !location.search && !fresh ? loadSavedView(fileName) : null
+  })
+  // The view mounts only once the URL carries the restored state, so it starts
+  // from it the way it would from any link: a view mounted first would select
+  // the saved frame in the unfiltered list, and the filter arriving a moment
+  // later would leave the selection pointing at a different packet.
+  const restored = restore !== null && location.search === restore
+  useEffect(() => {
+    if (restored) setRestore(null)
+  }, [restored])
+
+  if (restore !== null) {
+    return restored ? null : <Navigate to={{ pathname: location.pathname, search: restore }} replace />
   }
   return <MessagesView />
 }
