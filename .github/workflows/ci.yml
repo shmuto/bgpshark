@@ -7,6 +7,14 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push to a pull request makes the run for the previous one moot, and with
+# the e2e job split into shards each run holds four runners — so stacked pushes
+# would otherwise queue behind work nobody will read. Only this workflow:
+# deploy.yml must never be cancelled halfway through a deploy.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
