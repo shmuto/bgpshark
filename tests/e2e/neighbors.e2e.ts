@@ -30,6 +30,22 @@ test.describe('the neighbours screen', () => {
     await expect(page.getByRole('heading', { name: `Route History: ${prefix}` })).toBeVisible()
   })
 
+  test('a session shows its prefix counts on one line, without an estimate', async ({ page }) => {
+    await page.getByText(/↔ 10\.0\.13\.3/).first().click()
+
+    const activity = page.getByTestId('prefix-activity')
+    await expect(activity).toContainText(/\d+ announced\s*·\s*\d+ withdrawn/)
+    // "announced − withdrawn" is not a prefix count once a session resets or a
+    // route is re-announced, so nothing on the screen may present it as one.
+    await expect(page.getByText('Est. Prefixes')).toHaveCount(0)
+    await expect(page.getByText(/Session Messages/).first()).toBeInViewport()
+  })
+
+  test('the router filter offers no arbitrary activity threshold', async ({ page }) => {
+    await expect(page.getByRole('button', { name: 'With NOTIFICATION' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Low Activity' })).toHaveCount(0)
+  })
+
   test('the router list says its count is what was sent', async ({ page }) => {
     await expect(page.getByRole('columnheader', { name: 'Sent' })).toBeVisible()
   })

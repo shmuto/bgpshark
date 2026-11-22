@@ -102,7 +102,7 @@ export function NeighborsPage() {
     })
   }, [setSearchParams])
 
-  const [filterType, setFilterType] = useState<'all' | 'alerts' | 'open' | 'inactive'>('all')
+  const [filterType, setFilterType] = useState<'all' | 'alerts' | 'open'>('all')
   /**
    * Session Messages defaults to the events that establish or end a session.
    * The rest is what was flowing while it was up — which is the question when
@@ -197,9 +197,6 @@ export function NeighborsPage() {
         break
       case 'open':
         result = result.filter(r => r.latestOpen !== null)
-        break
-      case 'inactive':
-        result = result.filter(r => r.totalMessages <= 10)
         break
     }
 
@@ -488,7 +485,7 @@ export function NeighborsPage() {
       }
     }
 
-    return { announced, withdrawn, netChange: announced - withdrawn }
+    return { announced, withdrawn }
   }, [selectedIps, selectedPeer, packets])
 
   // Build filter for current router/peer selection
@@ -579,7 +576,7 @@ export function NeighborsPage() {
           </div>
           <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1">
             <span className="shrink-0 text-xs text-muted">Filter:</span>
-            {(['all', 'alerts', 'open', 'inactive'] as const).map((type) => (
+            {(['all', 'alerts', 'open'] as const).map((type) => (
               <button
                 key={type}
                 onClick={() => setFilterType(type)}
@@ -590,8 +587,7 @@ export function NeighborsPage() {
                 }`}
               >
                 {type === 'all' ? 'All' :
-                 type === 'alerts' ? 'With NOTIFICATION' :
-                 type === 'open' ? 'OPEN Received' : 'Low Activity'}
+                 type === 'alerts' ? 'With NOTIFICATION' : 'OPEN Received'}
               </button>
             ))}
           </div>
@@ -782,42 +778,36 @@ export function NeighborsPage() {
                 </div>
               )}
 
-              {/* Prefix Activity */}
+              {/* Prefix Activity — a single line of raw counts. It used to be
+                  four large figures ending in "Est. Prefixes" (announced minus
+                  withdrawn), which is not a prefix count: a re-announcement with
+                  new attributes adds to "announced" without adding a prefix, and
+                  a session reset clears the peer's Adj-RIB-In without a single
+                  withdrawal. A guess that looks like a measurement misleads
+                  exactly when a session is being debugged, so only what was on
+                  the wire is shown, and Routes has the per-prefix truth. */}
               {prefixActivity && (
-                <div className="bg-surface rounded-lg shadow-sm border border-hair">
-                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
-                    <span className="text-sm font-medium text-strong">
-                      📈 Prefix Activity ({selectedRouterInfo?.displayName} → {selectedPeer})
-                    </span>
-                    <button
-                      onClick={handleViewRoutes}
-                      className="text-xs text-accent hover:text-accent-hover"
-                    >
-                      View Route Details →
-                    </button>
-                  </div>
-                  <div className="p-4 grid grid-cols-4 gap-4 text-center">
-                    <div>
-                      <div className="text-2xl font-bold text-ok">{prefixActivity.announced}</div>
-                      <div className="text-xs text-muted">Announced</div>
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold text-critical">{prefixActivity.withdrawn}</div>
-                      <div className="text-xs text-muted">Withdrawn</div>
-                    </div>
-                    <div>
-                      <div className={`text-2xl font-bold ${prefixActivity.netChange >= 0 ? 'text-ok' : 'text-critical'}`}>
-                        {prefixActivity.netChange >= 0 ? '+' : ''}{prefixActivity.netChange}
-                      </div>
-                      <div className="text-xs text-muted">Net Change</div>
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold text-strong">
-                        {Math.max(0, prefixActivity.netChange)}
-                      </div>
-                      <div className="text-xs text-muted">Est. Prefixes</div>
-                    </div>
-                  </div>
+                <div
+                  data-testid="prefix-activity"
+                  className="bg-surface rounded-lg shadow-sm border border-hair px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
+                >
+                  <span className="font-medium text-strong">
+                    Prefix Activity ({selectedRouterInfo?.displayName} → {selectedPeer})
+                  </span>
+                  <span
+                    className="font-mono text-xs text-muted"
+                    title="NLRI entries sent in UPDATEs, in this direction only; a prefix re-announced with new attributes counts again"
+                  >
+                    <span className="text-ok">{prefixActivity.announced} announced</span>
+                    <span className="mx-1.5 text-dim">·</span>
+                    <span className="text-critical">{prefixActivity.withdrawn} withdrawn</span>
+                  </span>
+                  <button
+                    onClick={handleViewRoutes}
+                    className="ml-auto text-xs text-accent hover:text-accent-hover"
+                  >
+                    View Route Details →
+                  </button>
                 </div>
               )}
               {/* Session Messages (OPEN/NOTIFICATION) */}
