@@ -951,7 +951,7 @@ export function NeighborsPage() {
                       <table className="w-full text-sm">
                         <thead className="bg-surface-sunken sticky top-0">
                           <tr className="text-left text-muted">
-                            <th className="px-4 py-2 font-medium w-28">Time</th>
+                            <th className="px-4 py-2 font-medium w-28">Time (UTC)</th>
                             <th className="px-4 py-2 font-medium">Source → Dest</th>
                             <th className="px-4 py-2 font-medium w-28">Type</th>
                             <th className="px-4 py-2 font-medium">Summary</th>

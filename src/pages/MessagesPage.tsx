@@ -275,6 +275,8 @@ export function MessagesPage() {
     URL.revokeObjectURL(url)
   }, [displayPackets, allPackets, linkType, fileName])
 
+  const captureStart = allPackets[0]?.timestamp ?? packets[0]?.timestamp
+
   const selectedDisplayPacket = selectedPacketIndex !== null ? displayPackets[selectedPacketIndex] : null
   const selectedBgpPacket = selectedDisplayPacket?.kind === 'bgp' ? selectedDisplayPacket.packet : null
   const selectedGenericPacket = selectedDisplayPacket?.kind === 'generic' ? selectedDisplayPacket.packet : null
@@ -307,6 +309,24 @@ export function MessagesPage() {
     if (!selectedBgpPacket) return null
     const index = packets.indexOf(selectedBgpPacket)
     return index >= 0 ? routeRefreshDiff(packets, index) : null
+  }, [selectedBgpPacket, packets])
+
+  /**
+   * The BGP packet before the selected one between the same two addresses.
+   * Looked up in the unfiltered list, like the hold timer: a filter for UPDATEs
+   * must not turn "2.1s after the last KEEPALIVE" into "40s after the last
+   * UPDATE".
+   */
+  const sessionPrevious = useMemo(() => {
+    if (!selectedBgpPacket) return undefined
+    const index = packets.indexOf(selectedBgpPacket)
+    if (index < 0) return undefined
+    const { srcIp, dstIp } = selectedBgpPacket
+    for (let i = index - 1; i >= 0; i--) {
+      const p = packets[i]
+      if ((p.srcIp === srcIp && p.dstIp === dstIp) || (p.srcIp === dstIp && p.dstIp === srcIp)) return p
+    }
+    return null
   }, [selectedBgpPacket, packets])
 
   /** Opens a packet named by a diff row, by its index in the unfiltered list. */
@@ -790,6 +810,11 @@ export function MessagesPage() {
           <div className="flex-1 overflow-auto">
             <PacketList
               packets={displayPackets}
+              // Relative times count from the start of the capture, not from
+              // the first row the filter left: otherwise every filter change
+              // re-zeroes the clock and two packets seen under different
+              // filters cannot be placed on the same timeline.
+              baseTimestamp={captureStart}
               selectedIndex={selectedPacketIndex}
               onSelect={selectPacket}
               highlightedIndex={highlightedIndex}
@@ -834,6 +859,8 @@ export function MessagesPage() {
                 holdTimer={holdTimer}
                 refreshDiff={refreshDiff}
                 onSelectPacket={selectByPacketIndex}
+                captureStart={captureStart}
+                sessionPrevious={sessionPrevious}
               />
             ) : selectedGenericPacket ? (
               <GenericPacketDetail packet={selectedGenericPacket} />
@@ -927,7 +954,7 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
             <span className="ml-2 font-mono">{packet.originalLength} bytes</span>
           </div>
           <div className="col-span-2">
-            <span className="text-muted">Timestamp:</span>
+            <span className="text-muted">Timestamp (UTC):</span>
             <span className="ml-2 font-mono">{packet.timestamp.toISOString()}</span>
           </div>
         </div>

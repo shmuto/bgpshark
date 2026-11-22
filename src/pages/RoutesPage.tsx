@@ -121,6 +121,12 @@ export function RoutesPage() {
   // The box holds a draft until Search (or Enter) commits it, so the button does
   // what it says. Emptying the box clears the filter without a round trip.
   const [searchDraft, setSearchDraft] = useState(searchQuery)
+  /**
+   * Route History reads oldest first by default, the same way Messages and
+   * Neighbors do, so a timeline does not flip direction between screens. The
+   * header toggles it for the "what happened last" question.
+   */
+  const [historyOrder, setHistoryOrder] = useState<'asc' | 'desc'>('asc')
 
   // Too narrow for two columns: show the list, or the detail, but not halves of
   // both.
@@ -432,7 +438,7 @@ export function RoutesPage() {
                     Withdrawn
                   </SortableHeader>
                   <SortableHeader column="lastSeen" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
-                    Last Seen
+                    Last Seen (UTC)
                   </SortableHeader>
                   <SortableHeader column="flap" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
                     Flap
@@ -514,8 +520,20 @@ export function RoutesPage() {
               <table className="w-full text-sm">
                 <thead className="bg-surface-sunken sticky top-0">
                   <tr className="text-left text-muted">
-                    <th className="px-3 py-2 font-medium">Time</th>
-                    <th className="px-3 py-2 font-medium" title="Time since the previous event">Δ</th>
+                    <th
+                      className="px-3 py-2 font-medium whitespace-nowrap"
+                      aria-sort={historyOrder === 'asc' ? 'ascending' : 'descending'}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setHistoryOrder(historyOrder === 'asc' ? 'desc' : 'asc')}
+                        title={historyOrder === 'asc' ? 'Oldest first — click for newest first' : 'Newest first — click for oldest first'}
+                        className="inline-flex items-center gap-1 hover:text-strong"
+                      >
+                        Time (UTC) <span aria-hidden="true">{historyOrder === 'asc' ? '▲' : '▼'}</span>
+                      </button>
+                    </th>
+                    <th className="px-3 py-2 font-medium" title="Time since the previous event in time">Δ</th>
                     <th className="px-3 py-2 font-medium">Action</th>
                     <th className="px-3 py-2 font-medium">AS_PATH</th>
                     {showPathIdColumn && (
@@ -563,9 +581,15 @@ export function RoutesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-hair">
-                  {/* Newest first, so the gap shown on a row is the one back to
-                      the event before it in time — the wait that produced it. */}
-                  {selectedPrefixStats.history.slice().reverse().map((event, idx, rows) => (
+                  {/* Whichever way the rows run, the gap on a row is the one
+                      back to the event before it in time — the wait that
+                      produced it. */}
+                  {(historyOrder === 'asc'
+                    ? selectedPrefixStats.history
+                    : selectedPrefixStats.history.slice().reverse()
+                  ).map((event, idx, rows) => {
+                    const earlier = historyOrder === 'asc' ? rows[idx - 1] : rows[idx + 1]
+                    return (
                     <tr
                       key={idx}
                       onClick={() => handleHistoryClick(event)}
@@ -575,9 +599,7 @@ export function RoutesPage() {
                         {formatTimeOfDayUtc(event.timestamp)}
                       </td>
                       <td className="px-3 py-2 font-mono text-dim whitespace-nowrap">
-                        {idx < rows.length - 1
-                          ? formatDelta(event.timestamp.getTime() - rows[idx + 1].timestamp.getTime())
-                          : '-'}
+                        {earlier ? formatDelta(event.timestamp.getTime() - earlier.timestamp.getTime()) : '-'}
                       </td>
                       <td className="px-3 py-2">
                         {event.action === 'announce' ? (
@@ -620,7 +642,8 @@ export function RoutesPage() {
                         </td>
                       )}
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             ) : (

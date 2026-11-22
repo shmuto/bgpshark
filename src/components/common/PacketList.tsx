@@ -24,6 +24,8 @@ const STORAGE_KEY = 'bgpshark-visible-columns'
 interface ColumnDef {
   id: ColumnId
   label: string
+  /** Hover text for the header, for a column whose meaning is not its name. */
+  title?: string
   width?: string
   /**
    * `previousTimestamp` is the packet *before this one in the list data*, not
@@ -51,6 +53,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   {
     id: 'time',
     label: 'Relative',
+    title: 'Seconds since the first frame of the capture — fixed, whatever the filter',
     width: 'w-20',
     getValue: (dp, _, base) => (
       <span className="font-mono text-muted">{formatRelativeTime(dp.timestamp, base)}</span>
@@ -72,7 +75,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   },
   {
     id: 'absTime',
-    label: 'Absolute',
+    label: 'Absolute (UTC)',
     width: 'w-28',
     getValue: (dp) => (
       <span className="font-mono text-muted">{formatAbsoluteTime(dp.timestamp)}</span>
@@ -599,7 +602,12 @@ export function PacketList({ packets, selectedIndex, onSelect, baseTimestamp, hi
         <thead ref={measureHeaderRef} className="bg-surface-sunken sticky top-0 z-10" role="rowgroup">
           <tr className="text-left text-muted" role="row">
             {columns.map((col) => (
-              <th key={col.id} role="columnheader" className={`px-2 py-2 font-medium ${col.width ?? ''}`}>
+              <th
+                key={col.id}
+                role="columnheader"
+                title={col.title}
+                className={`px-2 py-2 font-medium whitespace-nowrap ${col.width ?? ''}`}
+              >
                 {col.label}
               </th>
             ))}
