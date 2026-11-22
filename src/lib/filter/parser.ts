@@ -1479,6 +1479,24 @@ export function getSuggestions(query: string, cursorPosition: number, packets: B
   return getFieldSuggestions('')
 }
 
+/**
+ * True when the suggestion list has nothing left to offer: a single entry that
+ * is exactly what was typed before the cursor. Showing it anyway leaves a
+ * one-line dropdown over whatever sits under the filter box — the packet
+ * count, the type badges — until the reader dismisses it.
+ */
+export function suggestionsAreSettled(beforeCursor: string, suggestions: Suggestion[]): boolean {
+  if (suggestions.length !== 1) return false
+  const typed = beforeCursor.match(/[^\s()=!<>,]*$/)?.[0] ?? ''
+  if (!typed) return false
+  const unquote = (text: string) => text.replace(/^["']|["']$/g, '')
+  const normalize = (text: string) => unquote(text).toLowerCase()
+  return (
+    normalize(typed) === normalize(suggestions[0].text) ||
+    normalize(typed) === normalize(suggestions[0].insertText.trim())
+  )
+}
+
 // Get field suggestions, including common examples
 function getFieldSuggestions(filter: string): Suggestion[] {
   const suggestions: Suggestion[] = []

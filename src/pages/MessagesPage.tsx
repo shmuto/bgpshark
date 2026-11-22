@@ -694,8 +694,9 @@ function MessagesView() {
           </div>
         )}
 
-        {/* Status bar */}
-        <div className="flex items-center justify-between text-xs text-muted">
+        {/* Status bar. The gap keeps a parse error from running straight on
+            from the packet count ("…of 50 packetsExpected operator…"). */}
+        <div className="flex items-center justify-between gap-3 text-xs text-muted">
           <span>
             Showing {displayPackets.length} of {showAllPackets ? allPackets.length : packets.length} packets
             {showAllPackets && !filterActive && ` (${packets.length} BGP)`}

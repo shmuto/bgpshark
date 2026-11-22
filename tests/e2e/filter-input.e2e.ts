@@ -188,3 +188,37 @@ test.describe('a filter in All Packets mode', () => {
     expect(await shownCount(page)).toBeLessThan(119)
   })
 })
+
+test.describe('the filter box gets out of the way', () => {
+  test.beforeEach(async ({ page }) => {
+    await loadSample(page)
+  })
+
+  test('a value typed in full closes the suggestions over the status bar', async ({ page }) => {
+    const input = page.getByLabel('Filter', { exact: true })
+    await input.click()
+    await input.pressSequentially('ip = 10.0.13.1', { delay: 20 })
+
+    // The lone suggestion would repeat what is already typed.
+    await expect(page.getByRole('button', { name: /^10\.0\.13\.1/ })).toHaveCount(0)
+    const status = page.getByText(/Showing \d+ of \d+ packets/)
+    const box = (await status.boundingBox())!
+    const hit = await page.evaluate(
+      ([x, y]) => document.elementFromPoint(x, y)?.textContent ?? '',
+      [box.x + 5, box.y + box.height / 2]
+    )
+    expect(hit).toMatch(/Showing/)
+  })
+
+  test('a parse error is spaced off the packet count', async ({ page }) => {
+    const input = page.getByLabel('Filter', { exact: true })
+    await input.fill('type')
+    await page.keyboard.press('Escape')
+    const error = page.getByText(/Expected operator after "type"/)
+    await expect(error).toBeVisible({ timeout: 5_000 })
+
+    const count = (await page.getByText(/Showing \d+ of \d+ packets/).boundingBox())!
+    const message = (await error.boundingBox())!
+    expect(message.x - (count.x + count.width)).toBeGreaterThanOrEqual(8)
+  })
+})
