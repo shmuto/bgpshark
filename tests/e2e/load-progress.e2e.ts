@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { announce, buildScenario, type BgpMessageSpec } from '../../src/lib/build'
-import { loadCapture } from './helpers'
+import { loadCapture, openMessagesAfterLoad } from './helpers'
 
 /**
  * A capture big enough to take more than one database batch — the loader
@@ -64,7 +64,7 @@ test('loading a capture shows a gauge that only moves forwards', async ({ page }
   })
 
   await loadCapture(page, 'table-transfer.pcap', tableTransfer(40_000))
-  await page.waitForURL('**/messages', { timeout: 60_000 })
+  await openMessagesAfterLoad(page, 60_000)
   await expect(page.getByRole('progressbar')).toBeHidden()
 
   const seen = await page.evaluate(

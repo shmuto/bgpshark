@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, evpnCapture, loadCapture, runSql, shownCount } from './helpers'
+import { applyFilter, evpnCapture, goToDashboard, loadCapture, openMessagesAfterLoad, runSql, shownCount } from './helpers'
 
 /**
  * EVPN end to end, on a capture of a MAC moving between two leaves.
@@ -12,7 +12,7 @@ import { applyFilter, evpnCapture, loadCapture, runSql, shownCount } from './hel
  */
 test.beforeEach(async ({ page }) => {
   await loadCapture(page, 'evpn-fabric.pcap', evpnCapture())
-  await page.waitForURL('**/messages')
+  await openMessagesAfterLoad(page)
   await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
 })
 
@@ -107,5 +107,15 @@ test.describe('EVPN on the route history', () => {
     expect(body).toContain('10.0.0.1:100')
     expect(body).toContain('🔴 Withdraw')
     expect(body).toContain('🟢 Announce')
+  })
+})
+
+test.describe('EVPN on the dashboard', () => {
+  test('a MAC that moved is named as a move, from one leaf to the other', async ({ page }) => {
+    await goToDashboard(page)
+    await expect(page.getByText(/MAC moved: \[2\] 00:0c:29:aa:bb:cc/)).toBeVisible()
+    await expect(page.getByText('10.0.0.2 → 10.0.0.1')).toBeVisible()
+    // Two leaves advertising the same MAC is a move, not an AS_PATH change.
+    await expect(page.getByText(/AS_PATH changed/)).toHaveCount(0)
   })
 })

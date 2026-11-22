@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { DashboardAlert } from './types'
 import { formatTimeOfDayUtc } from '../../lib/format-time'
@@ -6,8 +7,21 @@ interface AlertListProps {
   alerts: DashboardAlert[]
 }
 
+/**
+ * Rows shown before the rest fold behind "Show N more".
+ *
+ * The list is already sorted worst first, so the top few are the ones that
+ * explain the capture; on a busy capture the full list used to fill the whole
+ * first screen and push the neighbour table and timeline — the overview the
+ * dashboard exists for — below the fold.
+ */
+const COLLAPSED_ALERT_COUNT = 5
+
 export function AlertList({ alerts }: AlertListProps) {
   const navigate = useNavigate()
+  const [expanded, setExpanded] = useState(false)
+  const hidden = Math.max(0, alerts.length - COLLAPSED_ALERT_COUNT)
+  const shown = expanded ? alerts : alerts.slice(0, COLLAPSED_ALERT_COUNT)
 
   const handleView = (alert: DashboardAlert) => {
     const filterPart = alert.filter ? `filter=${encodeURIComponent(alert.filter)}` : ''
@@ -33,8 +47,8 @@ export function AlertList({ alerts }: AlertListProps) {
         </div>
       ) : (
         <ul className="divide-y divide-hair">
-          {alerts.map((alert) => (
-            <li key={alert.id} className="px-4 py-3 flex items-center justify-between gap-4">
+          {shown.map((alert) => (
+            <li key={alert.id} className="px-4 py-2 flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span>{alert.severity === 'critical' ? '🔴' : '🟡'}</span>
@@ -62,6 +76,18 @@ export function AlertList({ alerts }: AlertListProps) {
               </button>
             </li>
           ))}
+          {hidden > 0 && (
+            <li className="px-4 py-2">
+              <button
+                type="button"
+                onClick={() => setExpanded(!expanded)}
+                aria-expanded={expanded}
+                className="text-xs text-accent hover:text-accent-hover"
+              >
+                {expanded ? 'Show fewer' : `Show ${hidden} more alert${hidden === 1 ? '' : 's'}`}
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </div>

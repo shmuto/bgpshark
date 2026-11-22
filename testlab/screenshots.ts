@@ -361,6 +361,10 @@ async function run(browser: Browser, shot: Shot): Promise<void> {
       mimeType: 'application/vnd.tcpdump.pcap',
       buffer: capture.bytes,
     })
+    // A loaded capture lands on the Dashboard; every shot starts from the
+    // message explorer and navigates on from there, as before.
+    await page.waitForURL('**/dashboard')
+    await page.getByRole('link', { name: 'Messages', exact: true }).click()
     await page.waitForURL('**/messages')
     // The packet list is up as soon as the parser finishes; DuckDB takes longer,
     // and a filtered shot taken before it is ready photographs the in-memory

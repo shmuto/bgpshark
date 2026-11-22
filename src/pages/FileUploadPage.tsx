@@ -12,10 +12,11 @@ export function FileUploadPage() {
   const from = (location.state as { from?: string } | null)?.from
 
   // Take the user to the screen they asked for once the capture is ready,
-  // falling back to the message explorer when they came here directly.
+  // falling back to the dashboard when they came here directly: the overview
+  // first, then down into Messages, Neighbors or Routes from what it flags.
   useEffect(() => {
     if (status === 'ready') {
-      navigate(from ?? '/messages', { replace: true })
+      navigate(from ?? '/dashboard', { replace: true })
     }
   }, [status, from, navigate])
 

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { goToDashboard, gracefulRestartCapture, loadCapture, silentTeardownCapture } from './helpers'
+import { goToDashboard, gracefulRestartCapture, loadCapture, openMessagesAfterLoad, silentTeardownCapture } from './helpers'
 
 /**
  * A reload the two ends had agreed to ride out, told apart from a crash loop.
@@ -14,7 +14,7 @@ import { goToDashboard, gracefulRestartCapture, loadCapture, silentTeardownCaptu
 test.describe('a router that restarted gracefully', () => {
   test('is reported as a restart, with the numbers that make it one', async ({ page }) => {
     await loadCapture(page, 'gr.pcap', gracefulRestartCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await goToDashboard(page)
 
     const body = await page.locator('body').innerText()
@@ -31,7 +31,7 @@ test.describe('a router that restarted gracefully', () => {
   test('replaces the flapping row rather than sitting beside it', async ({ page }) => {
     // The complaint in S8 exactly: a reload and a crash loop read identically.
     await loadCapture(page, 'gr.pcap', gracefulRestartCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await goToDashboard(page)
 
     const body = await page.locator('body').innerText()
@@ -45,7 +45,7 @@ test.describe('a router that restarted gracefully', () => {
     // Same restart, one flag different, and the operational reading inverts:
     // the dataplane dropped traffic for the whole window.
     await loadCapture(page, 'gr-nf.pcap', gracefulRestartCapture({ forwarding: false }))
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await goToDashboard(page)
 
     const body = await page.locator('body').innerText()
@@ -57,7 +57,7 @@ test.describe('a router that restarted gracefully', () => {
     // The control: same shape of teardown and reconnect, no capability, so
     // nobody agreed to hold the routes and nothing was graceful about it.
     await loadCapture(page, 'silent.pcap', silentTeardownCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await goToDashboard(page)
 
     const body = await page.locator('body').innerText()

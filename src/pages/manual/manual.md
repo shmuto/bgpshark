@@ -39,9 +39,11 @@ Each screen is designed around a specific troubleshooting question. If you are n
 
 ### Dashboard
 
-Displays message counts, a timeline, a neighbor summary table, and the **Alerts** panel. Alerts are sorted by severity and grouped per problem rather than per packet (for example, 40 rejected OPEN retries appear as a single row with a count of 40).
+A loaded capture opens here. Displays message counts, a timeline, a neighbor summary table, and the **Alerts** panel. Alerts are sorted by severity and grouped per problem rather than per packet (for example, 40 rejected OPEN retries appear as a single row with a count of 40). The five most severe rows are shown; **Show N more alerts** expands the rest.
 
-Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping, AS_PATH changes, graceful restarts, silent TCP teardowns, one-way sessions, and TCP connections that receive no BGP reply. Click **View →** on any alert to jump straight to the relevant packet with an appropriate filter applied.
+Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping, AS_PATH changes from the same peer, EVPN MAC moves, graceful restarts, silent TCP teardowns, one-way sessions, and TCP connections that receive no BGP reply. Click **View →** on any alert to jump straight to the relevant packet with an appropriate filter applied.
+
+*Cease / Connection Collision Resolution* is shown as a warning rather than critical: it is how BGP closes one of two connections when both ends dial at once (RFC 4271 §6.8), not a failure. Different AS_PATHs from *different* peers (an iBGP peer's empty path next to an eBGP peer's `65001`) are normal and raise nothing; compare them on **Routes**.
 
 > "No issues detected" means every session in the capture stayed healthy at the session layer. It does not rule out policy problems such as route leaks or unexpected best-path selection.
 
@@ -272,7 +274,7 @@ mac = 00:0c:29:aa:bb:cc
 
 `mac`, `vni`, `rd`, and `evpn_type` match both announcements and withdrawals, and the detail view decodes RD, MAC, VNI, and ESI. Repeated advertisements of the same MAC from two VTEPs point to a MAC move loop (typically a dual-homed host misconfiguration or bridge loop).
 
-**Routes** tracks the MAC's full history, and the Dashboard flags repeated moves as *"Route flapping"*. MAC Mobility extended communities are decoded in packet details, though sequence numbers are not compared automatically.
+**Routes** tracks the MAC's full history, and the Dashboard flags the move itself as *"MAC moved"* (naming the VTEP it left and the one it moved to) alongside *"Route flapping"*. MAC Mobility extended communities are decoded in packet details, though sequence numbers are not compared automatically.
 
 ### “After a reload, or after a soft clear”
 

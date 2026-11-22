@@ -242,7 +242,7 @@ describe('route-level alerts', () => {
     expect(changed.title).toBe('AS_PATH changed: 192.168.2.0/24')
     // Prepending reads as a count here and on the routes screen alike, so the
     // number of prepends is the thing on screen rather than something to count.
-    expect(changed.detail).toBe('65002 → 65002×3')
+    expect(changed.detail).toBe('from 10.10.0.2: 65002 → 65002×3')
     expect(changed.filter).toBe('prefix = 192.168.2.0/24')
     expect(changed.packetIndex).toBe(2) // the announcement that differs
     expect(changed.count).toBe(2)
@@ -856,5 +856,45 @@ describe('a restart rather than a flap', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0].count).toBe(3)
     expect(rows[0].timeSpan).toBeDefined()
+  })
+})
+
+describe('noise the alert panel must not raise', () => {
+  test('different paths from different peers are not an AS_PATH change', () => {
+    // The iBGP peer re-advertises with an empty AS_PATH, the eBGP peer with
+    // its AS: two paths, each perfectly stable.
+    const alerts = computeAlerts([
+      announce('10.0.13.3', 0, '10.0.12.0/24', []),
+      announce('10.0.14.1', 1, '10.0.12.0/24', [65001]),
+      announce('10.0.13.3', 2, '10.0.12.0/24', []),
+      announce('10.0.14.1', 3, '10.0.12.0/24', [65001]),
+    ])
+
+    expect(byId(alerts, 'route-aspath-')).toHaveLength(0)
+  })
+
+  test('a change from one peer is still reported when another peer differs too', () => {
+    const alerts = computeAlerts([
+      announce('10.0.13.3', 0, '10.0.12.0/24', []),
+      announce('10.0.14.1', 1, '10.0.12.0/24', [65001]),
+      announce('10.0.14.1', 2, '10.0.12.0/24', [65003, 65001]),
+    ])
+
+    const changed = byId(alerts, 'route-aspath-')[0]
+    expect(changed.detail).toBe('from 10.0.14.1: 65001 → 65003 65001')
+    expect(changed.packetIndex).toBe(2)
+  })
+
+  test('Connection Collision Resolution is a warning, below the real cause', () => {
+    const alerts = computeAlerts([
+      notification('10.10.0.1', '10.10.0.2', 0, 6, 1),
+      notification('10.10.0.2', '10.10.0.1', 1, 6, 7),
+      notification('10.10.0.2', '10.10.0.1', 2, 6, 7),
+    ])
+
+    expect(alerts[0].severity).toBe('critical')
+    const collision = alerts.find((alert) => alert.packetIndex === 1)
+    expect(collision?.severity).toBe('warning')
+    expect(collision?.detail).toContain('normal')
   })
 })

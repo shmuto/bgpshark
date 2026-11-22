@@ -13,6 +13,16 @@ import { writePcap } from '../../src/lib/pcap/writer'
 export async function loadSample(page: Page) {
   await page.goto('./', { waitUntil: 'networkidle' })
   await page.getByRole('button', { name: /sample/i }).first().click()
+  await openMessagesAfterLoad(page)
+}
+
+/**
+ * Waits for a freshly loaded capture to land — on the Dashboard, the overview
+ * a reader starts from — and then steps into Messages, where most specs work.
+ */
+export async function openMessagesAfterLoad(page: Page, timeout = 30_000) {
+  await page.waitForURL('**/dashboard', { timeout })
+  await page.getByRole('link', { name: 'Messages', exact: true }).click()
   await page.waitForURL('**/messages')
   await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
 }

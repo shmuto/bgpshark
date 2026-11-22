@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { corruptCapture, loadCapture } from './helpers'
+import { corruptCapture, loadCapture, openMessagesAfterLoad } from './helpers'
 
 const SAMPLE = new URL('../../public/sample.pcapng', import.meta.url).pathname
 
@@ -22,7 +22,7 @@ test.describe('parser warnings', () => {
 
   test('a clean capture shows no banner', async ({ page }) => {
     await loadCapture(page, 'sample.pcapng', readFileSync(SAMPLE))
-    await expect(page.getByText(/Showing \d+ of/)).toBeVisible()
+    await openMessagesAfterLoad(page)
     await expect(page.getByText(/warnings? loading this capture/)).toBeHidden()
   })
 })
@@ -34,7 +34,7 @@ test.describe('nothing goes wrong quietly', () => {
     page.on('pageerror', (e) => problems.push(e.message))
 
     await loadCapture(page, 'sample.pcapng', readFileSync(SAMPLE))
-    await expect(page.getByText(/Showing \d+ of/)).toBeVisible()
+    await openMessagesAfterLoad(page)
 
     for (const name of ['Dashboard', 'Neighbors', 'Routes', 'SQL', 'Messages']) {
       await page.getByRole('link', { name, exact: true }).click()

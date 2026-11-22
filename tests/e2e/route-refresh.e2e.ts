@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loadCapture, routeRefreshCapture } from './helpers'
+import { loadCapture, openMessagesAfterLoad, routeRefreshCapture } from './helpers'
 
 /**
  * What a soft clear actually brought back.
@@ -21,7 +21,7 @@ test.describe('what a route refresh changed', () => {
 
   test('names the route that came back tagged', async ({ page }) => {
     await loadCapture(page, 'refresh.pcap', routeRefreshCapture('gained'))
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await selectTheRefresh(page)
 
     const body = await page.locator('body').innerText()
@@ -40,7 +40,7 @@ test.describe('what a route refresh changed', () => {
     // from withdrawals: after a refresh the peer re-sends its table, and a
     // route it no longer has is absent rather than withdrawn.
     await loadCapture(page, 'refresh-lost.pcap', routeRefreshCapture('lost'))
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await selectTheRefresh(page)
 
     const body = await page.locator('body').innerText()
@@ -53,7 +53,7 @@ test.describe('what a route refresh changed', () => {
     // A row that names evidence has to reach it, the same bargain the teardown
     // alert makes — here the packet that last carried the route.
     await loadCapture(page, 'refresh.pcap', routeRefreshCapture('gained'))
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await selectTheRefresh(page)
 
     await page.getByRole('button', { name: '10.1.1.0/24' }).click()
@@ -64,7 +64,7 @@ test.describe('what a route refresh changed', () => {
 
   test('says nothing on a message that is not a refresh', async ({ page }) => {
     await loadCapture(page, 'refresh.pcap', routeRefreshCapture('gained'))
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
 
     await page.getByText('AS65001 Hold=90').first().click()
 

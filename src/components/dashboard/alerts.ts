@@ -56,8 +56,20 @@ function sessionFilter(ipA: string, ipB: string): string {
   return `(src=${ipA} and dst=${ipB}) or (src=${ipB} and dst=${ipA})`
 }
 
+/**
+ * Cease / Connection Collision Resolution (RFC 4271 §6.8): when both ends
+ * connect at once, one of the two connections is closed with this code. It is
+ * how BGP is meant to resolve the race, so it is reported — it does mean two
+ * connections were opened — but not as a failure, and never above the
+ * NOTIFICATION that actually brought the session down.
+ */
+function isRoutineNotification(notif: BgpNotificationMessage): boolean {
+  return notif.errorCode === 6 && notif.errorSubcode === 7
+}
+
 interface NotificationGroup {
   title: string
+  routine: boolean
   srcIp: string
   dstIp: string
   first: Date
@@ -86,6 +98,7 @@ function groupNotifications(packets: BgpPacket[]): DashboardAlert[] {
       if (!group) {
         groups.set(key, {
           title: `NOTIFICATION: ${notif.errorCodeName} / ${notif.errorSubcodeName}`,
+          routine: isRoutineNotification(notif),
           srcIp: packet.srcIp,
           dstIp: packet.dstIp,
           first: packet.timestamp,
@@ -108,9 +121,11 @@ function groupNotifications(packets: BgpPacket[]): DashboardAlert[] {
 
   return Array.from(groups.values()).map((group) => ({
     id: `notif-${group.firstPacketIndex}`,
-    severity: 'critical' as const,
+    severity: group.routine ? ('warning' as const) : ('critical' as const),
     title: group.title,
-    detail: `${group.srcIp} → ${group.dstIp}`,
+    detail: group.routine
+      ? `${group.srcIp} → ${group.dstIp} — both ends connected at once; one connection closed (normal)`
+      : `${group.srcIp} → ${group.dstIp}`,
     timestamp: group.first,
     filter: sessionFilter(group.srcIp, group.dstIp),
     packetIndex: group.firstPacketIndex,
@@ -119,14 +134,42 @@ function groupNotifications(packets: BgpPacket[]): DashboardAlert[] {
   }))
 }
 
-/** Distinct AS_PATHs announced for a route, in the order they first appeared. */
-function distinctAsPaths(stat: PrefixStats): string[] {
-  const paths: string[] = []
+interface PathChange {
+  /** The peer whose path changed. */
+  source: string
+  pathId?: number
+  /** Distinct AS_PATHs that peer announced, in the order they first appeared. */
+  paths: string[]
+}
+
+/**
+ * The peer (and ADD-PATH path) whose AS_PATH for a route changed the most.
+ *
+ * Paths are only compared within one peer's announcements. Two peers sending
+ * different paths for the same prefix is ordinary — an iBGP peer's empty
+ * AS_PATH next to an eBGP peer's `65001` is the textbook case — and comparing
+ * across them reported "(no AS_PATH) → 65001" on every capture with both kinds
+ * of session. ADD-PATH Path Identifiers are kept apart for the same reason:
+ * several paths from one peer is what ADD-PATH is for.
+ */
+function asPathChange(stat: PrefixStats): PathChange | null {
+  const bySource = new Map<string, PathChange>()
   for (const event of stat.history) {
     if (event.action !== 'announce' || event.asPath === undefined) continue
-    if (!paths.includes(event.asPath)) paths.push(event.asPath)
+    const key = `${event.source}|${event.pathId ?? ''}`
+    let entry = bySource.get(key)
+    if (!entry) {
+      entry = { source: event.source, pathId: event.pathId, paths: [] }
+      bySource.set(key, entry)
+    }
+    if (!entry.paths.includes(event.asPath)) entry.paths.push(event.asPath)
   }
-  return paths
+
+  let worst: PathChange | null = null
+  for (const entry of bySource.values()) {
+    if (entry.paths.length > 1 && (!worst || entry.paths.length > worst.paths.length)) worst = entry
+  }
+  return worst
 }
 
 function describeAsPath(path: string): string {
@@ -186,26 +229,64 @@ function computeRouteAlerts(stats: PrefixStats[]): DashboardAlert[] {
   // a leak. Which of those it is only the AS numbers can say, so the row shows
   // the first path and the latest one.
   const repathed = stats
-    .map((stat) => ({ stat, paths: distinctAsPaths(stat) }))
-    .filter((entry) => entry.paths.length > 1)
-    .sort((a, b) => b.paths.length - a.paths.length || b.stat.lastSeenMs - a.stat.lastSeenMs)
+    .map((stat) => ({ stat, change: asPathChange(stat) }))
+    .filter((entry): entry is { stat: PrefixStats; change: PathChange } => entry.change !== null)
+    .sort(
+      (a, b) =>
+        b.change.paths.length - a.change.paths.length || b.stat.lastSeenMs - a.stat.lastSeenMs
+    )
 
-  for (const { stat, paths } of repathed.slice(0, ROUTE_ALERT_LIMIT)) {
-    // The packet worth opening is the one where the path first differed, not
-    // the original announcement.
+  for (const { stat, change: { source, pathId, paths } } of repathed.slice(0, ROUTE_ALERT_LIMIT)) {
+    // The packet worth opening is the one where that peer's path first
+    // differed, not the original announcement.
     const change =
       stat.history.find(
-        (event) => event.action === 'announce' && event.asPath !== undefined && event.asPath !== paths[0]
+        (event) =>
+          event.action === 'announce' &&
+          event.source === source &&
+          event.pathId === pathId &&
+          event.asPath !== undefined &&
+          event.asPath !== paths[0]
       ) ?? stat.history[0]
+    const from = pathId !== undefined ? `${source} (path ${pathId})` : source
     alerts.push({
       id: `route-aspath-${stat.key}`,
       severity: 'warning',
       title: `AS_PATH changed: ${stat.key}`,
-      detail: `${describeAsPath(paths[0])} → ${describeAsPath(paths[paths.length - 1])}`,
+      detail: `from ${from}: ${describeAsPath(paths[0])} → ${describeAsPath(paths[paths.length - 1])}`,
       timestamp: change.timestamp,
       filter: `prefix = ${stat.key}`,
       packetIndex: change.packetIndex,
       count: paths.length,
+    })
+  }
+
+  // An EVPN MAC/IP route announced by one VTEP and then by another is a host
+  // moving. Comparing AS_PATHs only within a peer (above) no longer sees that,
+  // and "AS_PATH changed" was never the right name for it anyway: the fact
+  // worth a row is which leaf the MAC was behind, and which it is behind now.
+  const moved = stats
+    .filter((stat) => stat.key.startsWith('[2] '))
+    .map((stat) => {
+      const announcements = stat.history.filter((event) => event.action === 'announce')
+      const moves = announcements.filter((event, i) => i > 0 && event.source !== announcements[i - 1].source)
+      return { stat, announcements, moves }
+    })
+    .filter((entry) => entry.moves.length > 0)
+    .sort((a, b) => b.moves.length - a.moves.length || b.stat.lastSeenMs - a.stat.lastSeenMs)
+
+  for (const { stat, announcements, moves } of moved.slice(0, ROUTE_ALERT_LIMIT)) {
+    const last = moves[moves.length - 1]
+    const mac = stat.key.match(/[0-9a-f]{2}(?::[0-9a-f]{2}){5}/i)?.[0]
+    alerts.push({
+      id: `route-macmove-${stat.key}`,
+      severity: 'warning',
+      title: `MAC moved: ${stat.key}`,
+      detail: `${announcements[0].source} → ${last.source}`,
+      timestamp: moves[0].timestamp,
+      filter: mac ? `mac = ${mac}` : `prefix = ${stat.key}`,
+      packetIndex: moves[0].packetIndex,
+      count: moves.length,
     })
   }
 

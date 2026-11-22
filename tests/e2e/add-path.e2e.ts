@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { addPathCapture, loadCapture } from './helpers'
+import { addPathCapture, loadCapture, openMessagesAfterLoad } from './helpers'
 
 /**
  * ADD-PATH, which is invisible in an UPDATE and decided in the OPEN.
@@ -14,7 +14,7 @@ import { addPathCapture, loadCapture } from './helpers'
 test.describe('routes that arrived with a Path Identifier', () => {
   test('two paths to one prefix are two routes, not a repeated one', async ({ page }) => {
     await loadCapture(page, 'add-path.pcap', addPathCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
 
     // The UPDATE carrying both paths.
     await page.getByRole('row').filter({ hasText: 'UPDATE' }).first().click()
@@ -29,7 +29,7 @@ test.describe('routes that arrived with a Path Identifier', () => {
     // the history reads as an announce and a withdraw of the same route — the
     // prefix going away, which is not what happened.
     await loadCapture(page, 'add-path.pcap', addPathCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await page.getByRole('link', { name: 'Routes' }).click()
     await page.getByText('10.1.0.0/24').first().click()
 
@@ -53,7 +53,7 @@ test.describe('what ADD-PATH was actually negotiated', () => {
     // either direction. The advertisement diff and the outcome disagree here,
     // and the outcome is the one that answers "why am I only getting one path".
     await loadCapture(page, 'add-path-send.pcap', addPathCapture('send'))
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await page.getByRole('link', { name: 'Neighbors' }).click()
     await page.getByText('1.1.1.1').first().click()
     await page.getByText(/10\.0\.0\.\d+ ↔ 10\.0\.0\.\d+/).first().click()
@@ -67,7 +67,7 @@ test.describe('what ADD-PATH was actually negotiated', () => {
 
   test('a working session says so, in both directions', async ({ page }) => {
     await loadCapture(page, 'add-path.pcap', addPathCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await page.getByRole('link', { name: 'Neighbors' }).click()
     await page.getByText('1.1.1.1').first().click()
     await page.getByText(/10\.0\.0\.\d+ ↔ 10\.0\.0\.\d+/).first().click()

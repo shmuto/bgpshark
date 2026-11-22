@@ -83,7 +83,7 @@ Because AS width and ADD-PATH Path Identifiers are negotiated in OPEN and absent
 Path Identifiers are retained per prefix and displayed on packet detail chips and in the Route Analysis **Path ID** column.
 
 #### 2.1.8 Analysis Views
-- **Dashboard (`/dashboard`):** Summary counters, severity-sorted alerts (§2.1.14), neighbor table, and message timeline. Computed in memory so it stays functional without DuckDB.
+- **Dashboard (`/dashboard`):** Where a freshly loaded capture lands (a deep link's original destination is still honoured). Summary counters, severity-sorted alerts (§2.1.14), neighbor table, and message timeline. Computed in memory so it stays functional without DuckDB.
 - **Message Explorer (`/messages`):** Filter bar, virtualized packet list, detail view, hex dump, and filtered `.pcap` export.
 - **Neighbor Analysis (`/neighbors`):** Sessions grouped by Router ID, session event summary, and Capability Diff (§2.1.10).
 - **Route Analysis (`/routes`):** Per-prefix announce/withdraw history, flap counts, AS_PATH analysis, and best-path attribute columns (shown only when present on the selected route; `ORIGIN` shown only when values differ).
@@ -119,15 +119,16 @@ Embedded offline Help page outside `RequireCapture` so it is accessible before l
 - Screenshots in `public/manual/` are shared across languages with localized captions and intrinsic dimensions injected at build time to prevent layout shifts with lazy loading.
 
 #### 2.1.14 Dashboard Alert Rules (`src/components/dashboard/alerts.ts`)
-Alerts are grouped **one row per problem** (not per packet) and sorted by severity, occurrence count, and recency.
+Alerts are grouped **one row per problem** (not per packet) and sorted by severity, occurrence count, and recency. The panel shows the top five and folds the rest behind a **Show N more** toggle, so the neighbor table and timeline stay on the first screen.
 
 | Rule | Severity | Fires when | Must stay quiet about |
 |------|----------|------------|-----------------------|
-| NOTIFICATION | critical | Any NOTIFICATION, grouped by sender → receiver, code, and subcode | — |
+| NOTIFICATION | critical (warning for Cease / Connection Collision Resolution, 6/7) | Any NOTIFICATION, grouped by sender → receiver, code, and subcode | Collision resolution is RFC 4271 §6.8 behaviour, so it never ranks with the teardown that caused the reconnect |
 | Session flapping | warning | ≥ 4 OPENs between a peer pair | Single establishment; re-establishment after clean Cease; peerings fully accounted for by Graceful Restart |
 | Withdrawn burst | warning | ≥ 10 prefixes withdrawn within 10s | Steady-state withdrawals spread over time |
 | Route flapping | warning | Prefix withdrawn at least once per announcing peer (top 5 + summary row) | Stable routes never withdrawn |
-| AS_PATH changed | warning | Multiple distinct AS_PATHs for a prefix (top 5 + summary row) | Constant AS prepends |
+| AS_PATH changed | warning | Multiple distinct AS_PATHs for a prefix **from the same peer** (and, with ADD-PATH, the same Path Identifier) (top 5 + summary row) | Constant AS prepends; different paths from different peers (iBGP empty path vs. eBGP `65001`) |
+| MAC moved | warning | An EVPN MAC/IP route announced by one peer and then by another (top 5) | MAC routes only ever announced by one VTEP |
 | One direction | critical | Peering has TCP frames in only one direction | Bidirectional captures |
 | Accepted, no BGP | critical | TCP SYN-ACK observed, but only one end sent BGP | Refused connections (handled by `computeTransportAlerts`) |
 | Graceful restart | warning (critical if broken) | Teardown without NOTIFICATION followed by both peers re-OPENing with Graceful Restart; reports Restart Time, forwarding-state preservation, and convergence to End-of-RIB. Escalates to critical if forwarding state was not preserved or convergence exceeded Restart Time | Flaps without GR capability; teardowns explained by a NOTIFICATION |

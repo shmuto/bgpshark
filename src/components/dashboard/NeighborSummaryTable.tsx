@@ -34,10 +34,10 @@ export function NeighborSummaryTable({ rows }: NeighborSummaryTableProps) {
             <thead className="bg-surface-sunken">
               <tr className="text-left text-muted">
                 <th className="px-4 py-2 font-medium">Neighbor Pair</th>
-                <th className="px-4 py-2 font-medium text-right">Pkts</th>
-                <th className="px-4 py-2 font-medium text-right">OPEN</th>
-                <th className="px-4 py-2 font-medium text-right">UPD</th>
-                <th className="px-4 py-2 font-medium text-right">NOTIF</th>
+                <th className="px-3 py-2 font-medium text-right">Pkts</th>
+                <th className="px-3 py-2 font-medium text-right">OPEN</th>
+                <th className="px-3 py-2 font-medium text-right">UPD</th>
+                <th className="px-3 py-2 font-medium text-right">NOTIF</th>
                 <th className="px-4 py-2 font-medium">Status</th>
               </tr>
             </thead>
@@ -48,12 +48,12 @@ export function NeighborSummaryTable({ rows }: NeighborSummaryTableProps) {
                   onClick={() => handleRowClick(row)}
                   className="cursor-pointer hover:bg-surface-sunken"
                 >
-                  <td className="px-4 py-2 font-mono text-strong">{row.ipA} ↔ {row.ipB}</td>
-                  <td className="px-4 py-2 text-right text-muted">{row.total}</td>
-                  <td className="px-4 py-2 text-right text-muted">{row.counts.OPEN}</td>
-                  <td className="px-4 py-2 text-right text-muted">{row.counts.UPDATE}</td>
-                  <td className="px-4 py-2 text-right text-muted">{row.counts.NOTIFICATION}</td>
-                  <td className="px-4 py-2">
+                  <td className="px-4 py-2 font-mono text-strong whitespace-nowrap">{row.ipA} ↔ {row.ipB}</td>
+                  <td className="px-3 py-2 text-right text-muted">{row.total}</td>
+                  <td className="px-3 py-2 text-right text-muted">{row.counts.OPEN}</td>
+                  <td className="px-3 py-2 text-right text-muted">{row.counts.UPDATE}</td>
+                  <td className="px-3 py-2 text-right text-muted">{row.counts.NOTIFICATION}</td>
+                  <td className="px-4 py-2 whitespace-nowrap">
                     {row.neverEstablished ? (
                       <span className="text-critical">⚠ Never up</span>
                     ) : row.hasNotification ? (
