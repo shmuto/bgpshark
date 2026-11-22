@@ -1,5 +1,7 @@
 # 🦈 BGPShark
 
+English | [日本語](README.ja.md)
+
 A browser-based pcap analyzer specialized for BGP session troubleshooting.
 Inspect OPEN, UPDATE, NOTIFICATION, KEEPALIVE, and ROUTE-REFRESH messages without launching Wireshark.
 
