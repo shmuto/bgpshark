@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loadSample, runSql } from './helpers'
+import { loadSample, prefixCount, runSql } from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await loadSample(page)
@@ -112,5 +112,38 @@ test.describe('from a result to the evidence', () => {
 
     await page.waitForURL('**/routes**')
     await expect(page.getByRole('heading', { name: 'Route History: 10.0.12.0/24' })).toBeVisible()
+  })
+})
+
+test.describe('prefix links without a length', () => {
+  test('a bare address opens the routes that cover it', async ({ page }) => {
+    await runSql(page, "select prefix from nlri where prefix = '10.0.12.0' limit 1")
+    await page.getByRole('link', { name: '10.0.12.0' }).click()
+
+    await page.waitForURL('**/routes**')
+    await expect(page).toHaveURL(/match=supernets/)
+    expect(await prefixCount(page)).toBeGreaterThan(0)
+    await expect(page.getByText('10.0.12.0/24').first()).toBeVisible()
+  })
+
+  test('the Prefix Flapping template returns routes as CIDR, linked exactly', async ({ page }) => {
+    // The sample flaps nothing more than five times, so loosen the threshold.
+    await runSql(
+      page,
+      `SELECT prefix, COUNT(*) AS n FROM (
+         SELECT COALESCE(prefix || '/' || prefix_length, prefix) AS prefix FROM nlri
+         UNION ALL
+         SELECT COALESCE(prefix || '/' || prefix_length, prefix) AS prefix FROM withdrawn
+       ) GROUP BY prefix ORDER BY n DESC LIMIT 1`
+    )
+    const link = page.getByRole('link', { name: /\/\d+$/ }).first()
+    const route = (await link.textContent())!.trim()
+    await link.click()
+    await expect(page.getByRole('heading', { name: `Route History: ${route}` })).toBeVisible()
+  })
+
+  test('the Prefix Flapping template itself returns CIDR', async ({ page }) => {
+    await page.getByTestId('query-templates').getByRole('button', { name: 'Prefix Flapping' }).click()
+    await expect(page.getByLabel('SQL query')).toHaveValue(/prefix \|\| '\/' \|\| prefix_length/)
   })
 })
