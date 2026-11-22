@@ -51,7 +51,7 @@ Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping
 
 Shows the packet list, a structured detail pane, and a foldable hex dump. Click any row to inspect decoded fields down to individual capabilities, path attributes, and raw bytes.
 
-The **Info** column summarizes each message (for example, `AS65001 Hold=90` for OPEN, announced/withdrawn counts for UPDATE, or the error name for NOTIFICATION). Empty UPDATE messages are labeled **End-of-RIB**.
+The **Info** column summarizes each message (for example, `AS65001 Hold=90` for OPEN, the announced prefixes and the struck-through withdrawn ones for UPDATE, with `+N` when there are more, or the error name for NOTIFICATION). Empty UPDATE messages are labeled **End-of-RIB**.
 
 Use **Columns** (at the right end of the status bar, above the list) to toggle timestamp and port columns, and **Export** to save the currently filtered packets as a new `.pcap` file (handy for attaching only the relevant frames to a ticket).
 

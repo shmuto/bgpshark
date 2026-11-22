@@ -299,7 +299,7 @@ const SHOTS: Shot[] = [
     take: async (page) => {
       await go(page, 'Messages')
       await filter(page, 'mac = 00:0c:29:aa:bb:cc')
-      await page.getByText('1 withdrawn').first().click()
+      await page.locator('tbody [role="row"]').filter({ has: page.locator('.line-through') }).first().click()
       await page.waitForTimeout(600)
       return null
     },

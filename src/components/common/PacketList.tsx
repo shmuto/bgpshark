@@ -167,16 +167,36 @@ const ALL_COLUMNS: ColumnDef[] = [
     },
   },
   {
+    // One column for "what this frame says", the way Wireshark's Info works:
+    // an UPDATE says it with its prefixes, everything else with a line of text.
+    // Prefixes used to have a column of their own beside this one, which left
+    // Info repeating them as counts ("2 withdrawn") or repeating the Type
+    // column's "+3" as "4 msgs".
     id: 'info',
     label: 'Info',
     getValue: (dp) => {
       if (dp.kind === 'bgp') {
         const messages = dp.packet.messages
-        if (messages.length === 1) {
-          return <span className="text-muted truncate">{getMessageSummary(messages[0])}</span>
+        const summary = summarizePacketPrefixes(messages)
+        if (summary && (summary.announced.shown.length > 0 || summary.withdrawn.shown.length > 0)) {
+          const { announced, withdrawn } = summary
+          return (
+            <span className="flex items-center gap-1 min-w-0 overflow-hidden">
+              <PrefixGroupCell group={announced} className="bg-ok-subtle text-ok" />
+              <PrefixGroupCell
+                group={withdrawn}
+                className="bg-critical-subtle text-critical line-through"
+              />
+            </span>
+          )
         }
-        // Multiple messages - show count
-        return <span className="text-muted truncate">{messages.length} msgs</span>
+        // An UPDATE carrying no prefixes is either End-of-RIB or an
+        // attribute-only message; saying so beats a blank cell.
+        if (summary?.endOfRib) {
+          return <span className="text-xs bg-accent-subtle text-accent px-1.5 rounded">End-of-RIB</span>
+        }
+        const text = messages.map(getMessageSummary).filter(Boolean).join('; ')
+        return <span className="text-muted truncate">{text}</span>
       }
       // For generic packets, show port info
       const src = dp.packet.srcPort ?? '?'
@@ -193,35 +213,6 @@ const ALL_COLUMNS: ColumnDef[] = [
         return <span className="font-mono text-muted">{dp.packet.payloadLength}</span>
       }
       return <span className="font-mono text-muted">-</span>
-    },
-  },
-  {
-    id: 'prefix',
-    label: 'Prefix',
-    getValue: (dp) => {
-      if (dp.kind !== 'bgp') return null
-      const summary = summarizePacketPrefixes(dp.packet.messages)
-      if (!summary) return null
-
-      const { announced, withdrawn } = summary
-      if (announced.shown.length === 0 && withdrawn.shown.length === 0) {
-        // An UPDATE carrying no prefixes is either End-of-RIB or an
-        // attribute-only message; saying so beats a blank cell that looks like
-        // the column failed to find anything.
-        return summary.endOfRib ? (
-          <span className="text-xs bg-accent-subtle text-accent px-1.5 rounded">End-of-RIB</span>
-        ) : null
-      }
-
-      return (
-        <span className="flex items-center gap-1 min-w-0 overflow-hidden">
-          <PrefixGroupCell group={announced} className="bg-ok-subtle text-ok" />
-          <PrefixGroupCell
-            group={withdrawn}
-            className="bg-critical-subtle text-critical line-through"
-          />
-        </span>
-      )
     },
   },
   {

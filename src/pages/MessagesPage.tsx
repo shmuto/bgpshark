@@ -613,14 +613,7 @@ function MessagesView() {
             />
           </div>
           <AddFilterPopover valuesFor={valuesFor} onAdd={addCondition} />
-          {query && (
-            <button
-              onClick={() => setQuery('')}
-              className="shrink-0 px-2 py-1.5 text-xs text-muted hover:bg-surface-raised rounded transition-colors"
-            >
-              Clear Filter
-            </button>
-          )}
+          {/* Clearing is the × inside the box; a second button did the same. */}
 
           <div className="h-4 w-px bg-hair-strong shrink-0" />
 

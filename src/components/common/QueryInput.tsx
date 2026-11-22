@@ -217,6 +217,8 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError, in
         />
         {value && (
           <button
+            type="button"
+            aria-label="Clear filter"
             onClick={() => {
               onChange('')
               inputRef.current?.focus()
