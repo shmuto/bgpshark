@@ -49,13 +49,13 @@ Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping
 
 ### Messages
 
-Shows the packet list, a structured detail pane, and a hex dump. Click any row to inspect decoded fields down to individual capabilities, path attributes, and raw bytes.
+Shows the packet list, a structured detail pane, and a foldable hex dump. Click any row to inspect decoded fields down to individual capabilities, path attributes, and raw bytes.
 
 The **Info** column summarizes each message (for example, `AS65001 Hold=90` for OPEN, announced/withdrawn counts for UPDATE, or the error name for NOTIFICATION). Empty UPDATE messages are labeled **End-of-RIB**.
 
 Use **Columns** (at the right end of the status bar, above the list) to toggle timestamp and port columns, and **Export** to save the currently filtered packets as a new `.pcap` file (handy for attaching only the relevant frames to a ticket).
 
-UPDATE path attributes open expanded; collapsing them is remembered as you move between packets with `↑`/`↓`. A KEEPALIVE shows the gap since its sender's previous message and how much of the negotiated hold time that gap used. Leaving **Messages** for another tab and coming back through the header restores the filter, **All Packets** mode, and the selected frame.
+Each UPDATE is one card listing its announced and withdrawn prefixes (including those carried in MP_REACH/MP_UNREACH_NLRI) and its path attributes, each once. **Raw Data** is folded; opening it is remembered as you move between packets with `↑`/`↓`. A KEEPALIVE shows the gap since its sender's previous message and how much of the negotiated hold time that gap used. Leaving **Messages** for another tab and coming back through the header restores the filter, **All Packets** mode, and the selected frame.
 
 ### Neighbors
 
