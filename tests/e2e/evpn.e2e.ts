@@ -21,8 +21,7 @@ test.describe('EVPN in the message list', () => {
     // Finding the row by its MAC is half the assertion: an EVPN route has no
     // prefix, so this column would otherwise be blank or show a made-up one.
     await page.getByText('[2] 00:0c:29:aa:bb:cc').last().click()
-    // The attributes are open by default.
-    await expect(page.getByText(/Click to collapse/)).toBeVisible()
+    await expect(page.getByText('Path Attributes')).toBeVisible()
 
     const body = await page.locator('body').innerText()
     expect(body).toContain('EVPN ROUTES')

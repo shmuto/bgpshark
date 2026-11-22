@@ -44,9 +44,10 @@ export interface PacketPrefixSummary {
  * Returns null when the packet carries no UPDATE at all, so the caller renders
  * an empty cell rather than an empty-looking one.
  *
- * Totals come from `countUpdatePrefixes` so this cell can never disagree with
- * the Info column's counts, and only the first few prefixes are ever formatted:
- * a full-table UPDATE carries thousands, and this runs per rendered row.
+ * Totals come from `countUpdatePrefixes` so the "+N" overflow can never
+ * disagree with the detail view's counts, and only the first few prefixes are
+ * ever formatted: a full-table UPDATE carries thousands, and this runs per
+ * rendered row.
  */
 export function summarizePacketPrefixes(
   messages: BgpMessage[],

@@ -37,7 +37,6 @@ export function AlertList({ alerts }: AlertListProps) {
   return (
     <div className="bg-surface rounded-lg shadow-sm border border-hair">
       <div className="px-4 py-3 border-b border-hair flex items-center gap-2">
-        <span>⚠️</span>
         <h2 className="font-semibold text-strong">Alerts{alerts.length > 0 ? ` (${alerts.length})` : ''}</h2>
       </div>
       {alerts.length === 0 ? (

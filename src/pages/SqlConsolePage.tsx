@@ -220,17 +220,16 @@ export function SqlConsolePage() {
     <div className="flex-1 flex flex-col min-h-0 bg-canvas p-4 gap-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span>💾</span>
           <h1 className="text-lg font-semibold text-strong">SQL Console</h1>
         </div>
         {!dbReady && (
           <span className="text-sm text-warning">
-            ⚠️ DuckDB not initialized. Load a pcap file first.
+            ⚠ DuckDB not initialized. Load a pcap file first.
           </span>
         )}
         {dbReady && !dataLoaded && (
           <span className="text-sm text-warning">
-            ⚠️ This capture could not be loaded into DuckDB, so SQL is unavailable. Filtering on
+            ⚠ This capture could not be loaded into DuckDB, so SQL is unavailable. Filtering on
             the other screens still works in-memory.
           </span>
         )}
@@ -285,7 +284,7 @@ export function SqlConsolePage() {
           <div className="flex-1 bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-[12rem]">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between shrink-0">
               <span className="text-sm font-medium text-strong">
-                📊 Results {result ? `(${result.rows.length} rows)` : ''}
+                Results {result ? `(${result.rows.length} rows)` : ''}
               </span>
               {result && result.rows.length > 0 && (
                 <button
@@ -352,7 +351,7 @@ export function SqlConsolePage() {
           {/* Templates */}
           <div className="bg-surface rounded-lg shadow-sm border border-hair shrink-0">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
-              <span className="text-sm font-medium text-strong">📝 Query Templates</span>
+              <span className="text-sm font-medium text-strong">Query Templates</span>
             </div>
             <div className="p-2" data-testid="query-templates">
               {QUERY_TEMPLATES.map((template) => (
@@ -371,7 +370,7 @@ export function SqlConsolePage() {
           {queryHistory.length > 0 && (
             <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col shrink-0">
               <div className="px-4 py-2 border-b border-hair bg-surface-sunken shrink-0">
-                <span className="text-sm font-medium text-strong">📋 Query History</span>
+                <span className="text-sm font-medium text-strong">Query History</span>
               </div>
               <div className="max-h-48 overflow-auto p-2">
                 {queryHistory.map((q, idx) => (
@@ -391,7 +390,7 @@ export function SqlConsolePage() {
           {/* Schema */}
           <div className="bg-surface rounded-lg shadow-sm border border-hair shrink-0">
             <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-baseline justify-between gap-2">
-              <span className="text-sm font-medium text-strong">📁 Schema</span>
+              <span className="text-sm font-medium text-strong">Schema</span>
               <span className="text-xs text-dim">click a name to insert it</span>
             </div>
             <div className="p-2 text-xs text-muted space-y-1" data-testid="schema">

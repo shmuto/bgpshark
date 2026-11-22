@@ -10,17 +10,31 @@ test.describe('reading packet details', () => {
     await loadSample(page)
   })
 
-  test('UPDATE attributes are open, and stay as the reader left them', async ({ page }) => {
+  test('an UPDATE says each prefix and attribute once', async ({ page }) => {
     await applyFilter(page, 'type = UPDATE')
     await page.locator('tbody [role="row"]').first().click()
-    await expect(page.getByText(/Click to collapse/).first()).toBeVisible()
 
-    await page.getByText(/Click to collapse/).first().click()
-    await expect(page.getByText(/Click for details/).first()).toBeVisible()
+    const update = page.getByTestId('update-message').first()
+    await expect(update.getByText('Path Attributes')).toBeVisible()
+    // The summary-plus-expansion layout listed every announced prefix twice.
+    const chip = update.getByText(/^\d+\.\d+\.\d+\.\d+\/\d+$/).first()
+    const prefix = (await chip.textContent())!.trim()
+    await expect(update.getByText(prefix, { exact: true })).toHaveCount(1)
+  })
 
+  test('Raw Data is folded, and stays as the reader left it', async ({ page }) => {
+    await applyFilter(page, 'type = UPDATE')
+    await page.locator('tbody [role="row"]').first().click()
+
+    const raw = page.locator('summary', { hasText: /Raw Data \(\d+ bytes\)/ })
+    await expect(raw).toBeVisible()
+    await expect(page.locator('details[open]')).toHaveCount(0)
+
+    await raw.click()
+    await expect(page.locator('details[open]')).toHaveCount(1)
     // The next packet keeps the reader's choice instead of resetting it.
     await page.keyboard.press('ArrowDown')
-    await expect(page.getByText(/Click to collapse/)).toHaveCount(0)
+    await expect(page.locator('details[open]')).toHaveCount(1)
   })
 
   test('a KEEPALIVE says how much of the hold time its gap used', async ({ page }) => {

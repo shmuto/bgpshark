@@ -16,7 +16,6 @@ export function NeighborSummaryTable({ rows }: NeighborSummaryTableProps) {
     <div className="bg-surface rounded-lg shadow-sm border border-hair">
       <div className="px-4 py-3 border-b border-hair flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <span>👥</span>
           <h2 className="font-semibold text-strong">BGP Neighbors</h2>
         </div>
         <button
@@ -34,7 +33,7 @@ export function NeighborSummaryTable({ rows }: NeighborSummaryTableProps) {
             <thead className="bg-surface-sunken">
               <tr className="text-left text-muted">
                 <th className="px-4 py-2 font-medium">Neighbor Pair</th>
-                <th className="px-3 py-2 font-medium text-right">Pkts</th>
+                <th className="px-3 py-2 font-medium text-right" title="BGP messages exchanged by the pair">Msgs</th>
                 <th className="px-3 py-2 font-medium text-right">OPEN</th>
                 <th className="px-3 py-2 font-medium text-right">UPD</th>
                 <th className="px-3 py-2 font-medium text-right">NOTIF</th>

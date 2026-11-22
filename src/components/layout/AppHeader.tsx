@@ -25,24 +25,28 @@ export function AppHeader() {
           </h1>
         </NavLink>
 
-        {/* Navigation. The analysis screens need a capture; the builder is how
-            you get one, so it is offered either way. */}
-        <nav className="-mx-1 flex items-center gap-1 overflow-x-auto px-1">
-          {isReady && (
-            <>
-              <NavItem to="/dashboard">Dashboard</NavItem>
-              <NavItem to="/messages">Messages</NavItem>
-              <NavItem to="/neighbors">Neighbors</NavItem>
-              <NavItem to="/routes">Routes</NavItem>
-              <NavItem to="/sql">SQL</NavItem>
-            </>
-          )}
-          <NavItem to="/builder">Build</NavItem>
-          <NavItem to="/manual">Help</NavItem>
-        </nav>
+        {/* The screens that analyse the open capture. Build and Help sit with
+            the utilities on the right instead: side by side with these, Build
+            read as one more view of the current capture, when it is a separate
+            tool whose output replaces it. */}
+        {isReady && (
+          <nav aria-label="Capture" className="-mx-1 flex items-center gap-1 overflow-x-auto px-1">
+            <NavItem to="/dashboard">Dashboard</NavItem>
+            <NavItem to="/messages">Messages</NavItem>
+            <NavItem to="/neighbors">Neighbors</NavItem>
+            <NavItem to="/routes">Routes</NavItem>
+            <NavItem to="/sql">SQL</NavItem>
+          </nav>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
+        {/* The builder is how you get a capture, so it is offered either way. */}
+        <nav aria-label="Tools" className="flex items-center gap-1">
+          <NavItem to="/builder">Build</NavItem>
+          <NavItem to="/manual">Help</NavItem>
+        </nav>
+        <div className="h-4 w-px bg-hair-strong" aria-hidden="true" />
         {/* File name */}
         {fileName && (
           <span className="hidden max-w-[16rem] truncate rounded border border-hair bg-surface-sunken px-2 py-1 font-mono text-xs text-muted md:block">

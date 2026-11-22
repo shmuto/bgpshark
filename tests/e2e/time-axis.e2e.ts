@@ -21,7 +21,7 @@ test.describe('one time axis across filters and screens', () => {
     // clock that restarted at the first row of the filtered list would read 0.
     expect(filtered).not.toBe('0.000')
 
-    await page.getByRole('button', { name: 'Clear Filter' }).click()
+    await page.getByRole('button', { name: 'Clear filter', exact: true }).click()
     await page.waitForTimeout(400)
     await page.locator('input[type="text"]').first().fill(`frame = ${frame}`)
     await page.waitForTimeout(1200)

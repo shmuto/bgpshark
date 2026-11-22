@@ -130,7 +130,7 @@ const SHOTS: Shot[] = [
       await page.waitForTimeout(400)
       await page.getByText('10.0.0.1 ↔ 10.0.0.2').first().click()
       await page.waitForTimeout(800)
-      const diff = card(page, '🔍 Capability Diff')
+      const diff = card(page, 'Capability Diff')
       await diff.scrollIntoViewIfNeeded()
       return diff
     },
@@ -299,7 +299,7 @@ const SHOTS: Shot[] = [
     take: async (page) => {
       await go(page, 'Messages')
       await filter(page, 'mac = 00:0c:29:aa:bb:cc')
-      await page.getByText('1 withdrawn').first().click()
+      await page.locator('tbody [role="row"]').filter({ has: page.locator('.line-through') }).first().click()
       await page.waitForTimeout(600)
       return null
     },

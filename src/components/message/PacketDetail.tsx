@@ -5,6 +5,7 @@ import { KeepaliveMessageView } from './KeepaliveMessageView'
 import { UpdateMessageView } from './UpdateMessageView'
 import { RouteRefreshMessageView } from './RouteRefreshMessageView'
 import { HexDump } from '../common/HexDump'
+import { usePersistentFlag } from '../../hooks/usePersistentFlag'
 import { FilterableValue } from './FilterableValue'
 import type { HoldTimerContext, KeepaliveContext } from '../../lib/bgp/hold-timer'
 import type { RouteRefreshDiff } from '../../lib/bgp/route-refresh'
@@ -45,6 +46,7 @@ export function PacketDetail({
   keepalive,
 }: PacketDetailProps) {
   const { messages, rawData, parseWarnings } = packet
+  const [rawOpen, setRawOpen] = usePersistentFlag('bgpshark-raw-data-open', false)
 
   return (
     <div className="h-full overflow-auto p-4 space-y-4">
@@ -130,13 +132,20 @@ export function PacketDetail({
         />
       ))}
 
-      {/* Hex Dump */}
-      <section>
-        <h3 className="text-sm font-semibold text-dim uppercase tracking-wide mb-2">
+      {/* Hex Dump — folded by default. Almost no BGP question is answered
+          from the bytes once the decode above has read them, and an open dump
+          under every packet is the tallest thing on the pane. A reader who
+          does work from the bytes opens it once and it stays open. */}
+      <details
+        open={rawOpen}
+        onToggle={(e) => setRawOpen(e.currentTarget.open)}
+        className="group"
+      >
+        <summary className="cursor-pointer select-none text-sm font-semibold text-dim uppercase tracking-wide mb-2 hover:text-muted">
           Raw Data ({rawData.length} bytes)
-        </h3>
-        <HexDump data={rawData} />
-      </section>
+        </summary>
+        {rawOpen && <HexDump data={rawData} />}
+      </details>
     </div>
   )
 }

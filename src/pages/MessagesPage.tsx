@@ -613,14 +613,7 @@ function MessagesView() {
             />
           </div>
           <AddFilterPopover valuesFor={valuesFor} onAdd={addCondition} />
-          {query && (
-            <button
-              onClick={() => setQuery('')}
-              className="shrink-0 px-2 py-1.5 text-xs text-muted hover:bg-surface-raised rounded transition-colors"
-            >
-              Clear Filter
-            </button>
-          )}
+          {/* Clearing is the × inside the box; a second button did the same. */}
 
           <div className="h-4 w-px bg-hair-strong shrink-0" />
 
@@ -682,7 +675,7 @@ function MessagesView() {
         {!showAllPackets && packets.length === 0 && allPackets.length > 0 && (
           <div className="text-xs text-warning flex items-center gap-2">
             <span>
-              ⚠️ No BGP messages in this capture, but it contains {allPackets.length} other packets
+              ⚠ No BGP messages in this capture, but it contains {allPackets.length} other packets
               (TCP handshakes, resets, …).
             </span>
             <button

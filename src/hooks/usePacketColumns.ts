@@ -21,7 +21,6 @@ export type PacketColumnId =
   | 'protocol'
   | 'type'
   | 'info'
-  | 'prefix'
   | 'asPath'
   | 'nlriCount'
   | 'withdrawnCount'
@@ -41,18 +40,17 @@ export const PACKET_COLUMNS: { id: PacketColumnId; label: string }[] = [
   { id: 'type', label: 'Type' },
   { id: 'info', label: 'Info' },
   { id: 'length', label: 'Len' },
-  { id: 'prefix', label: 'Prefix' },
   { id: 'asPath', label: 'AS Path' },
   { id: 'nlriCount', label: 'NLRI' },
   { id: 'withdrawnCount', label: 'WR' },
 ]
 
 /**
- * `prefix` is on by default because the question people open a BGP capture
- * with — which routes moved — otherwise needs the column picker found first
- * and then a click into every UPDATE. The rest are the frame identity columns.
+ * Info carries an UPDATE's prefixes, so the question people open a BGP capture
+ * with — which routes moved — is answered without the column picker. The rest
+ * are the frame identity columns.
  */
-export const DEFAULT_PACKET_COLUMNS: PacketColumnId[] = ['index', 'time', 'src', 'dst', 'type', 'info', 'prefix']
+export const DEFAULT_PACKET_COLUMNS: PacketColumnId[] = ['index', 'time', 'src', 'dst', 'type', 'info']
 
 const STORAGE_KEY = 'bgpshark-visible-columns'
 
@@ -65,9 +63,11 @@ function loadSavedColumns(): PacketColumnId[] {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
-      const parsed = JSON.parse(saved) as string[]
+      // The Prefix column was folded into Info. Someone who kept Prefix but
+      // hid Info still wants to see prefixes, so the one becomes the other.
+      const parsed = (JSON.parse(saved) as string[]).map((id) => (id === 'prefix' ? 'info' : id))
       const valid = parsed.filter((id): id is PacketColumnId => PACKET_COLUMNS.some((col) => col.id === id))
-      if (valid.length > 0) return valid
+      if (valid.length > 0) return [...new Set(valid)]
     }
   } catch {
     // Unreadable or blocked storage falls back to the defaults.

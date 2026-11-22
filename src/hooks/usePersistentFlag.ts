@@ -5,9 +5,9 @@ import { useCallback, useEffect, useState } from 'react'
  * remembered across reloads.
  *
  * Shared because the thing it remembers is a reading habit rather than the
- * state of one widget: an UPDATE's attributes stay expanded when the reader
- * arrows on to the next packet — which mounts a fresh view — instead of
- * snapping shut on every packet and making attribute comparisons a click each.
+ * state of one widget: a Raw Data dump the reader opened stays open when they
+ * arrow on to the next packet — which mounts a fresh view — instead of
+ * snapping shut on every packet and costing a click each.
  */
 const listeners = new Map<string, Set<(value: boolean) => void>>()
 

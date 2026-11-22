@@ -26,7 +26,7 @@ Three caveats to keep in mind when reading results:
 
 ## The screens
 
-Each screen is designed around a specific troubleshooting question. If you are not sure where to start, open **Dashboard** or jump to [Investigating by symptom](#investigating-by-symptom).
+Each screen is designed around a specific troubleshooting question. The header lists the screens for the open capture on the left; **Build** and **Help** sit on the right, apart from them. If you are not sure where to start, open **Dashboard** or jump to [Investigating by symptom](#investigating-by-symptom).
 
 | Screen | What it answers |
 |--------|-----------------|
@@ -39,7 +39,7 @@ Each screen is designed around a specific troubleshooting question. If you are n
 
 ### Dashboard
 
-A loaded capture opens here. Displays message counts, a timeline, a neighbor summary table, and the **Alerts** panel. Alerts are sorted by severity and grouped per problem rather than per packet (for example, 40 rejected OPEN retries appear as a single row with a count of 40). The five most severe rows are shown; **Show N more alerts** expands the rest.
+A loaded capture opens here. Displays the packet and message totals with a count per message type (one TCP packet can carry several BGP messages, so the two totals differ; click a type to list those messages), a timeline, a neighbor summary table, and the **Alerts** panel. Alerts are sorted by severity and grouped per problem rather than per packet (for example, 40 rejected OPEN retries appear as a single row with a count of 40). The five most severe rows are shown; **Show N more alerts** expands the rest.
 
 Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping, AS_PATH changes from the same peer, EVPN MAC moves, graceful restarts, silent TCP teardowns, one-way sessions, and TCP connections that receive no BGP reply. Click **View →** on any alert to jump straight to the relevant packet with an appropriate filter applied.
 
@@ -49,23 +49,23 @@ Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping
 
 ### Messages
 
-Shows the packet list, a structured detail pane, and a hex dump. Click any row to inspect decoded fields down to individual capabilities, path attributes, and raw bytes.
+Shows the packet list, a structured detail pane, and a foldable hex dump. Click any row to inspect decoded fields down to individual capabilities, path attributes, and raw bytes.
 
-The **Info** column summarizes each message (for example, `AS65001 Hold=90` for OPEN, announced/withdrawn counts for UPDATE, or the error name for NOTIFICATION). Empty UPDATE messages are labeled **End-of-RIB**.
+The **Info** column summarizes each message (for example, `AS65001 Hold=90` for OPEN, the announced prefixes and the struck-through withdrawn ones for UPDATE, with `+N` when there are more, or the error name for NOTIFICATION). Empty UPDATE messages are labeled **End-of-RIB**.
 
 Use **Columns** (at the right end of the status bar, above the list) to toggle timestamp and port columns, and **Export** to save the currently filtered packets as a new `.pcap` file (handy for attaching only the relevant frames to a ticket).
 
-UPDATE path attributes open expanded; collapsing them is remembered as you move between packets with `↑`/`↓`. A KEEPALIVE shows the gap since its sender's previous message and how much of the negotiated hold time that gap used. Leaving **Messages** for another tab and coming back through the header restores the filter, **All Packets** mode, and the selected frame.
+Each UPDATE is one card listing its announced and withdrawn prefixes (including those carried in MP_REACH/MP_UNREACH_NLRI) and its path attributes, each once. **Raw Data** is folded; opening it is remembered as you move between packets with `↑`/`↓`. A KEEPALIVE shows the gap since its sender's previous message and how much of the negotiated hold time that gap used. Leaving **Messages** for another tab and coming back through the header restores the filter, **All Packets** mode, and the selected frame.
 
 ### Neighbors
 
-Groups sessions by Router ID. The **Sent** column counts messages the router sent; the detail pane's **Message Summary** counts both directions. Click a router to see its sessions, messages and announced prefixes (click a prefix to open its route history). Then select one of its sessions to switch the pane to that session: a breadcrumb (**← Router overview** goes back), **Capability Diff**, which compares the two OPEN messages side by side, the session's prefix activity, and its messages with the time since the previous one.
+Groups sessions by Router ID. The **Sent** column counts messages the router sent; the detail pane's **Message Summary** counts both directions. Click a router to see its sessions, messages and announced prefixes (on a wide screen the busiest router is opened for you) (click a prefix to open its route history). Then select one of its sessions to switch the pane to that session: a breadcrumb (**← Router overview** goes back), **Capability Diff**, which compares the two OPEN messages side by side, the session's prefix activity, and its messages with the time since the previous one.
 
 Capabilities are compared per address family (AFI/SAFI), with mismatches listed first. Different Hold Times are marked informational (the lower value is negotiated), while duplicate BGP Identifiers are flagged as errors.
 
 ### Routes
 
-Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs. The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
+Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs (on a wide screen the top prefix is opened for you). The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
 
 The search box supports three match modes:
 

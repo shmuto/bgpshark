@@ -57,7 +57,7 @@ test.describe('prefix matching', () => {
     await page.getByRole('link', { name: 'Routes', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Prefix Statistics' })).toBeVisible()
     await page.locator('input[placeholder*="10.0.0.0"]').first().fill('10.0.0.0/8')
-    await page.getByRole('button', { name: 'Search' }).click()
+    await page.keyboard.press('Enter')
     await expect(page.getByText(/\d+ prefixes/)).toBeVisible()
     expect(await prefixCount(page)).toBeGreaterThan(0)
   })
@@ -72,7 +72,7 @@ test.describe('prefix search on the route screen', () => {
 
   const search = async (page: import('@playwright/test').Page, text: string) => {
     await page.locator('input[placeholder*="10.0.0.0"]').first().fill(text)
-    await page.getByRole('button', { name: 'Search' }).click()
+    await page.keyboard.press('Enter')
     await page.waitForTimeout(400)
     return prefixCount(page)
   }

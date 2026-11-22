@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useAutoSelectFirst } from '../hooks/useAutoSelectFirst'
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { BackToList, PaneDivider } from '../components/common'
 import { useSplitPane } from '../hooks/useSplitPane'
@@ -91,6 +92,14 @@ export function NeighborsPage() {
     })
   }, [setSearchParams])
 
+  /** The first router, picked for the reader: replaces the history entry. */
+  const autoSelectRouter = useCallback((routerId: string) => {
+    setSearchParams((prev) => {
+      prev.set('router', routerId)
+      return prev
+    }, { replace: true })
+  }, [setSearchParams])
+
   const setSelectedPeer = useCallback((peerIp: string | null) => {
     setSearchParams((prev) => {
       if (peerIp) {
@@ -102,7 +111,7 @@ export function NeighborsPage() {
     })
   }, [setSearchParams])
 
-  const [filterType, setFilterType] = useState<'all' | 'alerts' | 'open' | 'inactive'>('all')
+  const [filterType, setFilterType] = useState<'all' | 'alerts' | 'open'>('all')
   /**
    * Session Messages defaults to the events that establish or end a session.
    * The rest is what was flowing while it was up — which is the question when
@@ -198,9 +207,6 @@ export function NeighborsPage() {
       case 'open':
         result = result.filter(r => r.latestOpen !== null)
         break
-      case 'inactive':
-        result = result.filter(r => r.totalMessages <= 10)
-        break
     }
 
     // Apply search filter
@@ -225,6 +231,7 @@ export function NeighborsPage() {
   const split = useSplitPane('neighbors', 33)
   const showList = !isCompact || selectedRouter === null
   const showDetail = !isCompact || selectedRouter !== null
+  useAutoSelectFirst(!isCompact, selectedRouter, filteredRouters[0]?.routerId, autoSelectRouter)
 
   // Get IPs for selected router
   const selectedIps = useMemo(() => {
@@ -488,7 +495,7 @@ export function NeighborsPage() {
       }
     }
 
-    return { announced, withdrawn, netChange: announced - withdrawn }
+    return { announced, withdrawn }
   }, [selectedIps, selectedPeer, packets])
 
   // Build filter for current router/peer selection
@@ -560,7 +567,6 @@ export function NeighborsPage() {
       <div className="p-4 bg-surface border-b border-hair">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <span className="text-xl">👥</span>
             <h1 className="text-lg font-semibold text-strong">Neighbors Overview</h1>
           </div>
           <span className="text-sm text-muted">{routers.length} routers detected</span>
@@ -579,7 +585,7 @@ export function NeighborsPage() {
           </div>
           <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1">
             <span className="shrink-0 text-xs text-muted">Filter:</span>
-            {(['all', 'alerts', 'open', 'inactive'] as const).map((type) => (
+            {(['all', 'alerts', 'open'] as const).map((type) => (
               <button
                 key={type}
                 onClick={() => setFilterType(type)}
@@ -590,8 +596,7 @@ export function NeighborsPage() {
                 }`}
               >
                 {type === 'all' ? 'All' :
-                 type === 'alerts' ? 'With NOTIFICATION' :
-                 type === 'open' ? 'OPEN Received' : 'Low Activity'}
+                 type === 'alerts' ? 'With NOTIFICATION' : 'OPEN Received'}
               </button>
             ))}
           </div>
@@ -727,6 +732,7 @@ export function NeighborsPage() {
                     </div>
                     <button
                       onClick={() => setSelectedRouter(null)}
+                      aria-label="Close router details"
                       className="text-dim hover:text-strong"
                     >
                       ✕
@@ -768,7 +774,7 @@ export function NeighborsPage() {
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
                     <span className="text-sm font-medium text-strong">
-                      🔍 Capability Diff
+                      Capability Diff
                     </span>
                   </div>
                   <div className="p-4">
@@ -782,42 +788,36 @@ export function NeighborsPage() {
                 </div>
               )}
 
-              {/* Prefix Activity */}
+              {/* Prefix Activity — a single line of raw counts. It used to be
+                  four large figures ending in "Est. Prefixes" (announced minus
+                  withdrawn), which is not a prefix count: a re-announcement with
+                  new attributes adds to "announced" without adding a prefix, and
+                  a session reset clears the peer's Adj-RIB-In without a single
+                  withdrawal. A guess that looks like a measurement misleads
+                  exactly when a session is being debugged, so only what was on
+                  the wire is shown, and Routes has the per-prefix truth. */}
               {prefixActivity && (
-                <div className="bg-surface rounded-lg shadow-sm border border-hair">
-                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
-                    <span className="text-sm font-medium text-strong">
-                      📈 Prefix Activity ({selectedRouterInfo?.displayName} → {selectedPeer})
-                    </span>
-                    <button
-                      onClick={handleViewRoutes}
-                      className="text-xs text-accent hover:text-accent-hover"
-                    >
-                      View Route Details →
-                    </button>
-                  </div>
-                  <div className="p-4 grid grid-cols-4 gap-4 text-center">
-                    <div>
-                      <div className="text-2xl font-bold text-ok">{prefixActivity.announced}</div>
-                      <div className="text-xs text-muted">Announced</div>
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold text-critical">{prefixActivity.withdrawn}</div>
-                      <div className="text-xs text-muted">Withdrawn</div>
-                    </div>
-                    <div>
-                      <div className={`text-2xl font-bold ${prefixActivity.netChange >= 0 ? 'text-ok' : 'text-critical'}`}>
-                        {prefixActivity.netChange >= 0 ? '+' : ''}{prefixActivity.netChange}
-                      </div>
-                      <div className="text-xs text-muted">Net Change</div>
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold text-strong">
-                        {Math.max(0, prefixActivity.netChange)}
-                      </div>
-                      <div className="text-xs text-muted">Est. Prefixes</div>
-                    </div>
-                  </div>
+                <div
+                  data-testid="prefix-activity"
+                  className="bg-surface rounded-lg shadow-sm border border-hair px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
+                >
+                  <span className="font-medium text-strong">
+                    Prefix Activity ({selectedRouterInfo?.displayName} → {selectedPeer})
+                  </span>
+                  <span
+                    className="font-mono text-xs text-muted"
+                    title="NLRI entries sent in UPDATEs, in this direction only; a prefix re-announced with new attributes counts again"
+                  >
+                    <span className="text-ok">{prefixActivity.announced} announced</span>
+                    <span className="mx-1.5 text-dim">·</span>
+                    <span className="text-critical">{prefixActivity.withdrawn} withdrawn</span>
+                  </span>
+                  <button
+                    onClick={handleViewRoutes}
+                    className="ml-auto text-xs text-accent hover:text-accent-hover"
+                  >
+                    View Route Details →
+                  </button>
                 </div>
               )}
               {/* Session Messages (OPEN/NOTIFICATION) */}
@@ -825,7 +825,7 @@ export function NeighborsPage() {
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between gap-2">
                     <span className="text-sm font-medium text-strong">
-                      📋 Session Messages ({visibleSessionMessages.length})
+                      Session Messages ({visibleSessionMessages.length})
                     </span>
                     <div className="flex items-center gap-1 text-xs">
                       {(['events', 'all'] as const).map((scope) => (
@@ -892,7 +892,7 @@ export function NeighborsPage() {
                 {/* Message Summary */}
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-baseline justify-between gap-2">
-                    <span className="text-sm font-medium text-strong">📊 Message Summary</span>
+                    <span className="text-sm font-medium text-strong">Message Summary</span>
                     {/* The overview table's "Msgs" counts what this router sent;
                         this panel counts both directions of its sessions. Same
                         router, different questions — say which one this is. */}
@@ -917,7 +917,7 @@ export function NeighborsPage() {
                 {/* Sessions */}
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
-                    <span className="text-sm font-medium text-strong">🔗 Sessions</span>
+                    <span className="text-sm font-medium text-strong">Sessions</span>
                   </div>
                   <div className="divide-y divide-hair max-h-48 overflow-auto">
                     {sessions.map((session) => {
@@ -973,7 +973,7 @@ export function NeighborsPage() {
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between gap-2">
                     <span className="text-sm font-medium text-strong">
-                      📋 Session Messages ({visibleSessionMessages.length})
+                      Session Messages ({visibleSessionMessages.length})
                     </span>
                     <div className="flex items-center gap-1 text-xs">
                       {(['events', 'all'] as const).map((scope) => (
@@ -1036,7 +1036,7 @@ export function NeighborsPage() {
               {announcedPrefixes.length > 0 && (
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
-                    <span className="text-sm font-medium text-strong">📡 Announced Prefixes ({announcedPrefixes.length})</span>
+                    <span className="text-sm font-medium text-strong">Announced Prefixes ({announcedPrefixes.length})</span>
                     <button
                       onClick={handleViewRoutes}
                       className="text-xs text-accent hover:text-accent-hover"

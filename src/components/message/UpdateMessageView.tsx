@@ -1,4 +1,4 @@
-import { usePersistentFlag } from '../../hooks/usePersistentFlag'
+import { useState } from 'react'
 import { FilterableValue } from './FilterableValue'
 import type {
   BgpUpdateMessage,
@@ -16,12 +16,26 @@ interface UpdateMessageViewProps {
   message: BgpUpdateMessage
 }
 
-export function UpdateMessageView({ message }: UpdateMessageViewProps) {
-  // Open by default: LOCAL_PREF, MED, COMMUNITIES and ORIGIN are what an
-  // UPDATE is opened for. Collapsing it is remembered across packets, so the
-  // reader picks the density once rather than on every arrow key.
-  const [isExpanded, setIsExpanded] = usePersistentFlag('bgpshark-update-expanded', true)
+/**
+ * How many prefix chips a list shows before folding the rest behind a button.
+ * Enough for every UPDATE a lab or an incident usually produces to show whole,
+ * few enough that a full-table burst does not push Path Attributes off the pane.
+ */
+const PREFIX_FOLD = 32
 
+/**
+ * One UPDATE, as one card: what it announced, what it withdrew, and the path
+ * attributes, each said once.
+ *
+ * This used to be a summary table (the first few prefixes, Next Hop, AS_PATH)
+ * stacked on an expandable copy of the same thing in full, with MP_REACH_NLRI
+ * listing its prefixes and next hop a third time inside Path Attributes. A
+ * packet carrying four UPDATEs became a long scroll of repeats, which is
+ * exactly when the reader is trying to compare them. Prefixes from
+ * MP_REACH/MP_UNREACH now join the Announced/Withdrawn rows, and those
+ * attributes keep only what is theirs alone — the address family and next hop.
+ */
+export function UpdateMessageView({ message }: UpdateMessageViewProps) {
   const endOfRib = endOfRibMarker(message)
 
   // Collect all NLRI (IPv4 + MP_REACH_NLRI)
@@ -38,197 +52,115 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
     allWithdrawn.push(...(mpUnreachAttr.parsed as MpUnreachNlriAttribute).withdrawnRoutes)
   }
 
-  // EVPN routes get their own table below; the prefix lists keep the entries
-  // that really are prefixes, so neither view shows the other's rows.
+  // EVPN routes get their own table; the prefix rows keep the entries that
+  // really are prefixes, so neither view shows the other's rows.
   const evpnAnnounced = allNlri.flatMap((p) => (p.evpn ? [p.evpn] : []))
   const evpnWithdrawn = allWithdrawn.flatMap((p) => (p.evpn ? [p.evpn] : []))
   const plainNlri = allNlri.filter((p) => !p.evpn)
   const plainWithdrawn = allWithdrawn.filter((p) => !p.evpn)
 
-  // Extract key attributes for compact view
-  const asPathAttr = message.pathAttributes.find((a) => a.parsed?.type === 'AS_PATH')
-  const nextHopAttr = message.pathAttributes.find((a) => a.parsed?.type === 'NEXT_HOP')
-  const mpReachNextHop = mpReachAttr?.parsed?.type === 'MP_REACH_NLRI' ? (mpReachAttr.parsed as MpReachNlriAttribute).nextHop : null
-
-  const asPath = asPathAttr?.parsed?.type === 'AS_PATH' ? asPathAttr.parsed.segments : []
-  const nextHop = nextHopAttr?.parsed?.type === 'NEXT_HOP' ? nextHopAttr.parsed.address : mpReachNextHop
+  // An empty side is only worth a row when the other side is empty too:
+  // "Announced: -" next to three withdrawals says nothing the count does not.
+  const showAnnounced =
+    plainNlri.length > 0 || (allNlri.length === 0 && allWithdrawn.length === 0 && !endOfRib)
+  const showWithdrawn = plainWithdrawn.length > 0
 
   return (
-    <div className="space-y-2">
-      {/* Compact View - Always visible */}
-      <div
-        className="bg-surface-sunken rounded-lg border border-hair cursor-pointer hover:bg-surface-raised transition-colors"
-        onClick={() => setIsExpanded(!isExpanded)}
-      >
-        {/* An UPDATE that announces and withdraws nothing is the End-of-RIB
-            marker (RFC 4724) — the landmark of a finished initial
-            advertisement. Without the label it reads as a puzzling no-op. */}
-        {endOfRib && (
-          <div className="px-3 py-2 border-b border-hair flex items-center gap-2">
-            <span className="text-xs font-medium bg-accent-subtle text-accent px-1.5 py-0.5 rounded">
-              End-of-RIB
-            </span>
-            <span className="text-xs text-muted">
-              {endOfRib} — initial routing table advertisement is complete (RFC 4724)
-            </span>
+    <div data-testid="update-message" className="bg-surface-sunken rounded-lg border border-hair text-sm divide-y divide-hair">
+      {/* An UPDATE that announces and withdraws nothing is the End-of-RIB
+          marker (RFC 4724) — the landmark of a finished initial
+          advertisement. Without the label it reads as a puzzling no-op. */}
+      {endOfRib && (
+        <div className="px-3 py-2 flex items-center gap-2">
+          <span className="text-xs font-medium bg-accent-subtle text-accent px-1.5 py-0.5 rounded">
+            End-of-RIB
+          </span>
+          <span className="text-xs text-muted">
+            {endOfRib} — initial routing table advertisement is complete (RFC 4724)
+          </span>
+        </div>
+      )}
+
+      {showAnnounced && (
+        <Row label={`Announced (${plainNlri.length})`}>
+          {plainNlri.length > 0 ? (
+            <PrefixChips prefixes={plainNlri} className="bg-ok-subtle text-ok" />
+          ) : (
+            <span className="text-dim">-</span>
+          )}
+        </Row>
+      )}
+
+      {showWithdrawn && (
+        <Row label={`Withdrawn (${plainWithdrawn.length})`}>
+          <PrefixChips prefixes={plainWithdrawn} className="bg-critical-subtle text-critical line-through" />
+        </Row>
+      )}
+
+      {/* EVPN carries route types, not prefixes; a chip cannot hold the
+          RD, VNI and MAC that a fabric is actually diagnosed from. */}
+      {evpnAnnounced.length > 0 && (
+        <div className="px-3 py-2 space-y-1">
+          <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+            EVPN Routes ({evpnAnnounced.length} announced)
           </div>
-        )}
-
-        {/* Summary Table */}
-        <table className="w-full text-sm">
-          <tbody>
-            <tr className="border-b border-hair">
-              <td className="px-3 py-2 text-muted w-24">Announced</td>
-              <td className="px-3 py-2">
-                {allNlri.length > 0 ? (
-                  <div className="flex flex-wrap gap-1">
-                    {allNlri.slice(0, 8).map((prefix, i) => (
-                      <span key={i} className="font-mono text-xs bg-ok-subtle text-ok px-1.5 py-0.5 rounded">
-                        <FilterablePrefix prefix={prefix} />
-                        <PathId prefix={prefix} />
-                      </span>
-                    ))}
-                    {allNlri.length > 8 && (
-                      <span className="text-xs text-muted px-1.5 py-0.5">... {allNlri.length - 8} more</span>
-                    )}
-                  </div>
-                ) : (
-                  <span className="text-dim">-</span>
-                )}
-              </td>
-              <td className="px-3 py-2 text-right text-muted w-16">{allNlri.length}</td>
-            </tr>
-            <tr className="border-b border-hair">
-              <td className="px-3 py-2 text-muted">Withdrawn</td>
-              <td className="px-3 py-2">
-                {allWithdrawn.length > 0 ? (
-                  <div className="flex flex-wrap gap-1">
-                    {allWithdrawn.slice(0, 5).map((prefix, i) => (
-                      <span key={i} className="font-mono text-xs bg-critical-subtle text-critical px-1.5 py-0.5 rounded line-through">
-                        <FilterablePrefix prefix={prefix} />
-                        <PathId prefix={prefix} />
-                      </span>
-                    ))}
-                    {allWithdrawn.length > 5 && (
-                      <span className="text-xs text-muted px-1.5 py-0.5">... {allWithdrawn.length - 5} more</span>
-                    )}
-                  </div>
-                ) : (
-                  <span className="text-dim">-</span>
-                )}
-              </td>
-              <td className="px-3 py-2 text-right text-muted w-16">{allWithdrawn.length}</td>
-            </tr>
-            {nextHop && (
-              <tr className="border-b border-hair">
-                <td className="px-3 py-2 text-muted">Next Hop</td>
-                <td className="px-3 py-2 font-mono" colSpan={2}>
-                  <FilterableValue field="next_hop" value={nextHop} />
-                </td>
-              </tr>
-            )}
-            {asPath.length > 0 && (
-              <tr>
-                <td className="px-3 py-2 text-muted">AS Path</td>
-                <td className="px-3 py-2" colSpan={2}>
-                  <AsPathCompact segments={asPath} />
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-
-        {/* Expand indicator */}
-        <div className="px-3 py-1 text-xs text-dim flex items-center gap-1 border-t border-hair">
-          <svg
-            className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-          {isExpanded ? 'Click to collapse' : 'Click for details'}
+          <EvpnRouteTable routes={evpnAnnounced} tone="announced" />
         </div>
-      </div>
-
-      {/* Expanded View - Full details */}
-      {isExpanded && (
-        <div className="ml-4 space-y-3 border-l-2 border-hair pl-4">
-          {/* All NLRI */}
-          {plainNlri.length > 0 && (
-            <div>
-              <h4 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
-                NLRI ({plainNlri.length} prefixes)
-              </h4>
-              <PrefixList prefixes={plainNlri} className="bg-ok-subtle border-ok/30" />
-            </div>
-          )}
-
-          {/* EVPN carries route types, not prefixes; a chip cannot hold the
-              RD, VNI and MAC that a fabric is actually diagnosed from. */}
-          {evpnAnnounced.length > 0 && (
-            <div>
-              <h4 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
-                EVPN Routes ({evpnAnnounced.length} announced)
-              </h4>
-              <EvpnRouteTable routes={evpnAnnounced} tone="announced" />
-            </div>
-          )}
-
-          {evpnWithdrawn.length > 0 && (
-            <div>
-              <h4 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
-                EVPN Routes ({evpnWithdrawn.length} withdrawn)
-              </h4>
-              <EvpnRouteTable routes={evpnWithdrawn} tone="withdrawn" />
-            </div>
-          )}
-
-          {/* All Withdrawn Routes */}
-          {plainWithdrawn.length > 0 && (
-            <div>
-              <h4 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
-                Withdrawn Routes ({plainWithdrawn.length} prefixes)
-              </h4>
-              <PrefixList prefixes={plainWithdrawn} className="bg-critical-subtle border-critical/30" />
-            </div>
-          )}
-
-          {/* Path Attributes */}
-          {message.pathAttributes.length > 0 && (
-            <div>
-              <h4 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
-                Path Attributes
-              </h4>
-              <div className="space-y-2">
-                {message.pathAttributes.map((attr, i) => (
-                  <PathAttributeView key={i} attribute={attr} />
-                ))}
-              </div>
-            </div>
-          )}
+      )}
+      {evpnWithdrawn.length > 0 && (
+        <div className="px-3 py-2 space-y-1">
+          <div className="text-xs font-semibold text-dim uppercase tracking-wide">
+            EVPN Routes ({evpnWithdrawn.length} withdrawn)
+          </div>
+          <EvpnRouteTable routes={evpnWithdrawn} tone="withdrawn" />
         </div>
+      )}
+
+      {message.pathAttributes.length > 0 && (
+        <Row label="Path Attributes">
+          <div className="space-y-1">
+            {message.pathAttributes.map((attr, i) => (
+              <PathAttributeView key={i} attribute={attr} />
+            ))}
+          </div>
+        </Row>
       )}
     </div>
   )
 }
 
-function AsPathCompact({ segments }: { segments: AsPathSegment[] }) {
-  if (segments.length === 0) return null
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="px-3 py-2 flex flex-col gap-1 sm:flex-row sm:gap-3">
+      <div className="text-xs text-muted sm:w-28 sm:shrink-0 sm:pt-0.5">{label}</div>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  )
+}
 
-  // Show first 3 AS numbers
-  const allAsns = segments.flatMap((s) => s.asNumbers)
-  const displayAsns = allAsns.slice(0, 3)
-  const remaining = allAsns.length - displayAsns.length
+function PrefixChips({ prefixes, className }: { prefixes: BgpPrefix[]; className: string }) {
+  const [showAll, setShowAll] = useState(false)
+  const folded = !showAll && prefixes.length > PREFIX_FOLD
+  const shown = folded ? prefixes.slice(0, PREFIX_FOLD) : prefixes
 
   return (
-    <span className="font-mono inline-flex flex-wrap items-center gap-x-1.5">
-      {displayAsns.map((asn, i) => (
-        <FilterableValue key={i} field="asn" value={String(asn)} />
+    <div className="flex flex-wrap items-center gap-1">
+      {shown.map((prefix, i) => (
+        <span key={i} className={`font-mono text-xs px-1.5 py-0.5 rounded ${className}`}>
+          <FilterablePrefix prefix={prefix} />
+          <PathId prefix={prefix} />
+        </span>
       ))}
-      {remaining > 0 && <span className="text-dim">+{remaining}</span>}
-    </span>
+      {prefixes.length > PREFIX_FOLD && (
+        <button
+          type="button"
+          onClick={() => setShowAll(!showAll)}
+          className="text-xs text-accent hover:text-accent-hover px-1"
+        >
+          {folded ? `Show all ${prefixes.length}` : 'Show fewer'}
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -268,48 +200,36 @@ function FilterablePrefix({ prefix }: { prefix: BgpPrefix }) {
   return <FilterableValue field="prefix" value={text} />
 }
 
-function PrefixList({ prefixes, className }: { prefixes: BgpPrefix[]; className: string }) {
-  return (
-    <div className={`rounded-lg border p-3 ${className}`}>
-      <div className="flex flex-wrap gap-1">
-        {prefixes.map((prefix, i) => (
-          <span key={i} className="font-mono text-xs bg-surface px-1.5 py-0.5 rounded border border-hair">
-            <FilterablePrefix prefix={prefix} />
-            <PathId prefix={prefix} />
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
+/**
+ * One path attribute on one line: its name, its value, and the flags only when
+ * they say something. Optional and Transitive follow from the attribute type
+ * and are kept as small marks; Partial means a router on the way did not
+ * understand it, which is worth noticing.
+ */
 function PathAttributeView({ attribute }: { attribute: BgpPathAttribute }) {
   const { parsed } = attribute
 
   return (
-    <div className="bg-surface-sunken rounded-lg border border-hair p-3 text-sm">
-      <div className="flex items-center justify-between mb-1">
-        <span className="font-medium text-strong">{attribute.typeName}</span>
-        <div className="flex gap-1">
-          {attribute.flags.optional && (
-            <span className="text-xs bg-surface-raised text-body px-1 rounded">Optional</span>
-          )}
-          {attribute.flags.transitive && (
-            <span className="text-xs bg-surface-raised text-body px-1 rounded">Transitive</span>
-          )}
-          {attribute.flags.partial && (
-            <span className="text-xs bg-warning-subtle text-warning px-1 rounded">Partial</span>
-          )}
-        </div>
-      </div>
-
-      <div className="text-muted">
+    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+      <span className="font-medium text-strong text-xs sm:w-36 sm:shrink-0">{attribute.typeName}</span>
+      <div className="min-w-0 flex-1 text-muted">
         {parsed ? (
           <ParsedAttributeValue parsed={parsed} />
         ) : (
           <span className="font-mono text-xs">{attribute.length} bytes</span>
         )}
       </div>
+      <span className="flex gap-1">
+        {attribute.flags.optional && (
+          <span className="text-[10px] text-dim" title="Optional">Opt</span>
+        )}
+        {attribute.flags.transitive && (
+          <span className="text-[10px] text-dim" title="Transitive">Trans</span>
+        )}
+        {attribute.flags.partial && (
+          <span className="text-xs bg-warning-subtle text-warning px-1 rounded">Partial</span>
+        )}
+      </span>
     </div>
   )
 }
@@ -342,10 +262,10 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
       )
 
     case 'MULTI_EXIT_DISC':
-      return <span className="font-mono">MED: {parsed.value}</span>
+      return <span className="font-mono">{parsed.value}</span>
 
     case 'LOCAL_PREF':
-      return <span className="font-mono">Local Preference: {parsed.value}</span>
+      return <span className="font-mono">{parsed.value}</span>
 
     case 'ATOMIC_AGGREGATE':
       return <span className="text-muted">Present</span>
@@ -403,43 +323,26 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
         </div>
       )
 
+    // The prefixes these carry are listed with the UPDATE's own, under
+    // Announced and Withdrawn; what is left here is what only they say.
     case 'MP_REACH_NLRI':
       return (
-        <div className="space-y-1">
-          <div className="text-xs text-muted">
+        <span className="flex flex-wrap items-baseline gap-x-3">
+          <span className="text-xs">
             {parsed.afiName} / {parsed.safiName}
-          </div>
-          <div className="font-mono">Next Hop: {parsed.nextHop}</div>
-          {parsed.nlri.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {parsed.nlri.map((prefix, i) => (
-                <span key={i} className="font-mono text-xs bg-ok-subtle text-ok px-1.5 py-0.5 rounded">
-                  {formatPrefix(prefix)}
-                  <PathId prefix={prefix} />
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
+          </span>
+          <span className="font-mono">
+            <span className="text-xs text-dim">Next Hop </span>
+            <FilterableValue field="next_hop" value={parsed.nextHop} />
+          </span>
+        </span>
       )
 
     case 'MP_UNREACH_NLRI':
       return (
-        <div className="space-y-1">
-          <div className="text-xs text-muted">
-            {parsed.afiName} / {parsed.safiName}
-          </div>
-          {parsed.withdrawnRoutes.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {parsed.withdrawnRoutes.map((prefix, i) => (
-                <span key={i} className="font-mono text-xs bg-critical-subtle text-critical px-1.5 py-0.5 rounded">
-                  {formatPrefix(prefix)}
-                  <PathId prefix={prefix} />
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
+        <span className="text-xs">
+          {parsed.afiName} / {parsed.safiName}
+        </span>
       )
 
     case 'UNKNOWN':
