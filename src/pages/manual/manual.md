@@ -39,9 +39,11 @@ Each screen is designed around a specific troubleshooting question. If you are n
 
 ### Dashboard
 
-Displays message counts, a timeline, a neighbor summary table, and the **Alerts** panel. Alerts are sorted by severity and grouped per problem rather than per packet (for example, 40 rejected OPEN retries appear as a single row with a count of 40).
+A loaded capture opens here. Displays message counts, a timeline, a neighbor summary table, and the **Alerts** panel. Alerts are sorted by severity and grouped per problem rather than per packet (for example, 40 rejected OPEN retries appear as a single row with a count of 40). The five most severe rows are shown; **Show N more alerts** expands the rest.
 
-Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping, AS_PATH changes, graceful restarts, silent TCP teardowns, one-way sessions, and TCP connections that receive no BGP reply. Click **View →** on any alert to jump straight to the relevant packet with an appropriate filter applied.
+Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping, AS_PATH changes from the same peer, EVPN MAC moves, graceful restarts, silent TCP teardowns, one-way sessions, and TCP connections that receive no BGP reply. Click **View →** on any alert to jump straight to the relevant packet with an appropriate filter applied.
+
+*Cease / Connection Collision Resolution* is shown as a warning rather than critical: it is how BGP closes one of two connections when both ends dial at once (RFC 4271 §6.8), not a failure. Different AS_PATHs from *different* peers (an iBGP peer's empty path next to an eBGP peer's `65001`) are normal and raise nothing; compare them on **Routes**.
 
 > "No issues detected" means every session in the capture stayed healthy at the session layer. It does not rule out policy problems such as route leaks or unexpected best-path selection.
 
@@ -51,17 +53,19 @@ Shows the packet list, a structured detail pane, and a hex dump. Click any row t
 
 The **Info** column summarizes each message (for example, `AS65001 Hold=90` for OPEN, announced/withdrawn counts for UPDATE, or the error name for NOTIFICATION). Empty UPDATE messages are labeled **End-of-RIB**.
 
-Use **Columns** to toggle timestamp and port columns, and **Export** to save the currently filtered packets as a new `.pcap` file (handy for attaching only the relevant frames to a ticket).
+Use **Columns** (at the right end of the status bar, above the list) to toggle timestamp and port columns, and **Export** to save the currently filtered packets as a new `.pcap` file (handy for attaching only the relevant frames to a ticket).
+
+UPDATE path attributes open expanded; collapsing them is remembered as you move between packets with `↑`/`↓`. A KEEPALIVE shows the gap since its sender's previous message and how much of the negotiated hold time that gap used. Leaving **Messages** for another tab and coming back through the header restores the filter, **All Packets** mode, and the selected frame.
 
 ### Neighbors
 
-Groups sessions by Router ID. Click a router, then select one of its sessions to open **Capability Diff**, which compares the two OPEN messages side by side.
+Groups sessions by Router ID. The **Sent** column counts messages the router sent; the detail pane's **Message Summary** counts both directions. Click a router to see its sessions, messages and announced prefixes (click a prefix to open its route history). Then select one of its sessions to switch the pane to that session: a breadcrumb (**← Router overview** goes back), **Capability Diff**, which compares the two OPEN messages side by side, the session's prefix activity, and its messages with the time since the previous one.
 
 Capabilities are compared per address family (AFI/SAFI), with mismatches listed first. Different Hold Times are marked informational (the lower value is negotiated), while duplicate BGP Identifiers are flagged as errors.
 
 ### Routes
 
-Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs.
+Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs. The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
 
 The search box supports three match modes:
 
@@ -71,7 +75,9 @@ The search box supports three match modes:
 
 ### SQL
 
-Exposes the capture as queryable DuckDB tables for custom analysis across many prefixes or sessions. Check the sidebar for the schema and **Query Templates** for ready-made examples.
+Exposes the capture as queryable DuckDB tables for custom analysis across many prefixes or sessions. The sidebar **Schema** lists every table and column with its type; click a name to insert it at the cursor. **Query Templates** has ready-made examples, and the editor can be made taller from its bottom-right corner.
+
+In the results, a `frame_index` value opens that frame in **Messages** and a `prefix` value opens its route history on **Routes** (exactly, when the row also has `prefix_length`).
 
 Three details to keep in mind when writing SQL:
 
@@ -272,7 +278,7 @@ mac = 00:0c:29:aa:bb:cc
 
 `mac`, `vni`, `rd`, and `evpn_type` match both announcements and withdrawals, and the detail view decodes RD, MAC, VNI, and ESI. Repeated advertisements of the same MAC from two VTEPs point to a MAC move loop (typically a dual-homed host misconfiguration or bridge loop).
 
-**Routes** tracks the MAC's full history, and the Dashboard flags repeated moves as *"Route flapping"*. MAC Mobility extended communities are decoded in packet details, though sequence numbers are not compared automatically.
+**Routes** tracks the MAC's full history, and the Dashboard flags the move itself as *"MAC moved"* (naming the VTEP it left and the one it moved to) alongside *"Route flapping"*. MAC Mobility extended communities are decoded in packet details, though sequence numbers are not compared automatically.
 
 ### “After a reload, or after a soft clear”
 
@@ -320,22 +326,28 @@ A healthy bidirectional session produces two rows of comparable size; a single r
 
 ## Filters
 
-The filter bar supports two modes over the same query language: **Simple** (dropdown rule builder) and **Advanced** (expression editor with autocomplete).
+The filter bar is a single query box with autocomplete. Press `/` or `Ctrl+K` (`⌘K`) to jump to it. **+ Filter** builds one condition from menus and appends it with `and`; the message-type badges write their filter into the same box.
+
+In the packet detail, hover an address, prefix, AS number, next hop or community and click **＋** to narrow the current filter by it, or **=** to filter on it alone.
 
 ```
 type = NOTIFICATION and src_ip = 10.0.0.1
+ip = 10.0.13.1
 asn = 65001
 prefix = 10.0.0.0/8 and not (type = KEEPALIVE)
 capability contains "Route Refresh"
 ```
 
-Combine conditions with `and`, `or`, `not`, and parentheses. Supported operators are `=`, `!=`, `contains`, and `not contains`; numeric fields also accept `<`, `<=`, `>`, and `>=`.
+Combine conditions with `and`, `or`, `not`, and parentheses. Supported operators are `=` (or `==`), `!=`, `contains`, and `not contains`; numeric fields also accept `<`, `<=`, `>`, and `>=`.
+
+A value typed on its own is read as the comparison it most likely means: an address (`10.0.13.1`) as `ip = 10.0.13.1`, a CIDR block (`10.0.0.0/8`) as `prefix = 10.0.0.0/8`, `AS65001` as `asn = 65001`, a MAC as `mac = …`, and a message type (`update`) as `type = UPDATE`.
 
 ### Fields
 
 | Field | Matches |
 |-------|---------|
 | `type` | `OPEN`, `UPDATE`, `NOTIFICATION`, `KEEPALIVE`, `ROUTE_REFRESH` |
+| `ip` / `peer` | Either address — `ip = X` is `src_ip = X or dst_ip = X`, and `ip != X` excludes X on both sides |
 | `src_ip` / `dst_ip` | Source / destination IP; CIDR matches any address inside the block |
 | `src_port` / `dst_port` | TCP port (separates multiple sessions between the same IP pair) |
 | `frame` | Frame number (e.g. `frame >= 100 and frame < 200`) |

@@ -1,10 +1,5 @@
 import { test, expect } from '@playwright/test'
-import {
-  explainedTeardownCapture,
-  goToDashboard,
-  loadCapture,
-  silentTeardownCapture,
-} from './helpers'
+import { explainedTeardownCapture, goToDashboard, loadCapture, openMessagesAfterLoad, silentTeardownCapture } from './helpers'
 
 /**
  * A session that went down with nothing at the BGP layer recording it.
@@ -20,7 +15,7 @@ import {
 test.describe('a teardown nothing explained', () => {
   test('is two rows, one per shape, on a capture that drops both ways', async ({ page }) => {
     await loadCapture(page, 'silent.pcap', silentTeardownCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await goToDashboard(page)
 
     const body = await page.locator('body').innerText()
@@ -42,7 +37,7 @@ test.describe('a teardown nothing explained', () => {
     // The false positive this rule is measured against. The resets are still in
     // the capture; a Cease explains them, so they are not this rule's business.
     await loadCapture(page, 'explained.pcap', explainedTeardownCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await goToDashboard(page)
 
     const body = await page.locator('body').innerText()
@@ -52,7 +47,7 @@ test.describe('a teardown nothing explained', () => {
 
   test('View → lands on the frame it is talking about', async ({ page }) => {
     await loadCapture(page, 'silent.pcap', silentTeardownCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await goToDashboard(page)
 
     const row = page

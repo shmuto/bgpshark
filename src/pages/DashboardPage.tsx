@@ -130,7 +130,10 @@ export function DashboardPage() {
   const timeline = useMemo(() => computeTimeline(packets), [packets])
 
   const handleSummarySelect = (filter: string | null) => {
-    navigate(filter ? `/messages?filter=${encodeURIComponent(filter)}` : '/messages')
+    // The PACKETS card means "everything": start from a clean list rather than
+    // whatever Messages was last left showing.
+    if (filter) navigate(`/messages?filter=${encodeURIComponent(filter)}`)
+    else navigate('/messages', { state: { fresh: true } })
   }
 
   const handleSelectNotification = (packetIndex: number) => {
@@ -139,7 +142,7 @@ export function DashboardPage() {
 
   return (
     <div className="flex-1 overflow-auto bg-canvas">
-      <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="max-w-6xl mx-auto px-6 py-4 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-xl">📊</span>
@@ -150,8 +153,13 @@ export function DashboardPage() {
 
         <SummaryCards summary={summary} onSelect={handleSummarySelect} />
         <AlertList alerts={alerts} />
-        <NeighborSummaryTable rows={neighborRows} />
-        <MessageTimeline data={timeline} onSelectNotification={handleSelectNotification} />
+        {/* Side by side on a desktop-width window, so the overview — who is
+            peering, and when things happened — is on the first screen
+            together with the top alerts instead of below them. */}
+        <div className="grid gap-6 xl:grid-cols-2 items-start">
+          <NeighborSummaryTable rows={neighborRows} />
+          <MessageTimeline data={timeline} onSelectNotification={handleSelectNotification} />
+        </div>
       </div>
     </div>
   )

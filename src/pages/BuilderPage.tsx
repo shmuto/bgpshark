@@ -91,7 +91,7 @@ export function BuilderPage() {
     setLoading(true)
     try {
       await loadFile(new File([result.capture.bytes], fileName, { type: 'application/vnd.tcpdump.pcap' }))
-      navigate('/messages')
+      navigate('/dashboard')
     } finally {
       setLoading(false)
     }

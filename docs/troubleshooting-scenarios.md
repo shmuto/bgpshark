@@ -95,8 +95,8 @@ Legend: **✔** answered on screen · **◑** answerable with manual search or S
 
 ### S13 — `s13-evpn-mac-move` · Fabric host unreachable in bursts
 - **Want:** MAC, VNI, RD, ESI, and which VTEP announced/withdrew each route.
-- **✔ Verdict:** Surfaced as route flapping + AS_PATH change on Dashboard, tracked in **Routes**, and filterable with `mac`, `vni`, `rd`, and `evpn_type`.
-- **Minor notes:** Wording says *"Route flapping"* rather than *"MAC move"*, and MAC Mobility sequence numbers are decoded in details but not compared automatically.
+- **✔ Verdict:** Surfaced as *"MAC moved"* (from the VTEP it left to the one it moved to) + route flapping on Dashboard, tracked in **Routes**, and filterable with `mac`, `vni`, `rd`, and `evpn_type`.
+- **Minor notes:** MAC Mobility sequence numbers are decoded in details but not compared automatically.
 
 ### S14 — `s14-open-unanswered` · TCP connects and peer sends no BGP
 - **Want:** Confirmation that TCP established and local OPEN was sent with no BGP reply.

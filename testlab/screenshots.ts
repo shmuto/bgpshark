@@ -94,7 +94,6 @@ function card(page: Page, title: string): Locator {
 
 /** Types a filter expression and waits past the DuckDB debounce. */
 async function filter(page: Page, expression: string): Promise<void> {
-  await page.getByRole('button', { name: 'Advanced' }).click()
   const input = page.locator('input[type="text"]').first()
   await input.click()
   await input.fill(expression)
@@ -271,6 +270,9 @@ const SHOTS: Shot[] = [
     scenario: 's10',
     take: async (page) => {
       await go(page, 'Dashboard')
+      // The panel shows five rows until asked for more, and the withdrawal
+      // burst the manual points at is below the fold.
+      await page.getByRole('button', { name: /Show \d+ more alerts?/ }).click()
       return card(page, 'Alerts')
     },
   },
@@ -361,6 +363,10 @@ async function run(browser: Browser, shot: Shot): Promise<void> {
       mimeType: 'application/vnd.tcpdump.pcap',
       buffer: capture.bytes,
     })
+    // A loaded capture lands on the Dashboard; every shot starts from the
+    // message explorer and navigates on from there, as before.
+    await page.waitForURL('**/dashboard')
+    await page.getByRole('link', { name: 'Messages', exact: true }).click()
     await page.waitForURL('**/messages')
     // The packet list is up as soon as the parser finishes; DuckDB takes longer,
     // and a filtered shot taken before it is ready photographs the in-memory

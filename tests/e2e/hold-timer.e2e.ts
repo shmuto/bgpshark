@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { holdTimerExpiryCapture, loadCapture, loadSample } from './helpers'
+import { holdTimerExpiryCapture, loadCapture, loadSample, openMessagesAfterLoad } from './helpers'
 
 /**
  * The one number a Hold Timer Expired NOTIFICATION does not carry.
@@ -17,7 +17,7 @@ test.describe('the silence before a hold timer teardown', () => {
     page,
   }) => {
     await loadCapture(page, 'holdtimer.pcap', holdTimerExpiryCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     // The row, not the "NOTIFICATION 1" chip above the list — that one filters.
     await page.getByText('Hold Timer Expired/Unspecific').first().click()
 
@@ -49,9 +49,7 @@ test.describe('the silence before a hold timer teardown', () => {
     // the reader happened to be filtering for, which is not a property of the
     // capture.
     await loadCapture(page, 'holdtimer.pcap', holdTimerExpiryCapture())
-    await page.waitForURL('**/messages')
-
-    await page.getByRole('button', { name: 'Advanced' }).click()
+    await openMessagesAfterLoad(page)
     const input = page.locator('input[type="text"]').first()
     await input.click()
     await input.fill('type == NOTIFICATION')

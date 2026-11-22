@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { evpnCapture, runSql } from './helpers'
+import { evpnCapture, openMessagesAfterLoad, runSql } from './helpers'
 
 /**
  * Dropping a capture before DuckDB has finished coming up.
@@ -41,7 +41,7 @@ test.describe('a capture dropped while the database is still starting', () => {
 
       // The failure this exists for is a screen that never leaves the upload
       // page, so reaching the explorer at all is half the assertion.
-      await page.waitForURL('**/messages')
+      await openMessagesAfterLoad(page)
       await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
     }
 

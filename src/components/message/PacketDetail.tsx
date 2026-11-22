@@ -5,8 +5,10 @@ import { KeepaliveMessageView } from './KeepaliveMessageView'
 import { UpdateMessageView } from './UpdateMessageView'
 import { RouteRefreshMessageView } from './RouteRefreshMessageView'
 import { HexDump } from '../common/HexDump'
-import type { HoldTimerContext } from '../../lib/bgp/hold-timer'
+import { FilterableValue } from './FilterableValue'
+import type { HoldTimerContext, KeepaliveContext } from '../../lib/bgp/hold-timer'
 import type { RouteRefreshDiff } from '../../lib/bgp/route-refresh'
+import { formatDelta } from '../../lib/format-time'
 
 interface PacketDetailProps {
   packet: BgpPacket
@@ -18,6 +20,19 @@ interface PacketDetailProps {
   holdTimer?: HoldTimerContext | null
   refreshDiff?: RouteRefreshDiff | null
   onSelectPacket?: (packetIndex: number) => void
+  /**
+   * First frame of the capture, so the detail states the same relative time
+   * the list does — whichever filter is applied.
+   */
+  captureStart?: Date
+  /**
+   * The previous BGP packet on the same TCP session (either direction), for
+   * the gap that hold timers and convergence are measured in. Null when this
+   * is the first one the capture holds.
+   */
+  sessionPrevious?: BgpPacket | null
+  /** Gap since the sender's previous message, against the hold time, for a KEEPALIVE. */
+  keepalive?: KeepaliveContext | null
 }
 
 export function PacketDetail({
@@ -25,6 +40,9 @@ export function PacketDetail({
   holdTimer,
   refreshDiff,
   onSelectPacket,
+  captureStart,
+  sessionPrevious,
+  keepalive,
 }: PacketDetailProps) {
   const { messages, rawData, parseWarnings } = packet
 
@@ -37,19 +55,42 @@ export function PacketDetail({
         </h3>
         <div className="bg-surface-sunken rounded-lg p-3 text-sm space-y-1">
           <div className="flex justify-between">
-            <span className="text-muted">Time</span>
+            <span className="text-muted">Time (UTC)</span>
             <span className="font-mono">{packet.timestamp.toISOString()}</span>
           </div>
+          {captureStart && (
+            <div className="flex justify-between">
+              <span className="text-muted">Since capture start</span>
+              <span className="font-mono">
+                {((packet.timestamp.getTime() - captureStart.getTime()) / 1000).toFixed(3)}s
+              </span>
+            </div>
+          )}
+          {sessionPrevious !== undefined && (
+            <div className="flex justify-between">
+              <span
+                className="text-muted"
+                title="Time since the previous BGP packet between these two addresses, in either direction"
+              >
+                Δ previous on session
+              </span>
+              <span className="font-mono">
+                {sessionPrevious
+                  ? `${formatDelta(packet.timestamp.getTime() - sessionPrevious.timestamp.getTime())} (#${sessionPrevious.frameIndex})`
+                  : '- (first on this session)'}
+              </span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-muted">Source</span>
             <span className="font-mono">
-              {packet.srcIp}:{packet.srcPort}
+              <FilterableValue field="src_ip" value={packet.srcIp}>{packet.srcIp}</FilterableValue>:{packet.srcPort}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted">Destination</span>
             <span className="font-mono">
-              {packet.dstIp}:{packet.dstPort}
+              <FilterableValue field="dst_ip" value={packet.dstIp}>{packet.dstIp}</FilterableValue>:{packet.dstPort}
             </span>
           </div>
           {messages.length > 1 && (
@@ -84,6 +125,7 @@ export function PacketDetail({
           total={messages.length}
           holdTimer={holdTimer}
           refreshDiff={refreshDiff}
+          keepalive={keepalive}
           onSelectPacket={onSelectPacket}
         />
       ))}
@@ -105,12 +147,14 @@ function MessageSection({
   total,
   holdTimer,
   refreshDiff,
+  keepalive,
   onSelectPacket,
 }: {
   message: BgpMessage
   index: number
   total: number
   holdTimer?: HoldTimerContext | null
+  keepalive?: KeepaliveContext | null
   refreshDiff?: RouteRefreshDiff | null
   onSelectPacket?: (packetIndex: number) => void
 }) {
@@ -125,7 +169,7 @@ function MessageSection({
       {message.type === 'NOTIFICATION' && (
         <NotificationMessageView message={message} holdTimer={holdTimer} />
       )}
-      {message.type === 'KEEPALIVE' && <KeepaliveMessageView />}
+      {message.type === 'KEEPALIVE' && <KeepaliveMessageView context={keepalive} />}
       {message.type === 'UPDATE' && <UpdateMessageView message={message} />}
       {message.type === 'ROUTE_REFRESH' && (
         <RouteRefreshMessageView

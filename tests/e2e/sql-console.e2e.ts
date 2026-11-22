@@ -66,3 +66,51 @@ test.describe('SQL console', () => {
     expect(body).not.toContain('Error:')
   })
 })
+
+test.describe('writing a query', () => {
+  test('the schema lists every column, with no "..."', async ({ page }) => {
+    const schema = page.getByTestId('schema')
+    await expect(schema).not.toContainText('...')
+    await schema.getByRole('button', { name: 'Expand messages' }).click()
+    await expect(schema.getByRole('button', { name: /^hold_time/ })).toBeVisible()
+    await expect(schema).toContainText('INTEGER')
+  })
+
+  test('a column name clicked in the schema lands at the cursor', async ({ page }) => {
+    const editor = page.getByLabel('SQL query')
+    await editor.fill('select  from packets')
+    await editor.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(7, 7))
+
+    const schema = page.getByTestId('schema')
+    await schema.getByRole('button', { name: 'Expand packets' }).click()
+    await schema.getByRole('button', { name: /^src_port/ }).click()
+    await expect(editor).toHaveValue('select src_port from packets')
+  })
+
+  test('the opening template fits the editor without scrolling', async ({ page }) => {
+    const fits = await page
+      .getByLabel('SQL query')
+      .evaluate((el: HTMLTextAreaElement) => el.scrollHeight <= el.clientHeight)
+    expect(fits).toBe(true)
+  })
+})
+
+test.describe('from a result to the evidence', () => {
+  test('a frame_index opens that frame in Messages', async ({ page }) => {
+    await runSql(page, "select frame_index from messages where type = 'NOTIFICATION' order by frame_index limit 1")
+    const link = page.getByRole('link', { name: /^\d+$/ }).first()
+    const frame = (await link.textContent())!.trim()
+    await link.click()
+
+    await page.waitForURL('**/messages**')
+    await expect(page.getByText(`Packet #${frame}`)).toBeVisible()
+  })
+
+  test('a prefix opens its route history', async ({ page }) => {
+    await runSql(page, "select prefix, prefix_length from nlri where prefix = '10.0.12.0' limit 1")
+    await page.getByRole('link', { name: '10.0.12.0' }).click()
+
+    await page.waitForURL('**/routes**')
+    await expect(page.getByRole('heading', { name: 'Route History: 10.0.12.0/24' })).toBeVisible()
+  })
+})

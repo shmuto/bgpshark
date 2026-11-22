@@ -4,7 +4,7 @@ import { useApp } from '../context/AppContext'
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { BackToList, PaneDivider } from '../components/common'
 import { useSplitPane } from '../hooks/useSplitPane'
-import type { BgpMessage, BgpOpenMessage, BgpUpdateMessage, BgpNotificationMessage } from '../lib/bgp/types'
+import type { BgpOpenMessage, BgpUpdateMessage, BgpNotificationMessage } from '../lib/bgp/types'
 import { extractNeighbors, getLatestOpen, type OpenMessageRecord } from '../lib/bgp/neighbor'
 import { extractSessionEvents, groupEventsBySession, type SessionState } from '../lib/bgp/session-events'
 import { CapabilityDiff } from '../components/neighbor'
@@ -68,15 +68,6 @@ interface SessionDetail {
   direction: 'outbound' | 'inbound'
   messageCount: number
   hasNotification: boolean
-}
-
-interface SessionMessage {
-  timestamp: Date
-  srcIp: string
-  dstIp: string
-  type: string
-  summary: string
-  packetIndex: number
 }
 
 export function NeighborsPage() {
@@ -376,12 +367,21 @@ export function NeighborsPage() {
     return result.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
   }, [selectedIps, packets])
 
+  // With a session selected, the list is that session's alone: one list with
+  // the Δ column, rather than the router-wide list plus a second, narrower
+  // timeline underneath it that said the same thing with less.
   const visibleSessionMessages = useMemo(
     () =>
-      messageScope === 'all'
-        ? sessionMessages
-        : sessionMessages.filter((m) => SESSION_EVENT_TYPES.has(m.type)),
-    [sessionMessages, messageScope]
+      sessionMessages.filter(
+        (m) =>
+          (!selectedPeer || m.peerIp === selectedPeer) &&
+          (messageScope === 'all' || SESSION_EVENT_TYPES.has(m.type))
+      ),
+    [sessionMessages, messageScope, selectedPeer]
+  )
+  const sessionMessageTotal = useMemo(
+    () => (selectedPeer ? sessionMessages.filter((m) => m.peerIp === selectedPeer).length : sessionMessages.length),
+    [sessionMessages, selectedPeer]
   )
 
   // Get prefixes announced by selected router
@@ -420,31 +420,14 @@ export function NeighborsPage() {
     return Array.from(prefixSet).sort()
   }, [selectedIps, packets])
 
-  // Get session timeline for selected peer
-  const sessionTimeline = useMemo((): SessionMessage[] => {
-    if (selectedIps.length === 0 || !selectedPeer) return []
-
-    const messages: SessionMessage[] = []
-
-    packets.forEach((packet, index) => {
-      const isOutbound = selectedIps.includes(packet.srcIp) && packet.dstIp === selectedPeer
-      const isInbound = packet.srcIp === selectedPeer && selectedIps.includes(packet.dstIp)
-
-      if (!isOutbound && !isInbound) return
-
-      for (const msg of packet.messages) {
-        messages.push({
-          timestamp: packet.timestamp,
-          srcIp: packet.srcIp,
-          dstIp: packet.dstIp,
-          type: msg.type,
-          summary: getMessageSummary(msg),
-          packetIndex: index,
-        })
-      }
-    })
-
-    return messages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+  /** This router's address on the selected session, for the breadcrumb. */
+  const selectedLocalIp = useMemo(() => {
+    if (!selectedPeer) return null
+    for (const packet of packets) {
+      if (selectedIps.includes(packet.srcIp) && packet.dstIp === selectedPeer) return packet.srcIp
+      if (packet.srcIp === selectedPeer && selectedIps.includes(packet.dstIp)) return packet.dstIp
+    }
+    return selectedIps[0] ?? null
   }, [selectedIps, selectedPeer, packets])
 
   // Get OPEN comparison data
@@ -544,12 +527,6 @@ export function NeighborsPage() {
     navigate(`/messages?filter=${encodeURIComponent(filter)}`)
   }
 
-  const handleViewMessageAtIndex = (packetIndex: number) => {
-    const filter = buildFilter()
-    if (!filter) return
-    navigate(`/messages?filter=${encodeURIComponent(filter)}&selected=${packetIndex}`)
-  }
-
   // Navigate to messages with a specific peer filter and highlight a packet
   const handleViewEventAtIndex = (peerIp: string, packetIndex: number) => {
     if (selectedIps.length === 0) return
@@ -635,7 +612,7 @@ export function NeighborsPage() {
                 <tr className="text-left text-muted">
                   <th className="px-4 py-2 font-medium">Router ID / IP</th>
                   <th className="px-4 py-2 font-medium">AS</th>
-                  <th className="px-4 py-2 font-medium text-right" title="Messages sent by this router">Msgs</th>
+                  <th className="px-4 py-2 font-medium text-right" title="Messages sent by this router (the detail pane's Message Summary counts both directions)">Sent</th>
                   <th className="px-4 py-2 font-medium">Message Types</th>
                 </tr>
               </thead>
@@ -728,33 +705,188 @@ export function NeighborsPage() {
           )}
           {selectedRouterInfo ? (
             <div className="space-y-4">
-              {/* Router Detail Header */}
-              <div className="bg-surface rounded-lg shadow-sm border border-hair p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold text-strong">
-                      {selectedRouterInfo.displayName}
-                      {selectedRouterInfo.asNumber && (
-                        <span className="ml-2 text-muted font-normal">
-                          (AS{selectedRouterInfo.asNumber})
-                        </span>
+              {/* Router Detail Header — the breadcrumb takes its place once a
+                  session is selected. */}
+              {!selectedPeer && (
+                <div className="bg-surface rounded-lg shadow-sm border border-hair p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold text-strong">
+                        {selectedRouterInfo.displayName}
+                        {selectedRouterInfo.asNumber && (
+                          <span className="ml-2 text-muted font-normal">
+                            (AS{selectedRouterInfo.asNumber})
+                          </span>
+                        )}
+                      </h2>
+                      {selectedRouterInfo.ips.length > 0 && (
+                        <div className="text-sm text-muted">
+                          IPs: {selectedRouterInfo.ips.join(', ')}
+                        </div>
                       )}
-                    </h2>
-                    {selectedRouterInfo.ips.length > 0 && (
-                      <div className="text-sm text-muted">
-                        IPs: {selectedRouterInfo.ips.join(', ')}
-                      </div>
-                    )}
+                    </div>
+                    <button
+                      onClick={() => setSelectedRouter(null)}
+                      className="text-dim hover:text-strong"
+                    >
+                      ✕
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setSelectedRouter(null)}
-                    className="text-dim hover:text-strong"
-                  >
-                    ✕
-                  </button>
                 </div>
-              </div>
+              )}
 
+              {selectedPeer ? (
+                <>
+                  {/* A session is selected: what it was selected for comes
+                      first — the OPEN comparison, the prefixes it carried and
+                      its messages — instead of being appended below the
+                      router overview where nothing on screen changed. */}
+                  <nav
+                    aria-label="Breadcrumb"
+                    className="bg-surface rounded-lg shadow-sm border border-hair px-4 py-2 flex items-center gap-2 text-sm flex-wrap"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPeer(null)}
+                      className="text-accent hover:text-accent-hover"
+                    >
+                      ← Router overview
+                    </button>
+                    <span className="text-dim">/</span>
+                    <span className="text-muted">
+                      {selectedRouterInfo.displayName}
+                      {selectedRouterInfo.asNumber && ` (AS${selectedRouterInfo.asNumber})`}
+                    </span>
+                    <span className="text-dim">/</span>
+                    <span className="font-mono font-medium text-strong" aria-current="page">
+                      {selectedLocalIp} ↔ {selectedPeer}
+                    </span>
+                  </nav>
+
+              {/* OPEN Comparison / Capability diff */}
+              {openComparison && (
+                <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
+                    <span className="text-sm font-medium text-strong">
+                      🔍 Capability Diff
+                    </span>
+                  </div>
+                  <div className="p-4">
+                    <CapabilityDiff
+                      localLabel={selectedRouterInfo?.displayName || ''}
+                      remoteLabel={selectedPeer!}
+                      localOpen={openComparison.local}
+                      remoteOpen={openComparison.remote}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Prefix Activity */}
+              {prefixActivity && (
+                <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
+                    <span className="text-sm font-medium text-strong">
+                      📈 Prefix Activity ({selectedRouterInfo?.displayName} → {selectedPeer})
+                    </span>
+                    <button
+                      onClick={handleViewRoutes}
+                      className="text-xs text-accent hover:text-accent-hover"
+                    >
+                      View Route Details →
+                    </button>
+                  </div>
+                  <div className="p-4 grid grid-cols-4 gap-4 text-center">
+                    <div>
+                      <div className="text-2xl font-bold text-ok">{prefixActivity.announced}</div>
+                      <div className="text-xs text-muted">Announced</div>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-critical">{prefixActivity.withdrawn}</div>
+                      <div className="text-xs text-muted">Withdrawn</div>
+                    </div>
+                    <div>
+                      <div className={`text-2xl font-bold ${prefixActivity.netChange >= 0 ? 'text-ok' : 'text-critical'}`}>
+                        {prefixActivity.netChange >= 0 ? '+' : ''}{prefixActivity.netChange}
+                      </div>
+                      <div className="text-xs text-muted">Net Change</div>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-strong">
+                        {Math.max(0, prefixActivity.netChange)}
+                      </div>
+                      <div className="text-xs text-muted">Est. Prefixes</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {/* Session Messages (OPEN/NOTIFICATION) */}
+              {sessionMessageTotal > 0 && (
+                <div className="bg-surface rounded-lg shadow-sm border border-hair">
+                  <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-strong">
+                      📋 Session Messages ({visibleSessionMessages.length})
+                    </span>
+                    <div className="flex items-center gap-1 text-xs">
+                      {(['events', 'all'] as const).map((scope) => (
+                        <button
+                          key={scope}
+                          onClick={() => setMessageScope(scope)}
+                          className={`px-2 py-0.5 rounded ${
+                            messageScope === scope
+                              ? 'bg-accent text-accent-fg'
+                              : 'text-muted hover:bg-surface-raised'
+                          }`}
+                        >
+                          {scope === 'events' ? 'OPEN / NOTIFICATION' : `All (${sessionMessageTotal})`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={`divide-y divide-hair overflow-auto ${selectedPeer ? 'max-h-96' : 'max-h-48'}`}>
+                    {visibleSessionMessages.map((msg, idx, rows) => (
+                      <div
+                        key={idx}
+                        onClick={() => handleViewEventAtIndex(msg.peerIp, msg.packetIndex)}
+                        className={`px-4 py-2 cursor-pointer hover:bg-surface-sunken ${
+                          MESSAGE_ROW_TINT[msg.type] ?? ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            MESSAGE_BADGE[msg.type] ?? 'bg-surface-sunken text-muted'
+                          }`}>
+                            {msg.type}
+                          </span>
+                          <span className="font-mono text-xs text-muted">
+                            {msg.srcIp} → {msg.dstIp}
+                          </span>
+                          <span className="text-xs text-dim">
+                            {formatTimeOfDayUtc(msg.timestamp)}
+                          </span>
+                          {idx > 0 && (
+                            <span
+                              className="text-xs text-dim font-mono"
+                              title="Time since the previous message shown"
+                            >
+                              {formatDelta(
+                                msg.timestamp.getTime() - rows[idx - 1].timestamp.getTime()
+                              )}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted mt-1 ml-14">
+                          {msg.detail}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+                </>
+              ) : (
+                <>
               {/* Message Summary & Sessions */}
               <div className="grid grid-cols-2 gap-4">
                 {/* Message Summary */}
@@ -837,7 +969,7 @@ export function NeighborsPage() {
               </div>
 
               {/* Session Messages (OPEN/NOTIFICATION) */}
-              {sessionMessages.length > 0 && (
+              {sessionMessageTotal > 0 && (
                 <div className="bg-surface rounded-lg shadow-sm border border-hair">
                   <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between gap-2">
                     <span className="text-sm font-medium text-strong">
@@ -854,12 +986,12 @@ export function NeighborsPage() {
                               : 'text-muted hover:bg-surface-raised'
                           }`}
                         >
-                          {scope === 'events' ? 'OPEN / NOTIFICATION' : `All (${sessionMessages.length})`}
+                          {scope === 'events' ? 'OPEN / NOTIFICATION' : `All (${sessionMessageTotal})`}
                         </button>
                       ))}
                     </div>
                   </div>
-                  <div className="divide-y divide-hair max-h-48 overflow-auto">
+                  <div className={`divide-y divide-hair overflow-auto ${selectedPeer ? 'max-h-96' : 'max-h-48'}`}>
                     {visibleSessionMessages.map((msg, idx, rows) => (
                       <div
                         key={idx}
@@ -915,12 +1047,15 @@ export function NeighborsPage() {
                   <div className="p-2 max-h-48 overflow-auto">
                     <div className="flex flex-wrap gap-1">
                       {announcedPrefixes.slice(0, 100).map((prefix) => (
-                        <span
+                        <button
                           key={prefix}
-                          className="px-2 py-0.5 bg-accent-subtle text-accent rounded text-xs font-mono"
+                          type="button"
+                          onClick={() => navigate(`/routes?prefix=${encodeURIComponent(prefix)}`)}
+                          title={`Open the route history of ${prefix}`}
+                          className="px-2 py-0.5 bg-accent-subtle text-accent rounded text-xs font-mono hover:underline"
                         >
                           {prefix}
-                        </span>
+                        </button>
                       ))}
                       {announcedPrefixes.length > 100 && (
                         <span className="px-2 py-0.5 text-muted text-xs">
@@ -932,131 +1067,6 @@ export function NeighborsPage() {
                 </div>
               )}
 
-              {/* Session Timeline (when peer selected) */}
-              {selectedPeer && (
-                <>
-                  <div className="bg-surface rounded-lg shadow-sm border border-hair">
-                    <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
-                      <span className="text-sm font-medium text-strong">
-                        📜 Session Timeline: {selectedRouterInfo?.displayName} ↔ {selectedPeer}
-                      </span>
-                      <button
-                        onClick={handleViewMessages}
-                        className="text-xs text-accent hover:text-accent-hover"
-                      >
-                        Show all messages →
-                      </button>
-                    </div>
-                    <div className="max-h-64 overflow-auto">
-                      <table className="w-full text-sm">
-                        <thead className="bg-surface-sunken sticky top-0">
-                          <tr className="text-left text-muted">
-                            <th className="px-4 py-2 font-medium w-28">Time</th>
-                            <th className="px-4 py-2 font-medium">Source → Dest</th>
-                            <th className="px-4 py-2 font-medium w-28">Type</th>
-                            <th className="px-4 py-2 font-medium">Summary</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-hair">
-                          {sessionTimeline.slice(0, 50).map((msg, idx) => (
-                            <tr
-                              key={idx}
-                              onClick={() => handleViewMessageAtIndex(msg.packetIndex)}
-                              className={`cursor-pointer hover:bg-surface-raised ${
-                                msg.type === 'NOTIFICATION' ? 'bg-bgp-notification/5' :
-                                msg.type === 'OPEN' ? 'bg-bgp-open/5' :
-                                msg.type === 'KEEPALIVE' ? 'bg-surface-sunken' : ''
-                              }`}
-                            >
-                              <td className="px-4 py-1.5 font-mono text-muted">
-                                {formatTimeOfDayUtc(msg.timestamp)}
-                              </td>
-                              <td className="px-4 py-1.5 font-mono text-xs text-muted">
-                                {msg.srcIp} → {msg.dstIp}
-                              </td>
-                              <td className="px-4 py-1.5">
-                                <span className={`px-2 py-0.5 rounded text-xs ${
-                                  msg.type === 'OPEN' ? 'bg-bgp-open/10 text-bgp-open' :
-                                  msg.type === 'UPDATE' ? 'bg-bgp-update/10 text-bgp-update' :
-                                  msg.type === 'NOTIFICATION' ? 'bg-bgp-notification/10 text-bgp-notification' :
-                                  msg.type === 'KEEPALIVE' ? 'bg-bgp-keepalive/10 text-bgp-keepalive' :
-                                  'bg-bgp-route-refresh/10 text-bgp-route-refresh'
-                                }`}>
-                                  {msg.type}
-                                </span>
-                              </td>
-                              <td className="px-4 py-1.5 text-muted truncate max-w-xs">
-                                {msg.summary}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {sessionTimeline.length > 50 && (
-                        <div className="text-center text-xs text-muted py-2">
-                          Showing 50 of {sessionTimeline.length} messages
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* OPEN Comparison / Capability diff */}
-                  {openComparison && (
-                    <div className="bg-surface rounded-lg shadow-sm border border-hair">
-                      <div className="px-4 py-2 border-b border-hair bg-surface-sunken">
-                        <span className="text-sm font-medium text-strong">
-                          🔍 Capability Diff
-                        </span>
-                      </div>
-                      <div className="p-4">
-                        <CapabilityDiff
-                          localLabel={selectedRouterInfo?.displayName || ''}
-                          remoteLabel={selectedPeer!}
-                          localOpen={openComparison.local}
-                          remoteOpen={openComparison.remote}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Prefix Activity */}
-                  {prefixActivity && (
-                    <div className="bg-surface rounded-lg shadow-sm border border-hair">
-                      <div className="px-4 py-2 border-b border-hair bg-surface-sunken flex items-center justify-between">
-                        <span className="text-sm font-medium text-strong">
-                          📈 Prefix Activity ({selectedRouterInfo?.displayName} → {selectedPeer})
-                        </span>
-                        <button
-                          onClick={handleViewRoutes}
-                          className="text-xs text-accent hover:text-accent-hover"
-                        >
-                          View Route Details →
-                        </button>
-                      </div>
-                      <div className="p-4 grid grid-cols-4 gap-4 text-center">
-                        <div>
-                          <div className="text-2xl font-bold text-ok">{prefixActivity.announced}</div>
-                          <div className="text-xs text-muted">Announced</div>
-                        </div>
-                        <div>
-                          <div className="text-2xl font-bold text-critical">{prefixActivity.withdrawn}</div>
-                          <div className="text-xs text-muted">Withdrawn</div>
-                        </div>
-                        <div>
-                          <div className={`text-2xl font-bold ${prefixActivity.netChange >= 0 ? 'text-ok' : 'text-critical'}`}>
-                            {prefixActivity.netChange >= 0 ? '+' : ''}{prefixActivity.netChange}
-                          </div>
-                          <div className="text-xs text-muted">Net Change</div>
-                        </div>
-                        <div>
-                          <div className="text-2xl font-bold text-strong">
-                            {Math.max(0, prefixActivity.netChange)}
-                          </div>
-                          <div className="text-xs text-muted">Est. Prefixes</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </>
               )}
 
@@ -1081,24 +1091,3 @@ export function NeighborsPage() {
     </div>
   )
 }
-
-function getMessageSummary(msg: BgpMessage): string {
-  switch (msg.type) {
-    case 'OPEN': {
-      const as = msg.fourByteAs ?? msg.myAs
-      return `AS${as} Hold=${msg.holdTime}`
-    }
-    case 'UPDATE': {
-      const nlri = msg.nlri?.length || 0
-      const withdrawn = msg.withdrawnRoutes?.length || 0
-      return `+${nlri} prefixes, -${withdrawn} withdrawn`
-    }
-    case 'NOTIFICATION':
-      return `${msg.errorCodeName}/${msg.errorSubcodeName}`
-    case 'KEEPALIVE':
-      return ''
-    default:
-      return ''
-  }
-}
-

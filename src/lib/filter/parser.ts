@@ -235,8 +235,30 @@ export const FIELD_ALIASES: Record<string, string> = {
 
 export type FilterFieldName = keyof typeof FILTER_FIELDS
 
+/**
+ * Fields that name an address on either side of a packet: `ip = 10.0.13.1` is
+ * `(src_ip = 10.0.13.1 or dst_ip = 10.0.13.1)`, which is how one follows a
+ * peer in both directions without writing the pair out.
+ *
+ * They are rewritten into src_ip/dst_ip comparisons while parsing, so neither
+ * evaluator — in memory or SQL — has a case of its own for them, and the two
+ * cannot come to disagree about what they mean.
+ */
+export const BIDIRECTIONAL_FIELDS: Record<string, string> = {
+  ip: 'Either address — src_ip or dst_ip, e.g. ip = 10.0.13.1',
+  peer: 'Alias for ip: both directions of one peer',
+}
+
+export function isBidirectionalField(field: string): boolean {
+  return field in BIDIRECTIONAL_FIELDS
+}
+
 // All valid field names (canonical + aliases)
-const FIELD_NAMES = [...Object.keys(FILTER_FIELDS), ...Object.keys(FIELD_ALIASES)]
+const FIELD_NAMES = [
+  ...Object.keys(FILTER_FIELDS),
+  ...Object.keys(FIELD_ALIASES),
+  ...Object.keys(BIDIRECTIONAL_FIELDS),
+]
 
 // Normalize field name (resolve alias to canonical name)
 export function normalizeFieldName(field: string): string {
@@ -289,8 +311,9 @@ export class Tokenizer {
           this.tokens.push({ type: 'operator', value: '!=' })
           this.pos += 2
         } else {
+          // `==` is what anyone coming from Wireshark types; it means `=`.
           this.tokens.push({ type: 'operator', value: '=' })
-          this.pos++
+          this.pos += this.peek(1) === '=' ? 2 : 1
         }
       } else if (char === '<' || char === '>') {
         const operator = (this.peek(1) === '=' ? `${char}=` : char) as Operator
@@ -556,11 +579,45 @@ export class Parser {
       return expr
     }
 
+    const bare = this.parseBareValue()
+    if (bare) return bare
+
     // Handle comparison: field operator value
     return this.parseComparison()
   }
 
-  private parseComparison(): Comparison {
+  /**
+   * A value typed on its own, with no field: `10.0.13.1`, `10.0.0.0/8`,
+   * `AS65001`. Read as the question it most likely is — traffic to or from
+   * that address, routes in that block, paths through that AS — and rewritten
+   * into the ordinary comparison, so it means exactly what the spelled-out
+   * form does.
+   */
+  private parseBareValue(): Expression | null {
+    const token = this.current()
+    const next = this.tokens[this.pos + 1]
+    if (token.type !== 'string' || next?.type === 'operator') return null
+
+    const text = token.value
+    const as = text.match(/^as(\d+)$/i)
+    let expression: Expression | null = null
+    if (as) {
+      expression = { type: 'comparison', field: 'asn', operator: '=', value: Number(as[1]) }
+    } else if (/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(text)) {
+      expression = { type: 'comparison', field: 'mac', operator: '=', value: text }
+    } else if ((FILTER_FIELDS.type.values as readonly string[]).includes(text.toUpperCase())) {
+      expression = { type: 'comparison', field: 'type', operator: '=', value: text.toUpperCase() }
+    } else if (parsePrefix(text)) {
+      expression = text.includes('/')
+        ? { type: 'comparison', field: 'prefix', operator: '=', value: text }
+        : bidirectional(text, '=')
+    }
+    if (!expression) return null
+    this.advance()
+    return expression
+  }
+
+  private parseComparison(): Expression {
     const fieldToken = this.advance()
     if (fieldToken.type !== 'field') {
       this.addError(`Expected field name, got ${this.tokenToString(fieldToken)}`)
@@ -591,6 +648,11 @@ export class Parser {
       } else if (typeof coerceNumericValue(value) !== 'number') {
         this.addError(`Expected a number after "${field} ${operator}"`)
       }
+    }
+
+    if (isBidirectionalField(field)) {
+      if (isOrderedOperator(operator)) return { type: 'comparison', field: 'src_ip', operator: '=', value: '' }
+      return bidirectional(value, operator)
     }
 
     return { type: 'comparison', field, operator, value }
@@ -641,6 +703,18 @@ export class Parser {
     }
     return null
   }
+}
+
+/**
+ * `ip <op> X` as src_ip/dst_ip comparisons. A positive match is either side
+ * (`or`); a negative one is neither side (`and`) — `ip != X` excludes every
+ * packet X took part in, not just the ones where it happened to be the source.
+ */
+function bidirectional(value: FilterValue, operator: MatchOperator): Expression {
+  const src: Comparison = { type: 'comparison', field: 'src_ip', operator, value }
+  const dst: Comparison = { type: 'comparison', field: 'dst_ip', operator, value }
+  const negative = operator === '!=' || operator === 'not contains'
+  return negative ? { type: 'and', left: src, right: dst } : { type: 'or', left: src, right: dst }
 }
 
 // =============================================================================
@@ -1423,6 +1497,12 @@ function getFieldSuggestions(filter: string): Suggestion[] {
     }
   }
 
+  for (const [field, desc] of Object.entries(BIDIRECTIONAL_FIELDS)) {
+    if (!filter || field.includes(filter)) {
+      suggestions.push({ text: field, description: desc, insertText: field })
+    }
+  }
+
   // Add common aliases
   const aliasDescriptions: Record<string, string> = {
     src: 'Source IP (alias for src_ip)',
@@ -1523,7 +1603,11 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
 }
 
 function getFieldValues(field: FilterFieldName, dynamicValues: Record<string, Set<string>>): string[] {
+  if (isBidirectionalField(field)) {
+    return Array.from(new Set([...(dynamicValues.src_ip ?? []), ...(dynamicValues.dst_ip ?? [])])).sort()
+  }
   const fieldDef = FILTER_FIELDS[field]
+  if (!fieldDef) return []
   if (fieldDef.values.length > 0) {
     return fieldDef.values as unknown as string[]
   }

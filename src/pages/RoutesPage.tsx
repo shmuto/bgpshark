@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
 import { useIsCompact } from '../hooks/useMediaQuery'
@@ -53,6 +53,18 @@ const DEFAULT_DIRECTION: Record<SortColumn, SortDirection> = {
   lastSeen: 'desc',
   flap: 'desc',
 }
+
+/** The Messages filter that selects one route of this screen, or null. */
+function routeFilter(key: string): string | null {
+  if (key.startsWith('[')) {
+    const mac = key.match(/[0-9a-f]{2}(?::[0-9a-f]{2}){5}/i)?.[0]
+    return mac ? `mac = ${mac}` : null
+  }
+  return `prefix = ${key}`
+}
+
+/** How long the search box waits for typing to pause before applying it. */
+const SEARCH_DEBOUNCE_MS = 200
 
 function isSortColumn(value: string | null): value is SortColumn {
   return value !== null && value in DEFAULT_DIRECTION
@@ -118,9 +130,22 @@ export function RoutesPage() {
     [updateParams]
   )
 
-  // The box holds a draft until Search (or Enter) commits it, so the button does
-  // what it says. Emptying the box clears the filter without a round trip.
+  // The box applies itself once typing pauses, like the search on Neighbors;
+  // Search (or Enter) still commits at once. The pause keeps a half-typed
+  // `10.0.1` from re-filtering the table on every keystroke.
   const [searchDraft, setSearchDraft] = useState(searchQuery)
+  useEffect(() => {
+    const draft = searchDraft.trim()
+    if (draft === searchQuery) return
+    const timer = setTimeout(() => updateParams({ q: draft || null }), SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [searchDraft, searchQuery, updateParams])
+  /**
+   * Route History reads oldest first by default, the same way Messages and
+   * Neighbors do, so a timeline does not flip direction between screens. The
+   * header toggles it for the "what happened last" question.
+   */
+  const [historyOrder, setHistoryOrder] = useState<'asc' | 'desc'>('asc')
 
   // Too narrow for two columns: show the list, or the detail, but not halves of
   // both.
@@ -266,8 +291,18 @@ export function RoutesPage() {
     return Array.from(counts.values()).sort((a, b) => b.count - a.count)
   }, [selectedPrefixStats])
 
+  /**
+   * Opens the UPDATE behind a history row, with the list narrowed to this
+   * route, so the reader lands among the other events of the same story
+   * rather than somewhere in the whole capture. EVPN routes are narrowed by
+   * their MAC where they have one, since `prefix` does not name them.
+   */
   const handleHistoryClick = (event: PrefixEvent) => {
-    navigate(`/messages?selected=${event.packetIndex}`)
+    const filter = selectedPrefix ? routeFilter(selectedPrefix) : null
+    const params = new URLSearchParams()
+    if (filter) params.set('filter', filter)
+    params.set('selected', String(event.packetIndex))
+    navigate(`/messages?${params.toString()}`)
   }
 
   /**
@@ -432,7 +467,7 @@ export function RoutesPage() {
                     Withdrawn
                   </SortableHeader>
                   <SortableHeader column="lastSeen" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
-                    Last Seen
+                    Last Seen (UTC)
                   </SortableHeader>
                   <SortableHeader column="flap" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
                     Flap
@@ -499,8 +534,12 @@ export function RoutesPage() {
         )}
 
         {/* Route History and the paths it arrived over */}
+        {/* min-w-0: a flex item defaults to min-width:auto, so without it the
+            Route History table's width propagated up and pushed this pane —
+            AS_PATH Analysis included — past the right edge of the window,
+            instead of scrolling inside the table's own container. */}
         {showDetail && (
-        <div className="w-full flex-1 flex flex-col min-h-0 gap-4 lg:ml-2">
+        <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 gap-4 lg:ml-2">
         <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 flex-1">
           <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
             <BackToList onClick={() => setSelectedPrefix(null)} />
@@ -514,8 +553,20 @@ export function RoutesPage() {
               <table className="w-full text-sm">
                 <thead className="bg-surface-sunken sticky top-0">
                   <tr className="text-left text-muted">
-                    <th className="px-3 py-2 font-medium">Time</th>
-                    <th className="px-3 py-2 font-medium" title="Time since the previous event">Δ</th>
+                    <th
+                      className="px-3 py-2 font-medium whitespace-nowrap"
+                      aria-sort={historyOrder === 'asc' ? 'ascending' : 'descending'}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setHistoryOrder(historyOrder === 'asc' ? 'desc' : 'asc')}
+                        title={historyOrder === 'asc' ? 'Oldest first — click for newest first' : 'Newest first — click for oldest first'}
+                        className="inline-flex items-center gap-1 hover:text-strong"
+                      >
+                        Time (UTC) <span aria-hidden="true">{historyOrder === 'asc' ? '▲' : '▼'}</span>
+                      </button>
+                    </th>
+                    <th className="px-3 py-2 font-medium" title="Time since the previous event in time">Δ</th>
                     <th className="px-3 py-2 font-medium">Action</th>
                     <th className="px-3 py-2 font-medium">AS_PATH</th>
                     {showPathIdColumn && (
@@ -563,30 +614,34 @@ export function RoutesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-hair">
-                  {/* Newest first, so the gap shown on a row is the one back to
-                      the event before it in time — the wait that produced it. */}
-                  {selectedPrefixStats.history.slice().reverse().map((event, idx, rows) => (
+                  {/* Whichever way the rows run, the gap on a row is the one
+                      back to the event before it in time — the wait that
+                      produced it. */}
+                  {(historyOrder === 'asc'
+                    ? selectedPrefixStats.history
+                    : selectedPrefixStats.history.slice().reverse()
+                  ).map((event, idx, rows) => {
+                    const earlier = historyOrder === 'asc' ? rows[idx - 1] : rows[idx + 1]
+                    return (
                     <tr
                       key={idx}
                       onClick={() => handleHistoryClick(event)}
                       className="cursor-pointer hover:bg-surface-sunken"
                     >
-                      <td className="px-3 py-2 font-mono text-muted">
+                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
                         {formatTimeOfDayUtc(event.timestamp)}
                       </td>
                       <td className="px-3 py-2 font-mono text-dim whitespace-nowrap">
-                        {idx < rows.length - 1
-                          ? formatDelta(event.timestamp.getTime() - rows[idx + 1].timestamp.getTime())
-                          : '-'}
+                        {earlier ? formatDelta(event.timestamp.getTime() - earlier.timestamp.getTime()) : '-'}
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 whitespace-nowrap">
                         {event.action === 'announce' ? (
                           <span className="text-ok">🟢 Announce</span>
                         ) : (
                           <span className="text-critical">🔴 Withdraw</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 font-mono text-muted">
+                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
                         {event.asPath ? formatAsPath(event.asPath) : '-'}
                       </td>
                       {showPathIdColumn && (
@@ -595,8 +650,8 @@ export function RoutesPage() {
                       {showRdColumn && (
                         <td className="px-3 py-2 font-mono text-muted">{event.rd ?? '-'}</td>
                       )}
-                      <td className="px-3 py-2 font-mono text-muted">{event.source}</td>
-                      <td className="px-3 py-2 font-mono text-muted">
+                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">{event.source}</td>
+                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
                         {event.nextHop || '-'}
                       </td>
                       {/* `-` means the attribute was not on the UPDATE, which is
@@ -620,7 +675,8 @@ export function RoutesPage() {
                         </td>
                       )}
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             ) : (

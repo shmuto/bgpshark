@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loadCapture, malformedUpdateCapture } from './helpers'
+import { loadCapture, malformedUpdateCapture, openMessagesAfterLoad } from './helpers'
 
 /**
  * The NOTIFICATION data field, decoded rather than dumped.
@@ -12,7 +12,7 @@ import { loadCapture, malformedUpdateCapture } from './helpers'
 test.describe('a NOTIFICATION that hands back the offending attribute', () => {
   test.beforeEach(async ({ page }) => {
     await loadCapture(page, 'malformed-update.pcap', malformedUpdateCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
     await page.getByText('UPDATE Message Error').first().click()
   })

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { goToDashboard, loadCapture, loadSample, oneDirectionCapture, unansweredOpenCapture } from './helpers'
+import { goToDashboard, loadCapture, loadSample, oneDirectionCapture, openMessagesAfterLoad, unansweredOpenCapture } from './helpers'
 
 /**
  * The two alerts that fire on something missing from the capture.
@@ -12,7 +12,7 @@ import { goToDashboard, loadCapture, loadSample, oneDirectionCapture, unanswered
 test.describe('sessions that never got going', () => {
   test('a connection accepted and then never answered is called out', async ({ page }) => {
     await loadCapture(page, 'open-unanswered.pcap', unansweredOpenCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await goToDashboard(page)
 
     const body = await page.locator('body').innerText()
@@ -26,7 +26,7 @@ test.describe('sessions that never got going', () => {
 
   test('a capture with one direction in it is called out, without blaming the capture', async ({ page }) => {
     await loadCapture(page, 'one-direction.pcap', oneDirectionCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await goToDashboard(page)
 
     const body = await page.locator('body').innerText()

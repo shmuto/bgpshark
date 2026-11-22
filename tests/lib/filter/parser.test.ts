@@ -845,3 +845,68 @@ describe('filters applied to frames that carry no BGP', () => {
     expect(match(icmp, 'src_ip = 10.0.13.1')).toBe(true)
   })
 })
+
+describe('what people type out of habit', () => {
+  const from = (src: string, dst: string): BgpPacket => ({ ...createOpenPacket(), srcIp: src, dstIp: dst })
+  const outbound = from('10.0.13.1', '10.0.13.3')
+  const inbound = from('10.0.13.3', '10.0.13.1')
+  const elsewhere = from('10.0.14.1', '10.0.14.4')
+  const matches = (query: string, packet: BgpPacket) => {
+    const parsed = parseQuery(query)
+    expect(parsed.errors).toHaveLength(0)
+    return matchPacket(packet, parsed)
+  }
+
+  test('== is =', () => {
+    expect(parseQuery('type == OPEN')).toEqual(parseQuery('type = OPEN'))
+    expect(matches('src_ip == 10.0.13.1', outbound)).toBe(true)
+  })
+
+  test('ip and peer match either direction', () => {
+    for (const field of ['ip', 'peer']) {
+      expect(matches(`${field} = 10.0.13.1`, outbound)).toBe(true)
+      expect(matches(`${field} = 10.0.13.1`, inbound)).toBe(true)
+      expect(matches(`${field} = 10.0.13.1`, elsewhere)).toBe(false)
+    }
+  })
+
+  test('ip != excludes the address on either side', () => {
+    expect(matches('ip != 10.0.13.1', outbound)).toBe(false)
+    expect(matches('ip != 10.0.13.1', inbound)).toBe(false)
+    expect(matches('ip != 10.0.13.1', elsewhere)).toBe(true)
+  })
+
+  test('ip compiles to SQL that asks the same question', () => {
+    expect(expressionToSql(parseQuery('ip = 10.0.13.1').expression)).toBe(
+      expressionToSql(parseQuery('src_ip = 10.0.13.1 or dst_ip = 10.0.13.1').expression)
+    )
+    expect(expressionToSql(parseQuery('peer != 10.0.13.1').expression)).toBe(
+      expressionToSql(parseQuery('src_ip != 10.0.13.1 and dst_ip != 10.0.13.1').expression)
+    )
+  })
+
+  test('ip takes no ordering', () => {
+    expect(parseQuery('ip > 10.0.0.1').errors.length).toBeGreaterThan(0)
+  })
+
+  test('a bare value is read as the comparison it most likely is', () => {
+    expect(parseQuery('10.0.13.1')).toEqual(parseQuery('ip = 10.0.13.1'))
+    expect(parseQuery('fe80::1')).toEqual(parseQuery('ip = fe80::1'))
+    expect(parseQuery('10.0.0.0/8')).toEqual(parseQuery('prefix = 10.0.0.0/8'))
+    expect(parseQuery('AS65001')).toEqual(parseQuery('asn = 65001'))
+    expect(parseQuery('update')).toEqual(parseQuery('type = UPDATE'))
+    expect(parseQuery('00:0c:29:aa:bb:cc')).toEqual(parseQuery('mac = 00:0c:29:aa:bb:cc'))
+    expect(parseQuery('10.0.13.1 and type = OPEN')).toEqual(parseQuery('ip = 10.0.13.1 and type = OPEN'))
+  })
+
+  test('a bare word that is none of those is still an error', () => {
+    expect(parseQuery('bogus').errors.length).toBeGreaterThan(0)
+  })
+
+  test('ip and peer are offered as fields', () => {
+    const fields = getSuggestions('', 0, []).map((s) => s.text)
+    expect(fields).toContain('ip')
+    expect(fields).toContain('peer')
+    expect(getSuggestions('ip = ', 5, [outbound]).map((s) => s.text)).toContain('10.0.13.3')
+  })
+})

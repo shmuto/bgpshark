@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
-import { corruptCapture, evpnCapture, loadCapture, loadSample, runSql } from './helpers'
+import { corruptCapture, evpnCapture, loadCapture, loadSample, openMessagesAfterLoad, runSql } from './helpers'
 
 const SAMPLE = new URL('../../public/sample.pcapng', import.meta.url).pathname
 
@@ -51,7 +51,7 @@ test.describe('the app makes no third-party requests', () => {
     // integers, the extended-community strings — which is where a transport
     // that is not JSON is most likely to differ from one that was.
     await loadCapture(page, 'evpn-fabric.pcap', evpnCapture())
-    await page.waitForURL('**/messages')
+    await openMessagesAfterLoad(page)
     await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
 
     await page.getByRole('link', { name: 'SQL', exact: true }).click()

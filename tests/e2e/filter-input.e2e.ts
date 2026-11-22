@@ -4,7 +4,6 @@ import { applyFilter, loadSample, shownCount } from './helpers'
 test.describe('the filter box', () => {
   test.beforeEach(async ({ page }) => {
     await loadSample(page)
-    await page.getByRole('button', { name: 'Advanced' }).click()
   })
 
   test('Enter after a finished word leaves the query alone', async ({ page }) => {
@@ -51,10 +50,70 @@ test.describe('the filter box', () => {
     await expect(input).toHaveClass(/border-critical/, { timeout: 5_000 })
   })
 
-  test('the rule builder is reachable', async ({ page }) => {
-    await page.getByRole('button', { name: 'Simple' }).click()
-    await page.getByRole('button', { name: /Add Filter/ }).click()
-    await expect(page.getByRole('combobox').first()).toBeVisible()
+  test('the query box is there from the start, with no mode to switch into', async ({ page }) => {
+    await expect(page.getByLabel('Filter', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Simple' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Advanced' })).toHaveCount(0)
+  })
+
+  test('a type badge writes its filter into the box, and nothing contradicts it', async ({ page }) => {
+    await page.getByRole('button', { name: /^UPDATE \d+/ }).click()
+    await expect(page.getByLabel('Filter', { exact: true })).toHaveValue('type = UPDATE')
+    await expect(page.getByText('No filters applied')).toHaveCount(0)
+  })
+
+  test('+ Filter appends a condition built from menus', async ({ page }) => {
+    await page.getByLabel('Filter', { exact: true }).fill('type = UPDATE')
+    await page.getByRole('button', { name: '+ Filter' }).click()
+    await page.getByLabel('Field').selectOption('ip')
+    await page.getByLabel('Value').fill('10.0.13.1')
+    await page.getByRole('button', { name: 'Add (and)' }).click()
+    await expect(page.getByLabel('Filter', { exact: true })).toHaveValue('type = UPDATE and ip = 10.0.13.1')
+  })
+
+  test('/ and Ctrl+K jump to the filter box', async ({ page }) => {
+    await page.locator('tbody [role="row"]').first().click()
+    await page.keyboard.press('/')
+    await expect(page.getByLabel('Filter', { exact: true })).toBeFocused()
+    // Focusing the box opens its suggestions over the list; close them.
+    await page.keyboard.press('Escape')
+
+    await page.locator('tbody [role="row"]').first().click()
+    await page.keyboard.press('Control+k')
+    await expect(page.getByLabel('Filter', { exact: true })).toBeFocused()
+  })
+
+  test('== and a bare address filter like their spelled-out forms', async ({ page }) => {
+    const input = page.getByLabel('Filter', { exact: true })
+    await input.fill('src_ip = 10.0.13.1 or dst_ip = 10.0.13.1')
+    await page.waitForTimeout(1200)
+    const both = await shownCount(page)
+
+    await input.fill('10.0.13.1')
+    await page.waitForTimeout(1200)
+    expect(await shownCount(page)).toBe(both)
+
+    await input.fill('peer == 10.0.13.1')
+    await page.waitForTimeout(1200)
+    expect(await shownCount(page)).toBe(both)
+  })
+
+  test('a value in the packet detail can be applied as a filter', async ({ page }) => {
+    await page.getByLabel('Filter', { exact: true }).fill('type = UPDATE')
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(1200)
+    await page.locator('tbody [role="row"]').first().click()
+
+    // The buttons appear on hover, the way a reader finds them.
+    const onSource = page.getByRole('button', { name: /^Filter on: src_ip = / })
+    await onSource.locator('xpath=../..').hover()
+    await onSource.click()
+    await expect(page.getByLabel('Filter', { exact: true })).toHaveValue(/^src_ip = [\d.]+$/)
+
+    const addAsn = page.getByRole('button', { name: /^Add to filter: asn = / }).first()
+    await addAsn.locator('xpath=../..').hover()
+    await addAsn.click()
+    await expect(page.getByLabel('Filter', { exact: true })).toHaveValue(/^src_ip = [\d.]+ and asn = \d+$/)
   })
 
   test('All Packets shows the non-BGP frames too', async ({ page }) => {
