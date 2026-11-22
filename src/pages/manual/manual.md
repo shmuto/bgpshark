@@ -328,7 +328,7 @@ A healthy bidirectional session produces two rows of comparable size; a single r
 
 The filter bar is a single query box with autocomplete. Press `/` or `Ctrl+K` (`⌘K`) to jump to it. **+ Filter** builds one condition from menus and appends it with `and`; the message-type badges write their filter into the same box.
 
-In the packet detail, hover an address, prefix, AS number, next hop or community and click **＋** to narrow the current filter by it, or **=** to filter on it alone.
+In the packet detail, values that can become a filter have a dotted underline. Hover an address, prefix, AS number, next hop or community and click **＋** to narrow the current filter by it, or **=** to filter on it alone.
 
 ```
 type = NOTIFICATION and src_ip = 10.0.0.1

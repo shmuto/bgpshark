@@ -84,13 +84,13 @@ export function PacketDetail({
           <div className="flex justify-between">
             <span className="text-muted">Source</span>
             <span className="font-mono">
-              <FilterableValue field="src_ip" value={packet.srcIp}>{packet.srcIp}</FilterableValue>:{packet.srcPort}
+              <FilterableValue field="src_ip" value={packet.srcIp} align="left">{packet.srcIp}</FilterableValue>:{packet.srcPort}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted">Destination</span>
             <span className="font-mono">
-              <FilterableValue field="dst_ip" value={packet.dstIp}>{packet.dstIp}</FilterableValue>:{packet.dstPort}
+              <FilterableValue field="dst_ip" value={packet.dstIp} align="left">{packet.dstIp}</FilterableValue>:{packet.dstPort}
             </span>
           </div>
           {messages.length > 1 && (
