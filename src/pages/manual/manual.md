@@ -21,7 +21,7 @@ A yellow warning banner under the header indicates that part of the file could n
 Three caveats to keep in mind when reading results:
 
 - **One-way captures raise a critical alert, but the cause is up to you to verify.** The Dashboard cannot distinguish a broken mirror or one-sided `tcpdump` filter from a real one-way reachability outage (such as a unidirectional link or one-way ACL). See [The capture may be lying to you](#the-capture-may-be-lying-to-you) to tell them apart quickly.
-- **TCP-level frames are hidden by default.** The packet list shows BGP messages only until you switch it to **All Packets**. TCP resets (`[R]`) and closes (`[F]`) only appear in **All Packets** mode.
+- **TCP-level frames are hidden by default.** The packet list shows BGP messages only until you switch it to **All Packets**. TCP resets (`[R]`) and closes (`[F]`) only appear in **All Packets** mode. A filter stays applied there: frames without BGP are matched on `src_ip`, `dst_ip`, `src_port`, `dst_port` and `frame`, so `src_ip = 10.0.13.1` shows that peer's handshake and teardown alongside its BGP, while a BGP-only condition such as `type = UPDATE` leaves only the BGP frames it names.
 - **Mid-session captures lack OPEN messages.** Encoding options such as 4-byte AS_PATH width and ADD-PATH Path Identifiers are negotiated in OPEN and are not self-describing inside UPDATE messages. When OPENs are missing, BGPShark infers these settings from the message structure and adds a note in the warning banner. Re-capture from before session establishment whenever possible.
 
 ## The screens

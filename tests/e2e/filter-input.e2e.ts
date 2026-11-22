@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loadSample, shownCount } from './helpers'
+import { applyFilter, loadSample, shownCount } from './helpers'
 
 test.describe('the filter box', () => {
   test.beforeEach(async ({ page }) => {
@@ -98,5 +98,34 @@ test.describe('a filter carried in the URL', () => {
 
     // Narrowed to one peer pair, not the whole capture.
     expect(await shownCount(page)).toBeLessThan(50)
+  })
+})
+
+test.describe('a filter in All Packets mode', () => {
+  // Switching to All Packets to see a peer's SYN/FIN/RST used to drop the
+  // filter entirely, and rendered the BGP frames the filter had not kept as
+  // bare TCP segments.
+  test('is still applied', async ({ page }) => {
+    await loadSample(page)
+    await applyFilter(page, 'type = UPDATE')
+    const updates = await shownCount(page)
+
+    await page.getByRole('button', { name: 'All Packets' }).click()
+    await expect(page.getByText(/BGP \+ 0 non-BGP matched/)).toBeVisible()
+    expect(await shownCount(page)).toBe(updates)
+  })
+
+  test('keeps BGP frames rendered as BGP', async ({ page }) => {
+    await loadSample(page)
+    await applyFilter(page, 'src_ip = 10.0.13.1')
+    await page.getByRole('button', { name: 'All Packets' }).click()
+    await page.waitForTimeout(400)
+
+    const text = await page.locator('tbody [role="row"]').allInnerTexts()
+    // Its KEEPALIVEs still read as KEEPALIVEs, and no BGP-carrying segment has
+    // fallen back to the bare "[AP] 39557 → 179" rendering.
+    expect(text.some((t) => t.includes('KEEPALIVE'))).toBe(true)
+    expect(text.some((t) => t.includes('[AP]'))).toBe(false)
+    expect(await shownCount(page)).toBeLessThan(119)
   })
 })

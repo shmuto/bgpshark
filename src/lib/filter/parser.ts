@@ -1247,6 +1247,42 @@ export function matchPacket(packet: BgpPacket, query: ParsedQuery): boolean {
   return evaluate(query.expression, packet)
 }
 
+/**
+ * The transport-level view of a frame, which is all a non-BGP frame (a SYN, a
+ * bare ACK, an RST) has to be filtered on.
+ */
+export interface TransportFrame {
+  frameIndex: number
+  srcIp: string
+  dstIp: string
+  srcPort?: number
+  dstPort?: number
+}
+
+/**
+ * Evaluates a filter against a frame that carries no BGP.
+ *
+ * The frame is presented to the ordinary evaluator as a packet with no
+ * messages, so the address, port and frame fields behave exactly as they do on
+ * BGP packets, and every BGP-only condition (`type`, `prefix`, `asn`, ...)
+ * simply finds nothing to match — the same answer it gives for a KEEPALIVE.
+ * That is what lets the All Packets view narrow a session down to its
+ * handshake and teardown without inventing separate semantics for them.
+ *
+ * A frame with no ports (ICMP, a fragment) is given NaN, which equals nothing.
+ */
+export function matchTransportFrame(frame: TransportFrame, query: ParsedQuery): boolean {
+  const shim = {
+    frameIndex: frame.frameIndex,
+    srcIp: frame.srcIp,
+    dstIp: frame.dstIp,
+    srcPort: frame.srcPort ?? Number.NaN,
+    dstPort: frame.dstPort ?? Number.NaN,
+    messages: [],
+  } as unknown as BgpPacket
+  return evaluate(query.expression, shim)
+}
+
 // Legacy tokenize function for autocomplete
 export function tokenize(query: string): Token[] {
   const tokenizer = new Tokenizer(query)
