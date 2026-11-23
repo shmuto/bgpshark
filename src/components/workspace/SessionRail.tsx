@@ -114,18 +114,25 @@ function SessionRow({ session, active, onSelect }: { session: SessionSummary; ac
         aria-hidden="true"
       />
       <span className="min-w-0 flex-1 text-left">
-        <span className="block truncate font-mono text-[11.5px]">
-          {session.ipA} ↔ {session.ipB}
+        {/* The severity sits on the address line, whose width is fixed by the
+            two addresses, so the AS line below keeps the full width: beside
+            it, "Critical" cut the message count off mid-word. */}
+        <span className="flex items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate font-mono text-[11.5px]">
+            {session.ipA} ↔ {session.ipB}
+          </span>
+          {session.severity && session.severity !== 'info' && (
+            <span
+              className={`shrink-0 text-[11px] font-medium ${session.severity === 'critical' ? 'text-critical' : 'text-warning'}`}
+            >
+              {t.workspace.severity[session.severity]}
+            </span>
+          )}
         </span>
         <span className="block truncate text-[11px] text-muted">
           {as(session.asA)} ↔ {as(session.asB)} · {t.workspace.messageCount(session.messages)}
         </span>
       </span>
-      {session.severity && session.severity !== 'info' && (
-        <span className={`text-[11px] font-medium ${session.severity === 'critical' ? 'text-critical' : 'text-warning'}`}>
-          {t.workspace.severity[session.severity]}
-        </span>
-      )}
     </button>
   )
 }
@@ -137,6 +144,11 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
   // the packet it is in without a click.
   const [open, setOpen] = useState(group.severity === 'critical')
   const single = group.alerts.length === 1
+  // Each alert can stand for several occurrences (three Hold Timer Expired
+  // NOTIFICATIONs on one session are one row with `count: 3`), so the badge
+  // counts occurrences, not rows — "×1" for a session torn down three times
+  // undersold the very repetition the rule exists to report.
+  const occurrences = group.alerts.reduce((sum, alert) => sum + (alert.count ?? 1), 0)
   const title = single ? group.alerts[0].title : t.workspace.groupTitle(group.rule, group.alerts[0].title)
 
   // A finding opens its evidence without changing the scope. The link's own
@@ -173,8 +185,11 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
           >
             {single ? group.alerts[0].detail : t.workspace.groupSessions(group.peerings.length)}
           </span>
+          {single && group.alerts[0].timeSpan && (
+            <span className="mt-0.5 block text-[11px] tabular-nums text-dim">{spanLabel(group.alerts[0].timeSpan)}</span>
+          )}
         </span>
-        <span className="pt-px text-[11px] tabular-nums text-dim">×{group.alerts.length}</span>
+        <span className="pt-px text-[11px] tabular-nums text-dim">×{occurrences}</span>
       </button>
       {!single && open && (
         <ul className="pb-1.5 pl-[22px]">
@@ -187,9 +202,18 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
                 title={alert.detail}
               >
                 <span className="flex items-baseline justify-between gap-2 group-hover:text-accent">
-                  <span className="min-w-0 truncate font-mono">{instanceLabel(alert, group)}</span>
-                  {alert.timestamp && (
-                    <span className="shrink-0 tabular-nums text-dim">{formatTimeOfDayUtc(alert.timestamp)}</span>
+                  <span className="min-w-0 truncate font-mono">
+                    {instanceLabel(alert, group)}
+                    {alert.count !== undefined && alert.count > 1 && (
+                      <span className="text-dim"> ×{alert.count}</span>
+                    )}
+                  </span>
+                  {alert.timeSpan ? (
+                    <span className="shrink-0 tabular-nums text-dim">{spanLabel(alert.timeSpan)}</span>
+                  ) : (
+                    alert.timestamp && (
+                      <span className="shrink-0 tabular-nums text-dim">{formatTimeOfDayUtc(alert.timestamp)}</span>
+                    )
                   )}
                 </span>
                 {instanceDetail(alert, group) && (
@@ -202,6 +226,11 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
       )}
     </div>
   )
+}
+
+/** First to last occurrence of a repeated finding, in the packet list's clock. */
+function spanLabel(span: { start: Date; end: Date }): string {
+  return `${formatTimeOfDayUtc(span.start)}–${formatTimeOfDayUtc(span.end)}`
 }
 
 /**

@@ -30,8 +30,7 @@ export interface DashboardAlert {
   groupKey?: string
   /**
    * The session (as `sortedPairKey` writes it) the alert is about, for every
-   * rule that has one. Unlike `pairKey` this says nothing about whether the
-   * session came up; it only lets the workspace scope findings to a session.
+   * rule that has one; it lets the workspace scope findings to a session.
    */
   peering?: string
   severity: AlertSeverity
@@ -48,12 +47,6 @@ export interface DashboardAlert {
   count?: number
   /** First and last occurrence, set only when the row stands for more than one. */
   timeSpan?: { start: Date; end: Date }
-  /**
-   * The peer pair this row is about, as `sortedPairKey` writes it. Set only by
-   * the rules that judge a whole session rather than a message, so the
-   * neighbour table can mark the same pair without deriving the finding twice.
-   */
-  pairKey?: string
   /**
    * A frame to select by its `frameIndex`, for rows whose evidence is not a BGP
    * message. `packetIndex` cannot address one: it indexes the BGP packet array,

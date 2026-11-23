@@ -224,6 +224,8 @@ export const ja: Messages = {
     allPackets: 'すべてのパケット',
     noBgpBanner: (count: number) =>
       `⚠ このキャプチャには BGP メッセージがありませんが、その他のパケット（TCP ハンドシェイクや RST など）が ${count} 件含まれています。`,
+    noBgpInViewBanner: (count: number) =>
+      `⚠ このセッション・期間には BGP メッセージがありませんが、その他のパケット（TCP ハンドシェイクや RST など）が ${count} 件あります。`,
     showAllPackets: 'すべてのパケットを表示',
     showingPackets: (shown: number, total: number) => `${total} 件中 ${shown} 件のパケットを表示`,
     bgpSubcount: (count: number) => ` (BGP ${count} 件)`,

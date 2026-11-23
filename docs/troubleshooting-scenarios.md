@@ -50,7 +50,7 @@ Legend: **✔** answered on screen · **◑** answerable with manual search or S
 
 ### S2 — `s2-capability-mismatch` · Established, but no IPv6 routes arrive
 - **Want:** Side-by-side OPEN comparison per AFI/SAFI and capability.
-- **✔ Verdict:** The **Sessions** tab's **OPEN comparison** (with the session chosen) flags `IPv6/Unicast Multiprotocol Extensions ⚠ Only 1.1.1.1` (plus GR and ADD-PATH mismatches) ahead of matching entries.
+- **✔ Verdict:** The **Sessions** tab's **OPEN comparison** (with the session chosen) flags `IPv6/Unicast Multiprotocol Extensions ⚠ Only 10.0.0.1` (plus GR and ADD-PATH mismatches) ahead of matching entries.
 
 ### S3 — `s3-holdtimer-flap` · Session flaps every few minutes
 - **Want:** NOTIFICATION code/subcode, flap count, and silence duration since the peer's last message against the negotiated hold time.

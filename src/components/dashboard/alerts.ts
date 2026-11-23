@@ -422,7 +422,6 @@ function computeSessionSetupAlerts(
         detail: t.oneDirectionDetail(ipA, ipB, from),
         timestamp: facts.firstSeen,
         filter: sessionFilter(ipA, ipB),
-        pairKey: sortedPairKey(ipA, ipB),
         packetIndex: facts.firstBgpIndex,
       })
       // The rule below would fire too, and would be the less useful of the
@@ -447,7 +446,6 @@ function computeSessionSetupAlerts(
         detail: t.noReplyDetail(facts.accepted, speaker, silent),
         timestamp: facts.firstSeen,
         filter: sessionFilter(ipA, ipB),
-        pairKey: sortedPairKey(ipA, ipB),
         packetIndex: facts.firstBgpIndex,
         count: facts.accepted > 1 ? facts.accepted : undefined,
       })
@@ -767,7 +765,6 @@ function computeSilentTeardownAlerts(
             : t.silentCloseDetail(sender),
         timestamp: times[0] ?? null,
         filter: sessionFilter(ipA, ipB),
-        pairKey,
         frameIndex: first.endFrame?.frameIndex,
         showAllPackets: true,
         count: matching.length > 1 ? matching.length : undefined,
@@ -845,7 +842,6 @@ function computeGracefulRestartAlerts(
       detail: t.grDetail(convergence, forwarding, overran),
       timestamp: first.cameBackAt,
       filter: sessionFilter(ipA, ipB),
-      pairKey,
       packetIndex: first.packetIndex,
       count: events.length > 1 ? events.length : undefined,
       timeSpan:

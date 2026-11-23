@@ -26,6 +26,7 @@ import { FILTER_FIELDS, matchTransportFrame, type FilterFieldName } from '../lib
 import { appendCondition, formatCondition } from '../lib/filter/compose'
 import { FilterActionsContext } from '../context/filter-actions'
 import { useI18n } from '../i18n'
+import { peeringKey } from '../lib/bgp/peering'
 
 /**
  * Where Messages was left, so coming back to it through the header tab picks
@@ -70,10 +71,11 @@ export function MessagesPage() {
   // Decided once, when the screen is entered. Re-deciding on every render
   // would send the reader back to the saved view whenever the URL went bare
   // again — clearing the filter, or going Back to the list on a phone.
-  const [restore, setRestore] = useState(() => {
+  const [restoreOnEntry] = useState(() => {
     const fresh = (location.state as { fresh?: boolean } | null)?.fresh === true
     return !location.search && !fresh ? loadSavedView(fileName) : null
   })
+  const [restore, setRestore] = useState(restoreOnEntry)
   // The view mounts only once the URL carries the restored state, so it starts
   // from it the way it would from any link: a view mounted first would select
   // the saved frame in the unfiltered list, and the filter arriving a moment
@@ -102,25 +104,44 @@ export function MessagesPage() {
   if (restore !== null) {
     return restored ? null : <Navigate to={{ pathname: location.pathname, search: restore }} replace />
   }
-  return <MessagesView key={viewKey} />
+  // A restored view is the reader's own earlier place, so it fits itself to
+  // the time window they have since chosen rather than undoing it. Everything
+  // else is a link from a screen that looks at the whole capture.
+  return <MessagesView key={viewKey} linked={!(restoreOnEntry !== null && viewKey === 0)} />
 }
 
-function MessagesView() {
+/**
+ * Whether a frame a link names can be listed under the workspace's narrowing.
+ * The session scope is left alone on purpose: a finding opens its evidence
+ * without changing it (see SessionRail). The time window is another matter —
+ * findings, Sessions and SQL always look at the whole capture, so a window
+ * the reader dragged earlier must not hide what they just asked to see.
+ */
+function reachability(
+  frame: { srcIp: string; dstIp: string; timestamp: Date },
+  scope: string | null,
+  range: [number, number] | null
+): 'listed' | 'other-session' | 'outside-range' {
+  if (scope && peeringKey(frame.srcIp, frame.dstIp) !== scope) return 'other-session'
+  const ms = frame.timestamp.getTime()
+  if (range && (ms < range[0] || ms > range[1])) return 'outside-range'
+  return 'listed'
+}
+
+function MessagesView({ linked }: { linked: boolean }) {
   const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
   // The rows come from the session chosen in the workspace. Everything that
   // looks *around* a packet — the hold timer, the previous message on the
   // session, links by index — keeps using the whole capture, so narrowing the
   // view never changes what a packet's detail says.
-  const { scopedPackets, scopedAllPackets } = useWorkspace()
+  const { scope, range, setRange, scopedPackets, scopedAllPackets } = useWorkspace()
   const { locale, t } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   // In the URL because a dashboard alert can point at a TCP frame, and the list
   // shows BGP only until this is on — a link naming an RST has to be able to
   // set it, or it lands the reader on a list that cannot contain the frame.
-  const [showAllPackets, setShowAllPackets] = useState(
-    () => new URLSearchParams(window.location.search).get('all') === '1'
-  )
+  const [showAllPackets, setShowAllPackets] = useState(() => searchParams.get('all') === '1')
   // The list gets the larger share by default: its default columns need about
   // 720px to sit side by side, which a 50:50 split of a 1280–1440px window
   // does not leave, while the detail pane reads fine at 40%.
@@ -132,6 +153,35 @@ function MessagesView() {
   const isCompact = useIsCompact()
   const showList = !isCompact || selectedPacketIndex === null
   const showDetail = !isCompact || selectedPacketIndex !== null
+
+  // The selection lives in the app context, which outlives this view: without
+  // this, a view remounted for a new link (or a return through the header tab)
+  // would open on the previous view's row number — a different packet, or a
+  // row past the end of a shorter list. A link's own `?selected=` or `?frame=`
+  // is applied by the effects below, which run after this one.
+  useLayoutEffect(() => {
+    selectPacket(null)
+    // Once per view; see above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * What to do about a linked frame the list cannot show yet. Outside the
+   * time window, a link widens the window to the whole capture; a restored
+   * view gives the selection up instead. In another session the selection is
+   * given up: left pending, it would fire the moment the reader later changed
+   * the scope, jumping to a packet they asked for long before.
+   */
+  const settleUnreachable = useCallback(
+    (frame: { srcIp: string; dstIp: string; timestamp: Date }, applied: { current: boolean }): boolean => {
+      const reach = reachability(frame, scope, range)
+      if (reach === 'listed') return false
+      if (reach === 'outside-range' && linked) setRange(null)
+      else applied.current = true
+      return true
+    },
+    [scope, range, linked, setRange]
+  )
 
   // Get initial filter from URL
   const initialFilter = searchParams.get('filter') || ''
@@ -149,28 +199,6 @@ function MessagesView() {
     isFiltering,
   } = useFilter(scopedPackets, { initialQuery: initialFilter })
 
-  // Set initial selection from URL - find the packet in filtered results by frameIndex
-  useEffect(() => {
-    if (selectionAppliedRef.current) return
-
-    const selected = searchParams.get('selected')
-    if (selected === null) return
-
-    // The capture arrives asynchronously, so this runs again as packets load.
-    const originalIdx = parseInt(selected, 10)
-    if (isNaN(originalIdx) || originalIdx < 0 || originalIdx >= packets.length) return
-
-    // Find the target packet's frameIndex, then find it in the filtered list
-    const targetPacket = packets[originalIdx]
-    const filteredIdx = filteredPackets.findIndex(
-      (p) => p.frameIndex === targetPacket.frameIndex
-    )
-    if (filteredIdx < 0) return
-
-    selectionAppliedRef.current = true
-    selectPacket(filteredIdx)
-    setHighlightedIndex(filteredIdx)
-  }, [searchParams, packets, filteredPackets, selectPacket])
 
   // Clear highlight after animation
   useEffect(() => {
@@ -258,6 +286,30 @@ function MessagesView() {
     return rows
   }, [filteredPackets, packets, scopedAllPackets, showAllPackets, filterActive, parsedQuery])
 
+  // Set initial selection from URL: `?selected=` indexes the BGP packet array,
+  // and the row is found by frame number among the rows actually listed —
+  // in All Packets mode those include frames that carry no BGP, so an index
+  // into the filtered BGP packets would land on the wrong row.
+  useEffect(() => {
+    if (selectionAppliedRef.current) return
+
+    const selected = searchParams.get('selected')
+    if (selected === null) return
+
+    // The capture arrives asynchronously, so this runs again as packets load.
+    const originalIdx = parseInt(selected, 10)
+    if (isNaN(originalIdx) || originalIdx < 0 || originalIdx >= packets.length) return
+
+    const targetPacket = packets[originalIdx]
+    if (settleUnreachable(targetPacket, selectionAppliedRef)) return
+    const displayIdx = displayPackets.findIndex((p) => p.packet.frameIndex === targetPacket.frameIndex)
+    if (displayIdx < 0) return
+
+    selectionAppliedRef.current = true
+    selectPacket(displayIdx)
+    setHighlightedIndex(displayIdx)
+  }, [searchParams, packets, displayPackets, selectPacket, settleUnreachable])
+
   /**
    * The selection is an index into the rows, so a new filter would otherwise
    * leave it pointing at whatever packet now sits in that row — after "filter
@@ -294,13 +346,15 @@ function MessagesView() {
     const frameIndex = parseInt(requested, 10)
     if (isNaN(frameIndex)) return
 
+    const target = allPackets.find((p) => p.frameIndex === frameIndex)
+    if (target && settleUnreachable(target, frameAppliedRef)) return
     const displayIdx = displayPackets.findIndex((p) => p.packet.frameIndex === frameIndex)
     if (displayIdx < 0) return
 
     frameAppliedRef.current = true
     selectPacket(displayIdx)
     setHighlightedIndex(displayIdx)
-  }, [searchParams, displayPackets, selectPacket])
+  }, [searchParams, allPackets, displayPackets, selectPacket, settleUnreachable])
 
   /**
    * Keep the All Packets toggle in the URL, so the view a reader is looking at
@@ -644,9 +698,16 @@ function MessagesView() {
       {/* A capture with traffic but no BGP would otherwise present as an
           empty list, which reads as "nothing captured". Point at the view
           that actually has the evidence. */}
-      {!showAllPackets && packets.length === 0 && allPackets.length > 0 && (
+      {/* The same holds for a session that never got past TCP, or a time
+          window with only handshakes in it, so the check is on what the
+          workspace narrowed to rather than on the capture. */}
+      {!showAllPackets && scopedPackets.length === 0 && scopedAllPackets.length > 0 && (
         <div className="flex shrink-0 items-center gap-2 border-b border-hair bg-warning-subtle px-3 py-1.5 text-xs text-warning">
-          <span>{t.messages.noBgpBanner(allPackets.length)}</span>
+          <span>
+            {packets.length === 0
+              ? t.messages.noBgpBanner(allPackets.length)
+              : t.messages.noBgpInViewBanner(scopedAllPackets.length)}
+          </span>
           <button
             onClick={() => setShowAllPackets(true)}
             className="text-accent underline hover:text-accent-hover"
@@ -734,8 +795,8 @@ function MessagesView() {
           <div className="px-3 py-1.5 bg-surface-sunken border-b border-hair flex items-center justify-between gap-2 shrink-0">
             <BackToList onClick={() => selectPacket(null)} />
             <span className="text-xs font-semibold text-strong truncate">
-              {selectedPacketIndex !== null
-                ? t.messages.packetNumber(displayPackets[selectedPacketIndex]?.packet.frameIndex)
+              {selectedDisplayPacket
+                ? t.messages.packetNumber(selectedDisplayPacket.packet.frameIndex)
                 : t.messages.packetDetail}
             </span>
             {selectedBgpPacket && (

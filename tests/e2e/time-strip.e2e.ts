@@ -62,3 +62,24 @@ test.describe('the time strip', () => {
     await expect.poll(() => shownCount(page)).toBeLessThan(17)
   })
 })
+
+test.describe('a window that hides what a link asks for', () => {
+  test.beforeEach(async ({ page }) => {
+    await loadSample(page)
+  })
+
+  test('a finding outside the window widens it and selects its packet', async ({ page }) => {
+    // Findings look at the whole capture; the window narrows the lists only.
+    // A finding whose packet fell outside the window used to open on a list
+    // that could not hold it, and then jump there the moment the reader
+    // pressed Show all, long after.
+    await dragStrip(page, 0.02, 0.3)
+    await expect(page.getByTestId('time-window')).toBeVisible()
+
+    const rail = page.getByRole('complementary', { name: 'Sessions and findings' })
+    await rail.getByRole('button', { name: /^10\.0\.14\.1 → 10\.0\.14\.4/ }).first().click()
+
+    await expect(page.getByTestId('time-window')).toHaveCount(0)
+    await expect(page.getByText(/^Packet #\d+$/)).toHaveText('Packet #39')
+  })
+})

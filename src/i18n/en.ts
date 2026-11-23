@@ -241,6 +241,8 @@ export const en = {
     allPackets: 'All Packets',
     noBgpBanner: (count: number) =>
       `⚠ No BGP messages in this capture, but it contains ${count} other packets (TCP handshakes, resets, …).`,
+    noBgpInViewBanner: (count: number) =>
+      `⚠ No BGP messages in this session or time window, but it contains ${count} other packets (TCP handshakes, resets, …).`,
     showAllPackets: 'Show all packets',
     showingPackets: (shown: number, total: number) =>
       `Showing ${shown} of ${total} packets`,

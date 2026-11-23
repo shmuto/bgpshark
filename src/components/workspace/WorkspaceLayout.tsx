@@ -32,6 +32,17 @@ function Workspace() {
   // A drawer left open over the next screen hides what the click was for.
   useEffect(() => setRailOpen(false), [location.pathname, location.search])
 
+  // Escape closes the drawer, as it closes the header menu: a drawer that
+  // only a pointer can dismiss traps keyboard users behind it.
+  useEffect(() => {
+    if (!railOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setRailOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [railOpen])
+
   return (
     <div className="flex min-h-0 flex-1">
       {isCompact && railOpen && (

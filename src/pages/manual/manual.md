@@ -47,7 +47,7 @@ Findings cover NOTIFICATIONs, session flapping, withdrawal bursts, route flappin
 
 > "No issues detected" means every session in the capture stayed healthy at the session layer. It does not rule out policy problems such as route leaks or unexpected best-path selection.
 
-The **time strip** shows how many messages were exchanged over the whole capture (for the chosen session, if there is one), with NOTIFICATIONs drawn as red rules. Drag across it to narrow **Messages** and **Routes** to that window; click it, or **Show all**, to go back. Findings, the OPEN comparison and SQL always cover the whole capture.
+The **time strip** shows how many messages were exchanged over the whole capture (for the chosen session, if there is one), with NOTIFICATIONs drawn as red rules. Drag across it to narrow **Messages** and **Routes** to that window; click it, or **Show all**, to go back. Findings, the OPEN comparison and SQL always cover the whole capture; opening a packet from one of them that lies outside the window clears the window, so the packet can be shown.
 
 ### Messages
 

@@ -81,8 +81,7 @@ export function RoutesPage() {
   const [searchParams, setSearchParams] = useSearchParams()
 
   /**
-   * What you are looking at lives in the URL, the way it already does on the
-   * neighbors screen.
+   * What you are looking at lives in the URL, the way it does on Messages.
    *
    * Reading a capture means sending someone a link to the thing you found, and
    * reloading without losing your place. The search, the selected prefix and the
@@ -95,8 +94,8 @@ export function RoutesPage() {
   // A bare link searches downwards, which is what a link to a block is usually
   // about.
   /**
-   * Narrow to the routes one peer announced. Arrives from the neighbours
-   * screen, where the question "what is this peer sending me" starts.
+   * Narrow to the routes one peer announced. Links from the old neighbours
+   * screen carried it, and a shared link still can, so it is honoured.
    */
   const peerFilter = useMemo(
     () => (searchParams.get('peer') ?? '').split(',').filter(Boolean),

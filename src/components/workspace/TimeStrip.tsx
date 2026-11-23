@@ -71,11 +71,27 @@ export function TimeStrip() {
       : null
 
   const seconds = (ms: number) => `${(ms / 1000).toFixed(ms < 10_000 ? 3 : 1)}s`
-  const ticks = useMemo(() => niceTicks(span), [span])
+  const { ticks, step } = useMemo(() => niceTicks(span), [span])
 
   // Log scale: a burst of a hundred UPDATEs and a lone KEEPALIVE both stay
   // visible, which is the point of a strip this short.
   const h = (n: number) => (n === 0 ? 0 : Math.max(3, (30 * Math.log1p(n)) / Math.log1p(max)))
+
+  // The scale is applied to the bin's total and the bar then split by share.
+  // Scaling each type on its own and stacking the results overflowed the
+  // strip: log1p(a) + log1p(b) is more than log1p(a + b), so a bin holding
+  // all three types could stand taller than the busiest bin and be clipped.
+  const segments = (bin: Bin) => {
+    const total = bin.keepalive + bin.open + bin.update
+    const height = h(total)
+    return ([
+      [bin.keepalive, 'fill-bgp-keepalive/50'],
+      [bin.open, 'fill-bgp-open'],
+      [bin.update, 'fill-bgp-update'],
+    ] as const)
+      .filter(([n]) => n > 0)
+      .map(([n, cls]) => ({ height: (height * n) / total, cls }))
+  }
 
   return (
     <div className="flex h-14 shrink-0 items-stretch gap-3 border-b border-hair bg-surface px-3">
@@ -103,6 +119,9 @@ export function TimeStrip() {
         aria-label={t.workspace.timeStripAria}
         className="relative min-w-0 flex-1 cursor-crosshair touch-none select-none"
         onPointerDown={(e) => {
+          // Only the primary button selects; a right click is the reader
+          // reaching for the context menu, not starting a window.
+          if (e.button !== 0) return
           e.currentTarget.setPointerCapture(e.pointerId)
           const r = ratioAt(e.clientX)
           setDrag({ from: r, to: r })
@@ -129,13 +148,7 @@ export function TimeStrip() {
             let y = 34
             return (
               <g key={i}>
-                {([
-                  [bin.keepalive, 'fill-bgp-keepalive/50'],
-                  [bin.open, 'fill-bgp-open'],
-                  [bin.update, 'fill-bgp-update'],
-                ] as const).map(([n, cls], j) => {
-                  if (n === 0) return null
-                  const height = h(n)
+                {segments(bin).map(({ height, cls }, j) => {
                   y -= height
                   return <rect key={j} x={i + 0.1} y={y} width={0.8} height={height} className={cls} />
                 })}
@@ -154,7 +167,7 @@ export function TimeStrip() {
             style={{ left: `${(ms / span) * 100}%` }}
             aria-hidden="true"
           >
-            {ms === 0 ? '0s' : `${+(ms / 1000).toFixed(2)}s`}
+            {tickLabel(ms, step)}
           </span>
         ))}
 
@@ -175,12 +188,29 @@ export function TimeStrip() {
 }
 
 /** Round tick positions in milliseconds: 1, 2 or 5 times a power of ten, about six of them. */
-function niceTicks(span: number): number[] {
+function niceTicks(span: number): { ticks: number[]; step: number } {
   const raw = span / 6
   const power = 10 ** Math.floor(Math.log10(raw))
   const step = [1, 2, 5, 10].map((m) => m * power).find((s) => s >= raw) ?? raw
   const ticks: number[] = []
   // Stop short of the end so the last label does not hang off the strip.
-  for (let ms = 0; ms <= span * 0.96; ms += step) ticks.push(ms)
-  return ticks
+  // Counted by index rather than by adding the step, which drifts in floating
+  // point once the step is a fraction of a millisecond.
+  for (let i = 0; i * step <= span * 0.96; i++) ticks.push(i * step)
+  return { ticks, step }
+}
+
+/**
+ * A tick in seconds, with as many decimals as the step needs. A fixed two
+ * decimals printed every tick of a capture shorter than 50 ms as "0s", one
+ * on top of the other; a sub-millisecond span is labelled in milliseconds.
+ */
+function tickLabel(ms: number, step: number): string {
+  if (ms === 0) return '0s'
+  if (step < 1) {
+    const decimals = Math.min(3, Math.max(0, -Math.floor(Math.log10(step))))
+    return `${+ms.toFixed(decimals)}ms`
+  }
+  const decimals = Math.min(3, Math.max(0, 3 - Math.floor(Math.log10(step))))
+  return `${+(ms / 1000).toFixed(decimals)}s`
 }
