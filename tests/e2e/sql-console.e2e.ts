@@ -127,23 +127,29 @@ test.describe('prefix links without a length', () => {
   })
 
   test('the Prefix Flapping template returns routes as CIDR, linked exactly', async ({ page }) => {
-    // The sample flaps nothing more than five times, so loosen the threshold.
-    await runSql(
-      page,
-      `SELECT prefix, COUNT(*) AS n FROM (
-         SELECT COALESCE(prefix || '/' || prefix_length, prefix) AS prefix FROM nlri
-         UNION ALL
-         SELECT COALESCE(prefix || '/' || prefix_length, prefix) AS prefix FROM withdrawn
-       ) GROUP BY prefix ORDER BY n DESC LIMIT 1`
-    )
+    await page.getByTestId('query-templates').getByRole('button', { name: 'Prefix Flapping' }).click()
+    await page.getByRole('button', { name: /Run/ }).click()
     const link = page.getByRole('link', { name: /\/\d+$/ }).first()
     const route = (await link.textContent())!.trim()
     await link.click()
     await expect(page.getByRole('heading', { name: `Route History: ${route}` })).toBeVisible()
   })
 
+  test('the Prefix Flapping template counts flaps as the Routes screen does', async ({ page }) => {
+    // It once summed announces and withdraws: 8 for a route the Flap column
+    // put at 2, so the two screens disagreed about the same capture.
+    await page.getByTestId('query-templates').getByRole('button', { name: 'Prefix Flapping' }).click()
+    await page.getByRole('button', { name: /Run/ }).click()
+    const row = page.getByRole('row').filter({ has: page.getByRole('link', { name: '1.1.1.1/32', exact: true }) })
+    await expect(row.getByRole('cell')).toHaveText(['1.1.1.1/32', '6', '2', '2'])
+
+    await page.getByRole('link', { name: 'Routes', exact: true }).click()
+    const routeRow = page.getByRole('row').filter({ hasText: '1.1.1.1/32' }).first()
+    await expect(routeRow.getByRole('cell').last()).toHaveText('2')
+  })
+
   test('the Prefix Flapping template itself returns CIDR', async ({ page }) => {
     await page.getByTestId('query-templates').getByRole('button', { name: 'Prefix Flapping' }).click()
-    await expect(page.getByLabel('SQL query')).toHaveValue(/prefix \|\| '\/' \|\| prefix_length/)
+    await expect(page.getByLabel('SQL query')).toHaveValue(/prefix \|\| '\/' \|\| \w+\.prefix_length/)
   })
 })

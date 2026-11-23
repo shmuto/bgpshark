@@ -98,7 +98,11 @@ function WorkspaceTabs({ onOpenRail }: { onOpenRail?: () => void }) {
           </svg>
         </button>
       )}
-      <nav aria-label={t.nav.captureAria} className="flex min-w-0 items-stretch overflow-x-auto">
+      {/* The 1px overlap that lays the active tab's underline over the bar's
+          border is taken here, not on each tab: a tab hanging below a
+          scrolling nav overflows it vertically, and platforms with classic
+          scrollbars then draw a vertical one beside the tabs. */}
+      <nav aria-label={t.nav.captureAria} className="-mb-px flex min-w-0 items-stretch overflow-x-auto">
         <Tab to="/messages">{t.nav.messages}</Tab>
         <Tab to="/sessions">{t.nav.sessions}</Tab>
         <Tab to="/routes">{t.nav.routes}</Tab>
@@ -131,7 +135,7 @@ function Tab({ to, children }: { to: string; children: React.ReactNode }) {
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `-mb-px flex shrink-0 items-center border-b-2 px-3 text-xs transition-colors ${
+        `flex shrink-0 items-center border-b-2 px-3 text-xs transition-colors ${
           isActive ? 'border-accent font-semibold text-strong' : 'border-transparent text-muted hover:text-strong'
         }`
       }

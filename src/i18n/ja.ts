@@ -1,4 +1,10 @@
 import type { Messages } from './en'
+import type { ParseErrorDetail } from '../lib/filter/parser'
+
+/** The text that caused a filter error, or how the query ended. */
+function typed(text: string | null): string {
+  return text === null ? '入力の終わり' : `「${text}」`
+}
 
 /**
  * Japanese message catalog.
@@ -125,15 +131,17 @@ export const ja: Messages = {
     sessionsHeading: 'セッション',
     allSessions: 'すべてのセッション',
     findingsHeading: '検出事項',
-    findingsCount: (groups: number, instances: number) => `${groups} 種類 · ${instances} 件`,
+    findingsCount: (groups: number, occurrences: number) => `${groups} 種類 · 計 ${occurrences} 回`,
     noFindings: '問題は検出されませんでした。すべてのセッションは正常です。',
-    messageCount: (n: number) => `${n} 件`,
+    // "件" left open whether it counted packets or messages; the header counts packets.
+    messageCount: (n: number) => `${n} メッセージ`,
     clearScope: 'すべてのセッションを表示',
     wholeCapture: '全期間',
     dragToNarrow: 'ドラッグで絞り込み',
     clearRange: '全期間に戻す',
     timeStripAria: '時間ごとのメッセージ数。ドラッグすると、全タブをその期間に絞り込みます。',
     severity: { critical: '重大', warning: '注意', info: '参考' },
+    groupInSession: 'このセッション内',
     groupSessions: (n: number) => (n === 0 ? 'キャプチャ全体' : `${n} セッション`),
     groupTitle: (rule: string, firstTitle: string): string =>
       ({
@@ -156,7 +164,7 @@ export const ja: Messages = {
       `広告 ${announced} 回、取り消し ${withdrawn} 回`,
     morePrefixesFlappedTitle: (count: number) => `他 ${count} プレフィックスでフラップ発生`,
     morePrefixesFlappedDetail: (flaps: number) =>
-      `さらに ${flaps} 回の取り消しあり — 経路画面で「フラップ」順に並べ替えると全件確認できます`,
+      `さらに ${flaps} 回のフラップあり — 経路画面で「フラップ」順に並べ替えると全件確認できます`,
     asPathChangedTitle: (key: string) => `AS_PATH が変化: ${key}`,
     asPathChangedDetail: (from: string, first: string, last: string) =>
       `${from} から: ${first} → ${last}`,
@@ -216,6 +224,27 @@ export const ja: Messages = {
 
   messages: {
     filterAria: 'フィルタ',
+    parseError: (detail: ParseErrorDetail) => {
+      switch (detail.code) {
+        case 'unexpected-token':
+          return `${typed(detail.got)} は解釈できません`
+        case 'expected-field':
+          return detail.got === null
+            ? 'フィールド名が必要な位置でフィルタが終わっています'
+            : `フィールド名が必要な位置に ${typed(detail.got)} があります`
+        case 'expected-operator':
+          return detail.got === null
+            ? `「${detail.field}」の後に演算子（= など）が必要です`
+            : `「${detail.field}」の後に演算子（= など）が必要です。${typed(detail.got)} があります`
+        case 'expected-value':
+          return `「${detail.field} ${detail.operator}」の後に値が必要です`
+        case 'ordered-not-numeric':
+          return `演算子「${detail.operator}」は数値のフィールド（${detail.numericFields.join(', ')}）にだけ使えます。「${detail.field}」には使えません`
+        case 'expected-number':
+          return `「${detail.field} ${detail.operator}」の後には数値が必要です`
+      }
+    },
+    parseErrorUnapplied: '修正するまでフィルタは適用されません。',
     filterPlaceholder:
       'フィルタ — type = UPDATE, ip = 192.0.2.1, 198.51.100.0/24, AS65001   ( / でフォーカス)',
     clearFilterAria: 'フィルタをクリア',
@@ -538,6 +567,8 @@ export const ja: Messages = {
     colWithdrawn: '取り消し',
     colLastSeen: '最終観測 (UTC)',
     colFlap: 'フラップ',
+    colFlapTitle:
+      '経路が消えた回数です。同じ相手が広告していた経路（キャプチャ開始前の広告を含む）の取り消しを 1 回と数えます。再広告や、取り消し済みの経路の重複した取り消しは数えません。',
     noPrefixesFound: '該当するプレフィックスが見つかりません',
     resizePrefixList: 'プレフィックス一覧の幅を調整',
     routeHistory: (prefix: string | null) =>

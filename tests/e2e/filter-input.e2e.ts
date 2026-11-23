@@ -215,15 +215,28 @@ test.describe('the filter box gets out of the way', () => {
     expect(hit).toMatch(/Showing/)
   })
 
-  test('a parse error is spaced off the packet count', async ({ page }) => {
+  test('a parse error shows under the box, about what was typed', async ({ page }) => {
     const input = page.getByLabel('Filter', { exact: true })
+    await input.fill('type = UPDATE and !!!')
+    await page.keyboard.press('Escape')
+    const error = page.getByTestId('filter-error')
+    // About the "!!!", not about the query ending: the characters used to be
+    // dropped, and the error then described an input nobody had typed.
+    await expect(error).toContainText('Expected a field name, got "!!!"', { timeout: 5_000 })
+    await expect(error).toContainText('not applied')
+
+    // Straight under the box, above the list, so a long list cannot hide it.
+    const box = (await input.boundingBox())!
+    const message = (await error.boundingBox())!
+    expect(message.y).toBeGreaterThanOrEqual(box.y + box.height)
+    expect(message.y - (box.y + box.height)).toBeLessThan(24)
+  })
+
+  test('a parse error is in the interface language', async ({ page }) => {
+    await page.getByTestId('language-toggle').click()
+    const input = page.getByLabel('フィルタ', { exact: true })
     await input.fill('type')
     await page.keyboard.press('Escape')
-    const error = page.getByText(/Expected operator after "type"/)
-    await expect(error).toBeVisible({ timeout: 5_000 })
-
-    const count = (await page.getByText(/Showing \d+ of \d+ packets/).boundingBox())!
-    const message = (await error.boundingBox())!
-    expect(message.x - (count.x + count.width)).toBeGreaterThanOrEqual(8)
+    await expect(page.getByTestId('filter-error')).toContainText('「type」の後に演算子', { timeout: 5_000 })
   })
 })

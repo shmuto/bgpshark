@@ -918,7 +918,51 @@ export function computeAlerts(
     })
   }
 
-  // 3. Bursts of withdrawn prefixes within a short time window.
+  // 3–4. Withdrawal bursts and route-level findings, which no one session owns.
+  alerts.push(...computeCaptureWideAlerts(packets, locale))
+
+  return sortAlerts(alerts)
+}
+
+/**
+ * Most severe first, then the rows standing for the most occurrences, then
+ * most recent first. Counting before recency keeps a peer that failed 40
+ * times above one that failed once a second later. The "N more prefixes"
+ * summaries come after the routes they follow on from: their count adds up
+ * dozens of routes, and ranked by it they led the list they close.
+ */
+function sortAlerts(alerts: DashboardAlert[]): DashboardAlert[] {
+  const severityRank: Record<DashboardAlert['severity'], number> = { critical: 0, warning: 1, info: 2 }
+  const isSummary = (alert: DashboardAlert) => alert.id.endsWith('-more')
+  return alerts.sort((a, b) => {
+    if (severityRank[a.severity] !== severityRank[b.severity]) {
+      return severityRank[a.severity] - severityRank[b.severity]
+    }
+    if (isSummary(a) !== isSummary(b)) return isSummary(a) ? 1 : -1
+    if ((a.count ?? 1) !== (b.count ?? 1)) return (b.count ?? 1) - (a.count ?? 1)
+    return (b.timestamp?.getTime() ?? 0) - (a.timestamp?.getTime() ?? 0)
+  })
+}
+
+/** Rules whose findings belong to no one session; see `computeCaptureWideAlerts`. */
+const CAPTURE_WIDE_RULES = new Set<DashboardAlert['rule']>([
+  'withdraw-burst',
+  'route-flap',
+  'route-aspath',
+  'route-macmove',
+])
+
+/**
+ * Findings about routes rather than sessions: withdrawal bursts, flapping
+ * routes, AS_PATH changes and MAC moves. They carry no `peering`, so a session
+ * scope cannot filter them; `scopeAlerts` reruns this over the session's own
+ * packets instead.
+ */
+function computeCaptureWideAlerts(packets: BgpPacket[], locale: Locale): DashboardAlert[] {
+  const t = getMessages(locale).alerts
+  const alerts: DashboardAlert[] = []
+
+  // Bursts of withdrawn prefixes within a short time window.
   const withdrawEvents: { timestamp: Date; count: number; packetIndex: number }[] = []
   packets.forEach((packet, packetIndex) => {
     for (const msg of packet.messages) {
@@ -958,25 +1002,49 @@ export function computeAlerts(
     }
   }
 
-  // 4. Route-level findings. aggregatePrefixStats walks every packet, so it is
+  // Route-level findings. aggregatePrefixStats walks every packet, so it is
   // called once here and both route rules read the same result.
   alerts.push(...computeRouteAlerts(aggregatePrefixStats(packets), locale))
 
-  // Most severe first, then the rows standing for the most occurrences, then
-  // most recent first. Counting before recency keeps a peer that failed 40
-  // times above one that failed once a second later. The "N more prefixes"
-  // summaries come after the routes they follow on from: their count adds up
-  // dozens of routes, and ranked by it they led the list they close.
-  const severityRank: Record<DashboardAlert['severity'], number> = { critical: 0, warning: 1, info: 2 }
-  const isSummary = (alert: DashboardAlert) => alert.id.endsWith('-more')
-  return alerts.sort((a, b) => {
-    if (severityRank[a.severity] !== severityRank[b.severity]) {
-      return severityRank[a.severity] - severityRank[b.severity]
-    }
-    if (isSummary(a) !== isSummary(b)) return isSummary(a) ? 1 : -1
-    if ((a.count ?? 1) !== (b.count ?? 1)) return (b.count ?? 1) - (a.count ?? 1)
-    return (b.timestamp?.getTime() ?? 0) - (a.timestamp?.getTime() ?? 0)
+  return alerts
+}
+
+/**
+ * The findings for one session.
+ *
+ * Session findings are those whose `peering` is the scope. Route findings
+ * have no peering, and kept as they were they showed the whole capture's
+ * counts — "Route flapping ×6" beside a session that flapped twice, the one
+ * row in the column the scope did not narrow. They are recomputed over the
+ * session's packets, with each `packetIndex` mapped back to the capture's
+ * array so the row still opens the packet it names.
+ *
+ * Findings with no peering that are not route findings (the TCP-only rules a
+ * capture without BGP raises) are kept as they are.
+ */
+export function scopeAlerts(
+  alerts: DashboardAlert[],
+  packets: BgpPacket[],
+  scope: string | null,
+  locale: Locale = 'en'
+): DashboardAlert[] {
+  if (!scope) return alerts
+
+  const indices: number[] = []
+  const sessionPackets: BgpPacket[] = []
+  packets.forEach((packet, index) => {
+    if (peeringKey(packet.srcIp, packet.dstIp) !== scope) return
+    indices.push(index)
+    sessionPackets.push(packet)
   })
+
+  const own = alerts.filter((alert) =>
+    alert.peering ? alert.peering === scope : !CAPTURE_WIDE_RULES.has(alert.rule)
+  )
+  const routes = computeCaptureWideAlerts(sessionPackets, locale).map((alert) =>
+    alert.packetIndex === undefined ? alert : { ...alert, packetIndex: indices[alert.packetIndex] }
+  )
+  return sortAlerts([...own, ...routes])
 }
 
 /**

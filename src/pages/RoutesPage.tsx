@@ -500,7 +500,14 @@ export function RoutesPage() {
                   <SortableHeader column="lastSeen" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
                     {rt.colLastSeen}
                   </SortableHeader>
-                  <SortableHeader column="flap" align="right" {...{ sortColumn, sortDirection, toggleSort }}>
+                  {/* The one column whose meaning is not its name: say what it
+                      counts where the number is read. */}
+                  <SortableHeader
+                    column="flap"
+                    align="right"
+                    title={rt.colFlapTitle}
+                    {...{ sortColumn, sortDirection, toggleSort }}
+                  >
                     {rt.colFlap}
                   </SortableHeader>
                 </tr>
@@ -771,6 +778,8 @@ interface SortableHeaderProps {
   sortDirection: SortDirection
   toggleSort: (column: SortColumn) => void
   align?: 'left' | 'right'
+  /** What the column counts, for the columns whose name does not say. */
+  title?: string
   children: React.ReactNode
 }
 
@@ -780,6 +789,7 @@ function SortableHeader({
   sortDirection,
   toggleSort,
   align = 'left',
+  title,
   children,
 }: SortableHeaderProps) {
   const active = column === sortColumn
@@ -789,6 +799,7 @@ function SortableHeader({
       <button
         type="button"
         onClick={() => toggleSort(column)}
+        title={title}
         aria-sort={active ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
         className={`inline-flex items-center gap-1 transition-colors hover:text-strong ${
           active ? 'text-strong' : ''

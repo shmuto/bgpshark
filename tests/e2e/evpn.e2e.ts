@@ -83,6 +83,20 @@ test.describe('EVPN reaches the database', () => {
     expect(body).not.toContain('Error:')
     expect(body).toContain('65002:100')
   })
+
+  test('the Prefix Flapping template leaves EVPN routes to the Routes screen', async ({ page }) => {
+    // An EVPN row has a prefix (the formatted route) and a length of 0, so a
+    // NULL test let the withdrawn MAC route through as "[2] …/0": a key the
+    // Routes screen does not use, and a link that led nowhere.
+    await page.getByRole('link', { name: 'SQL', exact: true }).click()
+    await page.getByTestId('query-templates').getByRole('button', { name: 'Prefix Flapping' }).click()
+    await page.getByRole('button', { name: /Run/ }).click()
+    await expect(page.getByText(/Results \(|Error:|no results/).first()).toBeVisible()
+    const body = await page.getByRole('main').innerText()
+    expect(body).not.toContain('Error:')
+    expect(body).not.toContain('[2]')
+    expect(body).not.toContain('/0')
+  })
 })
 
 test.describe('EVPN on the route history', () => {

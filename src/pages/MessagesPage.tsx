@@ -171,7 +171,16 @@ function MessagesView({ linked }: { linked: boolean }) {
       searchParams.has('frame')
     )
   })
+  // Guarded by a ref rather than trusting the empty dependency list: in
+  // development React runs every effect of a new view twice, and the second
+  // run cleared the row the link's own effect had just selected — after
+  // marking the link honoured, so nothing selected it again. Every "open the
+  // packet" link then landed on Messages with no packet open, in `bun run
+  // dev` and the e2e suite run against it, though not in a production build.
+  const clearedForLinkRef = useRef(false)
   useLayoutEffect(() => {
+    if (clearedForLinkRef.current) return
+    clearedForLinkRef.current = true
     if (openedByLink) selectPacket(null)
     // Once per view; see above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -707,6 +716,22 @@ function MessagesView({ linked }: { linked: boolean }) {
         />
       </div>
 
+      {/* Directly under the box it is about. In the status bar under the
+          list it sat a whole list away from the typing, out of sight below a
+          long list, and read as a remark about the packets rather than about
+          the query. */}
+      {showParseErrors && parseErrors.length > 0 && (
+        <div
+          role="alert"
+          data-testid="filter-error"
+          className="flex shrink-0 flex-wrap items-baseline gap-x-2 border-b border-hair bg-critical-subtle px-3 py-1 text-xs"
+          title={parseErrors.map((e) => t.messages.parseError(e.detail)).join('\n')}
+        >
+          <span className="text-critical">{t.messages.parseError(parseErrors[0].detail)}</span>
+          <span className="text-muted">{t.messages.parseErrorUnapplied}</span>
+        </div>
+      )}
+
       {/* A capture with traffic but no BGP would otherwise present as an
           empty list, which reads as "nothing captured". Point at the view
           that actually has the evidence. */}
@@ -737,9 +762,7 @@ function MessagesView({ linked }: { linked: boolean }) {
           className="w-full flex-1 lg:flex-none flex flex-col min-h-0"
           style={isCompact ? undefined : { width: `${split.percent}%` }}
         >
-          {/* What the list holds, under it like a status bar. The gap keeps a
-              parse error from running straight on from the packet count
-              ("…of 50 packetsExpected operator…"). */}
+          {/* What the list holds, under it like a status bar. */}
           <div className="order-last flex shrink-0 items-center gap-3 border-t border-hair bg-surface-sunken px-3 py-1 text-[11px] text-muted">
             <span className="truncate">
               {t.messages.showingPackets(
@@ -759,11 +782,6 @@ function MessagesView({ linked }: { linked: boolean }) {
               )}
             </span>
             {isFiltering && <span>{t.messages.filtering}</span>}
-            {showParseErrors && (
-              <span className="truncate text-critical" title={parseErrors.map((e) => e.message).join('; ')}>
-                {parseErrors[0]?.message}
-              </span>
-            )}
             {displayPackets.length > 0 && linkType !== null && (
               <button
                 onClick={exportPcap}

@@ -38,20 +38,53 @@ ORDER BY occurrence DESC
 LIMIT 20`,
   },
   {
+    // Counts flaps the way the Routes screen does (see aggregatePrefixStats):
+    // a withdraw from a peer that had the route up, or whose announce came
+    // before the capture began. A re-announce is not a flap, and withdrawing
+    // an already-withdrawn route is not a second one. Summing announces and
+    // withdraws, as this template once did, scored a route four times what
+    // the Flap column said for the same capture.
+    //
     // Grouped by prefix *and* length: 10.0.12.0/24 and 10.0.12.0/23 are two
-    // routes. Returned as CIDR, so the cell links straight to the route.
+    // routes. Returned as CIDR, so the cell links straight to the route. EVPN
+    // routes are left to the Routes screen: their rows do carry a prefix (the
+    // formatted route) and a length of 0, so they are excluded by route type —
+    // a NULL test let them through as "[2] …/0", a key no screen knows.
     key: 'prefixFlapping',
-    query: `SELECT
-  prefix,
-  COUNT(*) as flap_count
-FROM (
-  SELECT COALESCE(prefix || '/' || prefix_length, prefix) AS prefix FROM nlri
+    query: `WITH events AS (
+  SELECT n.prefix || '/' || n.prefix_length AS prefix, p.src_ip,
+         m.frame_index, m.message_index, 0 AS step, n.id, 'announce' AS action
+  FROM nlri n
+  JOIN messages m ON m.id = n.message_id
+  JOIN packets p ON p.frame_index = m.frame_index
+  WHERE n.evpn_route_type IS NULL
   UNION ALL
-  SELECT COALESCE(prefix || '/' || prefix_length, prefix) AS prefix FROM withdrawn
+  SELECT w.prefix || '/' || w.prefix_length, p.src_ip,
+         m.frame_index, m.message_index, 1, w.id, 'withdraw'
+  FROM withdrawn w
+  JOIN messages m ON m.id = w.message_id
+  JOIN packets p ON p.frame_index = m.frame_index
+  WHERE w.evpn_route_type IS NULL
+),
+ordered AS (
+  SELECT prefix, action,
+         LAG(action) OVER (
+           PARTITION BY prefix, src_ip
+           ORDER BY frame_index, message_index, step, id
+         ) AS previous
+  FROM events
 )
+SELECT
+  prefix,
+  COUNT(*) FILTER (WHERE action = 'announce') AS announced,
+  COUNT(*) FILTER (WHERE action = 'withdraw') AS withdrawn,
+  COUNT(*) FILTER (
+    WHERE action = 'withdraw' AND (previous IS NULL OR previous = 'announce')
+  ) AS flaps
+FROM ordered
 GROUP BY prefix
-HAVING COUNT(*) > 5
-ORDER BY flap_count DESC`,
+HAVING flaps > 0
+ORDER BY flaps DESC, prefix`,
   },
   {
     // The question a fabric raises most often: which host is being claimed by
