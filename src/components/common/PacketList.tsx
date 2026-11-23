@@ -497,7 +497,7 @@ export function PacketList({
         // Keyboard focus is marked, mouse focus is not: a click keeps the grid
         // focused for arrow keys, and a heavy ring round the whole pane on
         // every click was noise. The selected row already says where you are.
-        className="w-full text-sm focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent/60"
+        className="w-full text-xs focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent/60"
         tabIndex={0}
         role="grid"
         aria-rowcount={totalCount}
@@ -513,7 +513,7 @@ export function PacketList({
                 key={col.id}
                 role="columnheader"
                 title={col.id === 'time' ? t.messages.columns.timeTitle : undefined}
-                className={`px-2 py-2 font-medium whitespace-nowrap ${col.width ?? ''}`}
+                className={`px-2 py-1.5 font-medium whitespace-nowrap ${col.width ?? ''}`}
               >
                 {t.messages.columns[col.id]}
               </th>
@@ -549,7 +549,7 @@ export function PacketList({
                 `}
               >
                 {columns.map((col) => (
-                  <td key={col.id} role="gridcell" className={`px-2 py-1.5 ${col.width ?? ''}`}>
+                  <td key={col.id} role="gridcell" className={`px-2 py-1 ${col.width ?? ''}`}>
                     {col.getValue(dp, index, t, base, packets[index - 1]?.timestamp)}
                   </td>
                 ))}
