@@ -31,7 +31,7 @@ CHROMIUM_PATH=/path/to/chromium bun run test:e2e
   - Whenever touching asset loading, DuckDB queries, or dependencies, verify with `bun run build && bun run preview` and `tests/e2e/offline.e2e.ts`.
 - **Dual filter backends:** Filter expressions are parsed once into an AST (`src/lib/filter/parser.ts`) and executed either via DuckDB SQL (`src/lib/db/filter-to-sql.ts`) or in memory when DuckDB is unavailable. Any change to filter fields or semantics must be applied to **both** backends.
   - *Known difference on negation:* In memory, `prefix != 10.0.0.0/8` matches only UPDATE packets, whereas the SQL backend also returns OPENs and KEEPALIVEs (pinned by `tests/e2e/prefix-matching.e2e.ts`).
-- **Dashboard alert rules are specified:** [`docs/design.md`](docs/design.md) §2.1.14 defines every rule's trigger conditions and required false-positive exclusions. When adding or modifying an alert rule, update that table and test against the scenario corpus in `testlab/scenarios.ts`.
+- **Alert rules are specified:** [`docs/design.md`](docs/design.md) §2.1.14 defines every rule's trigger conditions and required false-positive exclusions. When adding or modifying an alert rule, update that table and test against the scenario corpus in `testlab/scenarios.ts`.
 - **Manual prose & screenshots:**
   - The user manual (`src/pages/manual/manual.md` and `manual.ja.md`) is converted to HTML at build time by `markdownPlugin` in `vite.config.ts`. Edit the Markdown files, not `ManualPage.tsx`.
   - Keep `h2`/`h3` anchor IDs strictly synchronized between English and Japanese (Japanese headings use explicit `{#id}` suffixes; enforced by `tests/e2e/manual.e2e.ts`).
@@ -44,7 +44,7 @@ CHROMIUM_PATH=/path/to/chromium bun run test:e2e
 - **Type-checking covers scripts:** `tsconfig.json` includes `src`, `tests`, and `testlab`, so `bun run build` validates test and lab scripts too.
 - **Comments explain *why*:** Preserve and match the codebase's existing docblocks explaining module rationale and prevented failure modes.
 - **UI navigation notes for debugging:**
-  - **Capability Diff** appears only after selecting **Neighbors → router → session**.
+  - **Capability Diff** appears on the **Sessions** tab once a session is chosen (in the workspace's left column or the tab's own table); with none chosen the tab is a table of sessions.
   - **Filter errors** render next to the `"Showing N of M packets"` counter and leave the list unfiltered.
   - **TCP-level frames** (`SYN`, `RST`, `FIN`) appear only when the packet list is switched to **All Packets**.
 

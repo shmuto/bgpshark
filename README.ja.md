@@ -12,9 +12,9 @@ Wireshark を起動することなく、OPEN・UPDATE・NOTIFICATION・KEEPALIVE
 - **pcap / pcapng 対応** — `.pcap` / `.pcapng` / `.cap`（最大 50 MB）を自動判別。Ethernet および Linux SLL リンクタイプに対応し、802.1Q / QinQ タグの除去、TCP セグメントの再構成、IPv4 / IPv6 トランスポート、非標準ポート上の BGP 検出を行います。
 - **完全な BGP デコード** — OPEN ケイパビリティ、UPDATE パス属性（AS_PATH、コミュニティ、Large / Extended コミュニティ、IPv6 NLRI を含む MP_REACH / MP_UNREACH、ADD-PATH）、NOTIFICATION のエラーコード・data フィールド解析とトラブルシューティングヒント、Hold Timer 満了時の無応答時間分析、ROUTE-REFRESH の前後差分表示に対応しています。
 - **EVPN デコード** — MAC/IP Advertisement および Inclusive Multicast ルート（RD・MAC・VNI・ESI）をデコードし、その他の EVPN ルートタイプも識別します。
-- **Dashboard** — メッセージ件数、重要度順に集約された問題アラート、ネイバー状態テーブル、メッセージタイムラインを表示します。
+- **調査ワークスペース** — すべての画面の左側に、セッション一覧と検出事項を表示します。検出事項は種類ごとにまとめます（3 セッションでの 1 回の Hard Reset は、16 行ではなく 1 件として表示します）。セッションを選ぶと、すべての画面がそのセッションに絞られます。
 - **Message Explorer** — パケット一覧、階層化された詳細ビュー、16 進ダンプ、フィルタ適用後の `.pcap` エクスポートを備えています。
-- **Neighbor Analysis** — Router ID ごとにセッションをまとめ、OPEN / ケイパビリティの並列比較（Capability Diff）と ADD-PATH ネゴシエーション結果を表示します。
+- **Sessions** — セッション（アドレスの組）ごとに、キャプチャ終了時点の状態を一覧表示します。セッションを選ぶと、OPEN とケイパビリティの並列比較（Capability Diff）、ADD-PATH のネゴシエーション結果、方向別の経路数、OPEN と NOTIFICATION の出来事を表示します。
 - **Route Analysis** — プレフィックスごとの広告・取り消し（Withdraw）履歴、フラップ回数、ベストパス選択に関わる属性（AS_PATH・Next Hop・MED・LOCAL_PREF・コミュニティ）を確認できます。
 - **SQL Console** — ブラウザ上の DuckDB WASM を使ってキャプチャを SQL で直接クエリできます。
 - **フィルタ式** — Wireshark 風の検索ボックス（例：`type = NOTIFICATION and ip = 10.0.0.1` や単純な `10.0.0.1`）で、入力補完・メニュー形式の **+ Filter**・パケット詳細からのワンクリックフィルタ適用・CIDR を考慮したプレフィックス照合に対応しています。詳細はアプリ内マニュアル（[`src/pages/manual/manual.ja.md`](src/pages/manual/manual.ja.md)）を参照してください。
@@ -105,7 +105,7 @@ pcap/pcapng → BGP パーサー → ┬→ React state (AppContext)
 | `src/lib/filter/` | フィルタ式の字句解析・構文解析・インメモリ評価 |
 | `src/lib/net/` | プレフィックス解析および CIDR 包含判定 |
 | `src/pages/` | 各画面のページコンポーネントおよびアプリ内マニュアル（`manual/manual.md`, `manual/manual.ja.md`） |
-| `src/components/` | UI コンポーネント（`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`） |
+| `src/components/` | UI コンポーネント（`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `workspace/`） |
 | `testlab/` | ContainerLab トポロジ、障害シナリオ生成スクリプト（`scenarios.ts`）、スクリーンショット生成 |
 | `docs/` | 技術設計書およびトラブルシューティングシナリオ評価 |
 

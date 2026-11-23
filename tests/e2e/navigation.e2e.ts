@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loadSample } from './helpers'
+import { loadSample, showFindings } from './helpers'
 
 /**
  * The capture is restored from IndexedDB after the first render, so for a moment
@@ -11,18 +11,24 @@ test.describe('deep links and reloads', () => {
     await loadSample(page)
   })
 
-  for (const path of ['dashboard', 'neighbors', 'routes', 'sql']) {
+  for (const path of ['sessions', 'routes', 'sql']) {
     test(`opening /${path} directly stays there`, async ({ page }) => {
       await page.goto(`./${path}`, { waitUntil: 'networkidle' })
-      // Neighbors and Routes add the row they open on to the query string.
+      // Routes adds the row it opens on to the query string.
       await expect(page).toHaveURL(new RegExp(`/${path}(\\?|$)`))
     })
   }
 
   test('reloading keeps the screen you were on', async ({ page }) => {
-    await page.goto('./dashboard', { waitUntil: 'networkidle' })
+    await page.goto('./sql', { waitUntil: 'networkidle' })
     await page.reload({ waitUntil: 'networkidle' })
-    await expect(page).toHaveURL(/\/dashboard$/)
+    await expect(page).toHaveURL(/\/sql$/)
+  })
+
+  test('an old /dashboard link lands on Messages, keeping its query', async ({ page }) => {
+    await page.goto('./dashboard?selected=12', { waitUntil: 'networkidle' })
+    await expect(page).toHaveURL(/\/messages\?selected=12/)
+    await expect(page.getByText(/Packet #\d+/)).toBeVisible()
   })
 
   test('a ?selected= link survives and selects the packet', async ({ page }) => {
@@ -32,9 +38,9 @@ test.describe('deep links and reloads', () => {
     await expect(page).toHaveURL(/selected=12/)
   })
 
-  test('a dashboard alert opens the packet it names', async ({ page }) => {
-    await page.getByRole('link', { name: 'Dashboard', exact: true }).click()
-    await page.getByText(/^View/).first().click()
+  test('a finding opens the packet it names', async ({ page }) => {
+    const rail = await showFindings(page)
+    await rail.getByRole('button', { name: /^1\.1\.1\.1 → 2\.2\.2\.2/ }).first().click()
     await expect(page).toHaveURL(/\/messages/)
     await expect(page.getByText(/Packet #\d+/)).toBeVisible()
   })

@@ -27,34 +27,34 @@ Legend: **✔** answered on screen · **◑** answerable with manual search or S
 
 | ID | Capture | Symptom | Status | Primary screen |
 |----|---------|---------|--------|----------------|
-| S1 | `s1-tcp-refused` | Neighbor stays Idle, no BGP exchanged | ✔ | Dashboard (transport alerts) |
-| S2 | `s2-capability-mismatch` | Established, but IPv6 routes never arrive | ✔ | Neighbors → Capability Diff |
-| S3 | `s3-holdtimer-flap` | Session flaps every few minutes | ✔ | Dashboard + Messages (NOTIFICATION) |
+| S1 | `s1-tcp-refused` | Neighbor stays Idle, no BGP exchanged | ✔ | Findings (transport alerts) |
+| S2 | `s2-capability-mismatch` | Established, but IPv6 routes never arrive | ✔ | Sessions → OPEN comparison |
+| S3 | `s3-holdtimer-flap` | Session flaps every few minutes | ✔ | Findings + Messages (NOTIFICATION) |
 | S4 | `s4-bestpath` | Traffic leaves by the wrong upstream | ✔ | Routes (history attributes) |
 | S5 | `s5-route-leak` | Customer announcing transit routes | ◑ | Routes (AS search) / Messages (`asn =`) |
 | S6 | `s6-malformed-update` | Session drops on first UPDATE | ✔ | Messages (NOTIFICATION data decode) |
 | S7 | `s7-segmented` | Large UPDATE split across TCP segments | ✔ | Routes (reassembled prefix count) |
-| S8 | `s8-graceful-restart` | Router reload with Graceful Restart | ✔ | Dashboard (GR alert) + Capability Diff |
+| S8 | `s8-graceful-restart` | Router reload with Graceful Restart | ✔ | Findings (GR alert) + Capability Diff |
 | S9 | `s9-route-refresh` | Soft clear changed or lost routes | ✔ | Messages (ROUTE-REFRESH diff) |
-| S10 | `s10-churn` | High CPU and unstable RIB | ✔ | Dashboard + Routes (Flap sort) |
-| S11 | `s11-silent-teardown` | Session dropped with no NOTIFICATION | ✔ | Dashboard + Messages (All Packets) |
-| S12 | `s12-one-direction` | Only one direction present in capture | ✔ | Dashboard + Messages (All Packets) |
-| S13 | `s13-evpn-mac-move` | Fabric host drops out in bursts | ✔ | Dashboard + Messages (`mac =`) + Routes |
-| S14 | `s14-open-unanswered` | TCP connects, peer never sends BGP | ✔ | Dashboard + Neighbor table |
+| S10 | `s10-churn` | High CPU and unstable RIB | ✔ | Findings + Routes (Flap sort) |
+| S11 | `s11-silent-teardown` | Session dropped with no NOTIFICATION | ✔ | Findings + Messages (All Packets) |
+| S12 | `s12-one-direction` | Only one direction present in capture | ✔ | Findings + Messages (All Packets) |
+| S13 | `s13-evpn-mac-move` | Fabric host drops out in bursts | ✔ | Findings + Messages (`mac =`) + Routes |
+| S14 | `s14-open-unanswered` | TCP connects, peer never sends BGP | ✔ | Findings + session list |
 
 ## Scenario details
 
 ### S1 — `s1-tcp-refused` · Neighbor stays Idle and no BGP is exchanged
 - **Want:** What answers TCP SYNs to port 179 (SYN-ACK, RST, or silence) and retry cadence.
-- **✔ Verdict:** With no BGP in the capture, Dashboard runs `computeTransportAlerts` and leads with *"TCP connections to port 179 are being refused — 3 SYNs answered by RST"*, pointing to ACLs, TCP-MD5/AO, or a stopped BGP process.
+- **✔ Verdict:** With no BGP in the capture, the workspace runs `computeTransportAlerts` and leads with *"TCP connections to port 179 are being refused — 3 SYNs answered by RST"*, pointing to ACLs, TCP-MD5/AO, or a stopped BGP process.
 
 ### S2 — `s2-capability-mismatch` · Established, but no IPv6 routes arrive
 - **Want:** Side-by-side OPEN comparison per AFI/SAFI and capability.
-- **✔ Verdict:** **Neighbors → router → session → Capability Diff** flags `IPv6/Unicast Multiprotocol Extensions ⚠ Only 1.1.1.1` (plus GR and ADD-PATH mismatches) ahead of matching entries.
+- **✔ Verdict:** The **Sessions** tab's **OPEN comparison** (with the session chosen) flags `IPv6/Unicast Multiprotocol Extensions ⚠ Only 10.0.0.1` (plus GR and ADD-PATH mismatches) ahead of matching entries.
 
 ### S3 — `s3-holdtimer-flap` · Session flaps every few minutes
 - **Want:** NOTIFICATION code/subcode, flap count, and silence duration since the peer's last message against the negotiated hold time.
-- **✔ Verdict:** Dashboard groups repeats into *"NOTIFICATION: Hold Timer Expired / Unspecific ×3"* alongside *"Session flapping detected"*. Clicking the NOTIFICATION displays **Silence before the teardown** (`90.4s` since `10.0.0.1`'s last KEEPALIVE against negotiated `90s`), measured strictly from the peer's last message rather than the previous packet in the list.
+- **✔ Verdict:** Findings group repeats into *"NOTIFICATION: Hold Timer Expired / Unspecific ×3"* alongside *"Session flapping detected"*. Clicking the NOTIFICATION displays **Silence before the teardown** (`90.4s` since `10.0.0.1`'s last KEEPALIVE against negotiated `90s`), measured strictly from the peer's last message rather than the previous packet in the list.
 
 ### S4 — `s4-bestpath` · Traffic leaves by the wrong upstream
 - **Want:** All announcements for a prefix side by side with AS_PATH, LOCAL_PREF, MED, ORIGIN, NEXT_HOP, and communities.
@@ -62,7 +62,7 @@ Legend: **✔** answered on screen · **◑** answerable with manual search or S
 
 ### S5 — `s5-route-leak` · Customer announcing more than it should
 - **Want:** Full AS_PATH per prefix and all routes carrying an unexpected AS.
-- **◑ Verdict:** Searchable via `AS15169` on **Routes** or `asn = 15169` in **Messages**, with AS_PATH Analysis showing the full path. Dashboard reports *"No issues detected"* because session health is normal and BGPShark has no knowledge of expected routing policy.
+- **◑ Verdict:** Searchable via `AS15169` on **Routes** or `asn = 15169` in **Messages**, with AS_PATH Analysis showing the full path. Findings report *"No issues detected"* because session health is normal and BGPShark has no knowledge of expected routing policy.
 
 ### S6 — `s6-malformed-update` · Session drops when routes are advertised
 - **Want:** Offending UPDATE attributes/flags and decoded NOTIFICATION data.
@@ -74,7 +74,7 @@ Legend: **✔** answered on screen · **◑** answerable with manual search or S
 
 ### S8 — `s8-graceful-restart` · Reload with Graceful Restart
 - **Want:** GR capabilities/flags, Restart Time, forwarding-state preservation, and convergence duration to End-of-RIB.
-- **✔ Verdict:** Dashboard reports *"10.0.0.1 restarted gracefully"* with Restart Time (`120s`), forwarding-state status, and measured convergence (`3.8s`), replacing both *"Session flapping detected"* and *"Silent teardown"* for the restart. Escalates to critical if forwarding state was not preserved or convergence exceeded Restart Time.
+- **✔ Verdict:** Findings report *"10.0.0.1 restarted gracefully"* with Restart Time (`120s`), forwarding-state status, and measured convergence (`3.8s`), replacing both *"Session flapping detected"* and *"Silent teardown"* for the restart. Escalates to critical if forwarding state was not preserved or convergence exceeded Restart Time.
 
 ### S9 — `s9-route-refresh` · Soft clear changed or dropped routes
 - **Want:** ROUTE-REFRESH AFI/SAFI and the diff between pre-refresh and post-refresh advertisements.
@@ -82,25 +82,25 @@ Legend: **✔** answered on screen · **◑** answerable with manual search or S
 
 ### S10 — `s10-churn` · High CPU and an unstable RIB
 - **Want:** Withdrawal bursts, worst-flapping prefixes, and AS_PATH oscillation.
-- **✔ Verdict:** Dashboard surfaces per-prefix flaps, a summary overflow row, AS_PATH changes, and a withdraw-burst alert; **Routes** sorts by flap count and shows AS_PATH variants.
+- **✔ Verdict:** Findings surface per-prefix flaps, a summary overflow row, AS_PATH changes, and a withdraw-burst alert; **Routes** sorts by flap count and shows AS_PATH variants.
 
 ### S11 — `s11-silent-teardown` · Dropped with no NOTIFICATION
 - **Want:** Whether RST or FIN ended the session, timestamps, and reconnect gap.
-- **✔ Verdict:** Dashboard raises separate critical alerts for RST and FIN teardowns alongside *"Session flapping detected"*, and **View →** jumps directly to **All Packets** with the exact frame selected (`?all=1&frame=`). False-positive checks (`s3-holdtimer-flap`, `s14-open-unanswered`, `s8-graceful-restart`) stay quiet (`design.md` §2.1.14).
+- **✔ Verdict:** Findings raise separate critical alerts for RST and FIN teardowns alongside *"Session flapping detected"*, and clicking the finding jumps directly to **All Packets** with the exact frame selected (`?all=1&frame=`). False-positive checks (`s3-holdtimer-flap`, `s14-open-unanswered`, `s8-graceful-restart`) stay quiet (`design.md` §2.1.14).
 - **Remaining gap:** No filter field for TCP flags to manually filter **All Packets** down to resets/FINs.
 
 ### S12 — `s12-one-direction` · Only one direction captured
 - **Want:** Immediate warning that the session is one-sided, without falsely assuming a capture defect vs. one-way outage.
-- **✔ Verdict:** Dashboard raises *"Only one direction of this session is in the capture"* naming both possible causes, and the neighbor table marks the pair `⚠ Never up`.
+- **✔ Verdict:** Findings raise *"Only one direction of this session is in the capture"* naming both possible causes, and the session list marks the pair **Critical**.
 
 ### S13 — `s13-evpn-mac-move` · Fabric host unreachable in bursts
 - **Want:** MAC, VNI, RD, ESI, and which VTEP announced/withdrew each route.
-- **✔ Verdict:** Surfaced as *"MAC moved"* (from the VTEP it left to the one it moved to) + route flapping on Dashboard, tracked in **Routes**, and filterable with `mac`, `vni`, `rd`, and `evpn_type`.
+- **✔ Verdict:** Surfaced as *"MAC moved"* (from the VTEP it left to the one it moved to) + route flapping in Findings, tracked in **Routes**, and filterable with `mac`, `vni`, `rd`, and `evpn_type`.
 - **Minor notes:** MAC Mobility sequence numbers are decoded in details but not compared automatically.
 
 ### S14 — `s14-open-unanswered` · TCP connects and peer sends no BGP
 - **Want:** Confirmation that TCP established and local OPEN was sent with no BGP reply.
-- **✔ Verdict:** Dashboard reports *"TCP connects but 10.0.0.2 sends no BGP ×3"* with guidance on what the completed handshake rules out (open port, no SYN ACL, matching MD5), and the neighbor table marks the pair `⚠ Never up`. Does not overlap with S1 transport alerts.
+- **✔ Verdict:** Findings report *"TCP connects but 10.0.0.2 sends no BGP ×3"* with guidance on what the completed handshake rules out (open port, no SYN ACL, matching MD5), and the session list marks the pair **Critical**. Does not overlap with S1 transport alerts.
 
 ## Remaining gaps
 

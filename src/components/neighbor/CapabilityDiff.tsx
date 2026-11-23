@@ -42,7 +42,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
 
   if (!localOpen && !remoteOpen) {
     return (
-      <div className="text-sm text-dim text-center py-6">
+      <div className="text-xs text-dim text-center py-6">
         {ct.noOpenEither}
       </div>
     )
@@ -51,7 +51,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
   return (
     <div className="space-y-4">
       {(!localOpen || !remoteOpen) && (
-        <div className="flex items-center gap-2 rounded-lg bg-warning-subtle border border-hair px-3 py-2 text-xs text-warning">
+        <div className="flex items-center gap-2 rounded bg-warning-subtle border border-hair px-3 py-2 text-xs text-warning">
           <span aria-hidden="true">⚠</span>
           <span>
             {ct.oneSidedWarning(!localOpen ? localLabel : remoteLabel)}
@@ -81,7 +81,7 @@ export function CapabilityDiff({ localLabel, remoteLabel, localOpen, remoteOpen 
         {mismatchRows.length > 0 ? (
           <CapabilityTable rows={mismatchRows} localLabel={localLabel} remoteLabel={remoteLabel} />
         ) : (
-          <div className="text-xs text-muted rounded-lg border border-hair bg-ok-subtle px-3 py-2">
+          <div className="text-xs text-muted rounded border border-hair bg-ok-subtle px-3 py-2">
             {ct.noMismatches}
           </div>
         )}
@@ -148,7 +148,7 @@ function AddPathOutcome({
       <h4 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">
         {ct.addPathResult}
       </h4>
-      <table className="w-full text-sm">
+      <table className="w-full text-xs">
         <thead>
           <tr className="text-left text-xs text-muted">
             <th className="py-1 pr-3 font-medium">{ct.colAddressFamily}</th>
@@ -291,7 +291,7 @@ function SessionFieldsTable({
         : { tone: 'ok', text: ct.statusIdUnique }
 
   return (
-    <table className="w-full text-sm border-collapse">
+    <table className="w-full text-xs border-collapse">
       <thead>
         <tr className="border-b border-hair text-left text-muted">
           <th className="py-1.5 pr-3 font-medium">{ct.colField}</th>
@@ -564,7 +564,7 @@ function CapabilityTable({
   const ct = t.capabilityDiff
 
   return (
-    <table className="w-full text-sm border-collapse">
+    <table className="w-full text-xs border-collapse">
       <thead>
         <tr className="border-b border-hair text-left text-muted">
           <th className="py-1.5 pr-3 font-medium">{ct.colCapability}</th>

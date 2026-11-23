@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loadSample } from './helpers'
+import { loadSample, openSessionsTab } from './helpers'
 
 const COMPACT = { width: 480, height: 900 }
 
@@ -44,8 +44,13 @@ test.describe('resizable panes', () => {
     expect(await packetListWidth(page)).toBeLessThan(before)
 
     await divider.dblclick()
-    // The packet list's default share is 60%, so its default columns fit.
-    const initial = await page.evaluate(() => Math.round(window.innerWidth * 0.6))
+    // The packet list's default share is 60% of the split it sits in — the
+    // view area, which no longer spans the window now that the sessions
+    // column is beside it.
+    const initial = await page.evaluate(() => {
+      const split = document.querySelector('table[role="grid"]')?.closest('div.flex.flex-col')?.parentElement
+      return Math.round((split?.getBoundingClientRect().width ?? 0) * 0.6)
+    })
     expect(Math.abs((await packetListWidth(page)) - initial)).toBeLessThan(40)
   })
 
@@ -86,19 +91,18 @@ test.describe('compact viewport', () => {
     await expect(page.getByRole('heading', { name: 'Prefix Statistics' })).toBeVisible()
   })
 
-  test('the neighbors screen swaps the same way', async ({ page }) => {
-    await page.goto('./neighbors', { waitUntil: 'networkidle' })
-    await page.locator('tbody tr').first().click()
-    await expect(page.getByText('Message Summary')).toBeVisible()
+  test('the sessions tab opens a session and goes back to the table', async ({ page }) => {
+    await openSessionsTab(page, '1.1.1.1')
+    await expect(page.getByText('OPEN comparison', { exact: true })).toBeVisible()
 
-    await page.getByRole('button', { name: /Back to routers/i }).click()
-    await expect(page.getByRole('columnheader', { name: /Router ID/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Show all sessions' }).click()
+    await expect(page.getByRole('columnheader', { name: 'Session' })).toBeVisible()
   })
 
   test('the navigation is still reachable and nothing overflows sideways', async ({ page }) => {
     await expect(page.getByRole('link', { name: 'SQL', exact: true })).toBeVisible()
 
-    for (const path of ['messages', 'neighbors', 'routes', 'sql', 'dashboard']) {
+    for (const path of ['messages', 'sessions', 'routes', 'sql']) {
       await page.goto(`./${path}`, { waitUntil: 'networkidle' })
       const overflows = await page.evaluate(
         () => document.documentElement.scrollWidth > document.documentElement.clientWidth

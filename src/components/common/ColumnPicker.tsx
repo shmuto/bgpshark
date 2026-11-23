@@ -58,7 +58,7 @@ export function ColumnPicker({ visibleColumns, onToggle, onReset }: ColumnPicker
       </button>
 
       {open && (
-        <div className="absolute top-full right-0 mt-1 bg-surface-raised border border-hair rounded-lg shadow-lg p-2 z-30 min-w-48">
+        <div className="absolute top-full right-0 mt-1 bg-surface-raised border border-hair rounded shadow-lg p-2 z-30 min-w-48">
           <div className="text-xs font-medium text-dim uppercase tracking-wide mb-2 px-2">
             {t.messages.visibleColumns}
           </div>
@@ -73,7 +73,7 @@ export function ColumnPicker({ visibleColumns, onToggle, onReset }: ColumnPicker
                 onChange={() => onToggle(col.id)}
                 className="rounded border-hair-strong text-accent focus:ring-accent"
               />
-              <span className="text-sm text-body">{t.messages.columns[col.id]}</span>
+              <span className="text-xs text-body">{t.messages.columns[col.id]}</span>
             </label>
           ))}
           <div className="border-t border-hair mt-2 pt-2 px-2">

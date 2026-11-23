@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { openSessionsTab } from './helpers'
 
 /**
  * Japanese UI localization & language switcher.
@@ -18,7 +19,8 @@ test.describe('Japanese browser auto-detection', () => {
     await expect(page).toHaveTitle('BGP パケットアナライザー')
     await expect(page.getByText('pcap ファイルをここにドロップ')).toBeVisible()
     await expect(page.getByRole('button', { name: /sample\.pcapng で試す/ })).toBeVisible()
-    await expect(page.getByRole('link', { name: '作成', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'その他' }).click()
+    await expect(page.getByRole('link', { name: /^作成/ })).toBeVisible()
     await expect(page.getByRole('link', { name: 'ヘルプ', exact: true })).toBeVisible()
 
     // Manual page follows the global Japanese locale automatically too.
@@ -46,31 +48,28 @@ test.describe('header language toggle across screens', () => {
 
     // Load bundled sample capture in Japanese UI
     await page.getByRole('button', { name: /sample\.pcapng で試す/ }).click()
-    await page.waitForURL(/\/dashboard/, { timeout: 30_000 })
+    await page.waitForURL(/\/messages/, { timeout: 30_000 })
 
-    // Dashboard: headings, cards, alerts, neighbor summary
-    await expect(page.getByRole('heading', { name: 'ダッシュボード' })).toBeVisible()
-    await expect(page.getByRole('heading', { name: /^アラート/ })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'BGP ネイバー' })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'タイムライン' })).toBeVisible()
+    // Workspace: sessions and findings beside every view
+    await expect(page.getByRole('heading', { name: /^セッション/ })).toBeVisible()
+    await expect(page.getByRole('heading', { name: /^検出事項/ })).toBeVisible()
+    await expect(page.getByText('すべてのセッション')).toBeVisible()
 
     // Messages: list, filter suggestions, column picker, NOTIFICATION troubleshooting hint
-    await page.getByRole('link', { name: 'メッセージ', exact: true }).click()
-    await page.waitForURL(/\/messages/)
     await expect(page.getByText(/\d+ 件中 \d+ 件のパケットを表示/)).toBeVisible()
     await expect(page.getByRole('button', { name: '表示する列を設定' })).toContainText('列設定')
 
     // Filter to NOTIFICATION and verify Japanese troubleshooting hint + RFC code name preserved
-    await page.getByRole('button', { name: /NOTIFICATION/ }).first().click()
-    await page.locator('tbody tr').first().click()
+    await page.getByLabel('フィルタ', { exact: true }).fill('type = NOTIFICATION')
+    await page.keyboard.press('Escape')
+    await page.getByRole('main').locator('tbody tr').first().click()
     await expect(page.getByText('トラブルシューティングのヒント')).toBeVisible()
     await expect(page.getByText('エラーコード')).toBeVisible()
 
-    // Neighbors: router table + Capability Diff
-    await page.getByRole('link', { name: 'ネイバー', exact: true }).click()
-    await page.waitForURL(/\/neighbors/)
-    await expect(page.getByRole('heading', { name: 'ネイバー一覧' })).toBeVisible()
-    await expect(page.getByText('メッセージ集計')).toBeVisible()
+    // Sessions: session table, then one session's OPEN comparison
+    await openSessionsTab(page, '1.1.1.1')
+    await expect(page.getByText('OPEN の比較', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'すべてのセッションを表示' }).click()
 
     // Routes: search match modes + route history
     await page.getByRole('link', { name: '経路', exact: true }).click()
@@ -88,19 +87,21 @@ test.describe('header language toggle across screens', () => {
     await expect(page.getByText('スキーマ')).toBeVisible()
 
     // Builder
-    await page.getByRole('link', { name: '作成', exact: true }).click()
+    await page.getByRole('button', { name: 'その他' }).click()
+    await page.getByRole('link', { name: /^作成/ }).click()
     await page.waitForURL(/\/builder/)
     await expect(page.getByRole('heading', { name: 'キャプチャを作成' })).toBeVisible()
     await expect(page.getByRole('button', { name: 'アナライザーで開く' })).toBeVisible()
 
     // Manual sync: switching Manual back to English also switches global header UI back to English
+    await page.getByRole('button', { name: 'その他' }).click()
     await page.getByRole('link', { name: 'ヘルプ', exact: true }).click()
     await page.waitForURL(/\/manual/)
     await expect(page.getByRole('heading', { name: 'BGPShark ユーザーマニュアル' })).toBeVisible()
 
     await page.getByRole('button', { name: 'English' }).click()
     await expect(page.getByRole('heading', { name: 'BGPShark user manual' })).toBeVisible()
-    await expect(page.locator('header').getByRole('link', { name: 'Dashboard', exact: true })).toBeVisible()
+    await page.locator('header').getByRole('button', { name: 'More' }).click()
     await expect(page.locator('header').getByRole('link', { name: 'Help', exact: true })).toBeVisible()
   })
 
@@ -133,10 +134,7 @@ test.describe('Japanese UI layout stability', () => {
   test('compact viewport has no horizontal overflow in Japanese UI', async ({ page }) => {
     await page.goto('./', { waitUntil: 'networkidle' })
     await page.getByRole('button', { name: /sample\.pcapng で試す/ }).click()
-    await page.waitForURL('**/dashboard', { timeout: 30_000 })
-
-    await page.getByRole('link', { name: 'メッセージ', exact: true }).click()
-    await page.waitForURL('**/messages')
+    await page.waitForURL('**/messages', { timeout: 30_000 })
     await expect(page.getByText(/\d+ 件中 \d+ 件のパケットを表示/)).toBeVisible()
     await expect(page.getByRole('link', { name: 'SQL', exact: true })).toBeVisible()
 

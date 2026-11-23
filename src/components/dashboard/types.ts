@@ -1,16 +1,38 @@
-import type { BgpMessageTypeName } from '../../lib/bgp/types'
+/**
+ * `info` is for findings that are worth knowing but describe BGP working as
+ * designed — a connection collision resolved by Cease/7 is the case that
+ * introduced it. They are listed last and never colour a session as faulty.
+ */
+export type AlertSeverity = 'critical' | 'warning' | 'info'
 
-export type MessageTypeCounts = Record<BgpMessageTypeName, number>
-
-export interface SummaryData {
-  total: number
-  counts: MessageTypeCounts
-}
-
-export type AlertSeverity = 'critical' | 'warning'
+/** Which rule produced an alert, so the findings list can group like with like. */
+export type AlertRule =
+  | 'one-direction'
+  | 'no-reply'
+  | 'silent-teardown'
+  | 'graceful-restart'
+  | 'notification'
+  | 'session-flap'
+  | 'withdraw-burst'
+  | 'route-flap'
+  | 'route-aspath'
+  | 'route-macmove'
+  | 'transport'
 
 export interface DashboardAlert {
   id: string
+  rule: AlertRule
+  /**
+   * Alerts sharing this key are one finding. Defaults to `rule`; set where a
+   * rule produces distinct kinds of fault, such as one NOTIFICATION code
+   * against another.
+   */
+  groupKey?: string
+  /**
+   * The session (as `sortedPairKey` writes it) the alert is about, for every
+   * rule that has one; it lets the workspace scope findings to a session.
+   */
+  peering?: string
   severity: AlertSeverity
   title: string
   detail: string
@@ -26,12 +48,6 @@ export interface DashboardAlert {
   /** First and last occurrence, set only when the row stands for more than one. */
   timeSpan?: { start: Date; end: Date }
   /**
-   * The peer pair this row is about, as `sortedPairKey` writes it. Set only by
-   * the rules that judge a whole session rather than a message, so the
-   * neighbour table can mark the same pair without deriving the finding twice.
-   */
-  pairKey?: string
-  /**
    * A frame to select by its `frameIndex`, for rows whose evidence is not a BGP
    * message. `packetIndex` cannot address one: it indexes the BGP packet array,
    * and an RST carries no BGP at all.
@@ -43,42 +59,4 @@ export interface DashboardAlert {
    * on a list that cannot contain the thing it just named.
    */
   showAllPackets?: boolean
-}
-
-export interface NeighborRow {
-  pairKey: string
-  ipA: string
-  ipB: string
-  routerId: string
-  peerIp: string
-  total: number
-  counts: MessageTypeCounts
-  hasNotification: boolean
-  /**
-   * The session never got going — one direction only, or a connection accepted
-   * and never answered. Distinct from `hasNotification`, which is a session
-   * that came up and then failed.
-   */
-  neverEstablished?: boolean
-  lastActivity: Date
-}
-
-export interface TimelineBucket {
-  start: Date
-  updateCount: number
-  notificationCount: number
-}
-
-export interface TimelineNotificationMarker {
-  ratio: number
-  timestamp: Date
-  packetIndex: number
-}
-
-export interface TimelineData {
-  buckets: TimelineBucket[]
-  notifications: TimelineNotificationMarker[]
-  start: Date | null
-  end: Date | null
-  maxUpdateCount: number
 }

@@ -83,15 +83,15 @@ Because AS width and ADD-PATH Path Identifiers are negotiated in OPEN and absent
 Path Identifiers are retained per prefix and displayed on packet detail chips and in the Route Analysis **Path ID** column.
 
 #### 2.1.8 Analysis Views
-- **Dashboard (`/dashboard`):** Where a freshly loaded capture lands (a deep link's original destination is still honoured). Summary counters, severity-sorted alerts (§2.1.14), neighbor table, and message timeline. Computed in memory so it stays functional without DuckDB.
+- **Workspace (`src/components/workspace/`):** The analysis views below are tabs of one workspace. Its left column lists the capture's **Sessions** (address pairs, worst finding per session) and its **Findings** (alerts folded by kind, §2.1.14). Choosing a session sets the workspace **scope** (opening a finding does not; its link already filters to the session, and the findings list stays whole so its instances can be stepped through): Messages and Routes show only that session's packets, and Findings only that session's findings plus those with no session. Above the tabs, a **time strip** (`TimeStrip.tsx`) draws the scope's message volume over the whole capture, with NOTIFICATIONs as rules; dragging across it sets a **time window** that narrows Messages and Routes the same way (a click without a drag clears it). Findings, the Sessions tab's OPEN comparison and SQL are not narrowed by the window: what was negotiated and what the rules found are properties of the capture. Scope and window are held by the workspace layout, so they survive tab changes and are dropped with the capture. Findings are computed in memory, so they stay available without DuckDB. A freshly loaded capture lands on Messages (a deep link's original destination is still honoured); `/dashboard` redirects there, keeping its query string.
 - **Message Explorer (`/messages`):** Filter bar, virtualized packet list, detail view, hex dump, and filtered `.pcap` export.
-- **Neighbor Analysis (`/neighbors`):** Sessions grouped by Router ID, session event summary, and Capability Diff (§2.1.10).
+- **Sessions (`/sessions`):** With no session chosen, a table of every session (state at end of capture, message counts, worst finding). With one chosen, its OPEN comparison (§2.1.10), negotiated hold time, per-direction prefix counts, and its OPEN/NOTIFICATION events (or every message). Old `/neighbors?router=&peer=` links redirect here and choose the session they named.
 - **Route Analysis (`/routes`):** Per-prefix announce/withdraw history, flap counts, AS_PATH analysis, and best-path attribute columns (shown only when present on the selected route; `ORIGIN` shown only when values differ).
 - **SQL Console (`/sql`):** Ad-hoc SQL queries against DuckDB WASM with schema sidebar and templates.
 - **Capture Builder (`/build`):** §2.1.12.
 - **User Manual (`/manual`):** §2.1.13.
 
-Screen state is synchronized with URL query parameters (`?filter=`, `?selected=`, `?frame=`, `?all=1`, `?router=`, `?peer=`, and route search/sort/mode).
+Screen state is synchronized with URL query parameters (`?filter=`, `?selected=`, `?frame=`, `?all=1`, and route search/sort/mode).
 
 #### 2.1.9 Filtering
 One always-visible query box with autocomplete (focused by `/` or Ctrl/⌘+K), plus a **+ Filter** popover that builds a condition from menus and appends it to the box, so the text on screen is always the filter in effect. Packet-detail values (addresses, prefixes, ASNs, next hops, communities) offer "add to filter" / "filter on". Grammar: `field (= | == | != | contains | not contains | < | <= | > | >=) value`, combined with `and`, `or`, `not`, and parentheses. Ordered operators apply to numeric fields only.
@@ -101,7 +101,7 @@ One always-visible query box with autocomplete (focused by `/` or Ctrl/⌘+K), p
 Expressions parse once into an AST (`src/lib/filter/parser.ts`) and run either via DuckDB SQL (`src/lib/db/filter-to-sql.ts`) or in memory when DuckDB is unavailable. Optional numeric attributes (`med`, `local_pref`) are never coerced to `0`: an UPDATE lacking the attribute matches no comparison on that field in either backend.
 
 #### 2.1.10 Capability Diff (`src/components/neighbor/CapabilityDiff.tsx`)
-Selecting a router and then a session on `/neighbors` compares the two OPEN messages side by side:
+Choosing a session (the workspace scope) shows its two latest OPEN messages side by side on `/sessions`:
 - Compares session header fields first (version mismatch, duplicate BGP Identifier, and inconsistent 2-byte/4-byte AS are errors; differing Hold Time is informational).
 - Compares capabilities as a three-state diff (both, local only, remote only) with both icon and text label, sorting mismatches before matches. Multiprotocol Extensions and ADD-PATH are compared per AFI/SAFI pair and deduplicated within each OPEN.
 - Renders an **ADD-PATH Result** section when both OPENs are present and at least one peer advertises ADD-PATH, reporting the crosswise send/receive outcome per direction and AFI/SAFI via `addPathDirections` (`src/lib/bgp/session.ts`).
@@ -120,12 +120,14 @@ Embedded offline Help page outside `RequireCapture` so it is accessible before l
 - Headings (`h2`/`h3`) receive slug IDs (or explicit `{#id}` markers in Japanese) used to build the sidebar table of contents and support hash links such as `/manual#filters`. Both language manuals are verified by `tests/e2e/manual.e2e.ts` to publish the exact same ordered list of heading IDs.
 - Screenshots in `public/manual/` are shared across languages with localized captions and intrinsic dimensions injected at build time to prevent layout shifts with lazy loading.
 
-#### 2.1.14 Dashboard Alert Rules (`src/components/dashboard/alerts.ts`)
-Alerts are grouped **one row per problem** (not per packet) and sorted by severity, occurrence count, and recency. The panel shows the top five and folds the rest behind a **Show N more** toggle, so the neighbor table and timeline stay on the first screen.
+#### 2.1.14 Alert Rules (`src/components/dashboard/alerts.ts`)
+The rule engine reports **one alert per problem instance** (not per packet), sorted by severity (`critical`, `warning`, `info`), occurrence count, and recency. Every alert names the rule that produced it (`rule`) and, where it concerns one session, that session (`peering`).
+
+The workspace's **Findings** list then folds instances into **one row per kind of problem** (`groupFindings`, `src/components/dashboard/findings.ts`): alerts sharing a `groupKey` (default: the rule) form a group that ranks by its worst severity and expands to its instances. NOTIFICATIONs are keyed by code and subcode so different faults stay apart. Selecting a session narrows the list to that session's findings plus those with no session of their own (`alertsForPeering`). On the bundled sample, 16 instances fold into 4 rows.
 
 | Rule | Severity | Fires when | Must stay quiet about |
 |------|----------|------------|-----------------------|
-| NOTIFICATION | critical (warning for Cease / Connection Collision Resolution, 6/7) | Any NOTIFICATION, grouped by sender → receiver, code, and subcode | Collision resolution is RFC 4271 §6.8 behaviour, so it never ranks with the teardown that caused the reconnect |
+| NOTIFICATION | critical (info for Cease / Connection Collision Resolution, 6/7) | Any NOTIFICATION, grouped by sender → receiver, code, and subcode | Collision resolution is RFC 4271 §6.8 behaviour, so it is `info`: listed last and never marks a session as faulty |
 | Session flapping | warning | ≥ 4 OPENs between a peer pair | Single establishment; re-establishment after clean Cease; peerings fully accounted for by Graceful Restart |
 | Withdrawn burst | warning | ≥ 10 prefixes withdrawn within 10s | Steady-state withdrawals spread over time |
 | Route flapping | warning | Prefix withdrawn at least once per announcing peer (top 5 + summary row) | Stable routes never withdrawn |
@@ -223,7 +225,7 @@ No failure is allowed to silently display empty data:
 | `public/` | Static assets (`favicon.svg`, `sample.pcapng`, `THIRD-PARTY-LICENSES.txt`, `manual/*.png`) |
 | `docs/` | Technical design, DuckDB ADR, troubleshooting scenario assessment |
 | `src/pages/` | Route-level pages and Markdown sources for the user manual (`manual/`) |
-| `src/components/` | Feature UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`) |
+| `src/components/` | Feature UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `workspace/`) |
 | `src/hooks/` | State, filtering, virtualization, theming, split pane, and file drop hooks |
 | `src/lib/pcap/` | libpcap/pcapng parsers, IPv6 walking, BGP marker detection, pcap writer |
 | `src/lib/bgp/` | Message & path attribute parsers, EVPN, error hints, hold-timer, route-refresh, neighbor & prefix stats |
@@ -252,8 +254,8 @@ AppContext (React)             db/loader.ts → DuckDB WASM (Arrow IPC)
         │                              │
         ▼                              ▼
 Pages & Components             db/queries.ts
-  - Dashboard, Messages,         - getMatchingFrameIndexes(filter)
-    Neighbors, Routes, SQL       - executeRawSql(sql)
+  - Workspace, Messages,         - getMatchingFrameIndexes(filter)
+    Sessions, Routes, SQL        - executeRawSql(sql)
 ```
 
 If DuckDB WASM fails to initialize, filtering automatically falls back to `src/lib/filter/parser.ts` and all screens except the SQL Console remain usable.
@@ -283,7 +285,7 @@ Components reference semantic roles rather than raw hex colors (`src/index.css` 
 
 ### 5.2 Layout
 
-The app is a multi-page SPA with a persistent navigation header. The upload screen (`/`) is shown when no capture is loaded, though files can be dropped anywhere at any time. **Messages** (`/messages`) uses a resizable two-pane layout (filter bar above a virtualized packet list on the left and structured detail + hex dump on the right).
+The app is an SPA with a thin header (capture name, language, theme, and a menu holding Build, Help and the repository link). The upload screen (`/`) is shown when no capture is loaded, though files can be dropped anywhere at any time. Once a capture is open, the analysis views share one workspace: sessions and findings in a left column (a drawer below the `lg` breakpoint) and the views as tabs. **Messages** (`/messages`) uses a resizable two-pane layout (filter bar above a virtualized packet list on the left and structured detail + hex dump on the right).
 
 ---
 

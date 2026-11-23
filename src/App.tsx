@@ -6,6 +6,9 @@ import { AppHeader } from './components/layout/AppHeader'
 import { ErrorBoundary, LoadProgressBar, WarningBanner } from './components/common'
 import { useFileDropzone } from './hooks/useFileDropzone'
 import { FileUploadPage } from './pages'
+import { WorkspaceLayout } from './components/workspace/WorkspaceLayout'
+import { peeringKey } from './lib/bgp/peering'
+import type { BgpOpenMessage } from './lib/bgp/types'
 
 /**
  * Every screen but the first is loaded on demand.
@@ -15,11 +18,8 @@ import { FileUploadPage } from './pages'
  * of the app's own code, so keeping them out of the first download is most of
  * what makes it small.
  */
-const DashboardPage = lazy(() =>
-  import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage }))
-)
-const NeighborsPage = lazy(() =>
-  import('./pages/NeighborsPage').then((m) => ({ default: m.NeighborsPage }))
+const SessionsPage = lazy(() =>
+  import('./pages/SessionsPage').then((m) => ({ default: m.SessionsPage }))
 )
 const MessagesPage = lazy(() =>
   import('./pages/MessagesPage').then((m) => ({ default: m.MessagesPage }))
@@ -75,6 +75,39 @@ function RequireCapture({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+function RedirectKeepingQuery({ to }: { to: string }) {
+  const { search } = useLocation()
+  return <Navigate to={{ pathname: to, search }} replace />
+}
+
+/**
+ * `/neighbors?router=<Router ID>&peer=<address>` named a session by one end's
+ * Router ID and the other end's address. The router's address on that session
+ * is whichever of its addresses talked to the peer.
+ */
+function NeighborsRedirect() {
+  const { packets } = useApp()
+  const { search } = useLocation()
+  const params = new URLSearchParams(search)
+  const router = params.get('router')
+  const peer = params.get('peer')
+  let scope: string | null = null
+  if (router && peer) {
+    const routerIps = new Set<string>()
+    for (const packet of packets) {
+      for (const msg of packet.messages) {
+        if (msg.type === 'OPEN' && (msg as BgpOpenMessage).bgpIdentifier === router) routerIps.add(packet.srcIp)
+      }
+    }
+    if (routerIps.size === 0) routerIps.add(router)
+    const local = packets.find(
+      (p) => (routerIps.has(p.srcIp) && p.dstIp === peer) || (p.srcIp === peer && routerIps.has(p.dstIp))
+    )
+    if (local) scope = peeringKey(local.srcIp, local.dstIp)
+  }
+  return <Navigate to="/sessions" replace state={scope ? { scope } : undefined} />
+}
+
 function ScreenSpinner({ label }: { label?: string }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-canvas">
@@ -121,27 +154,22 @@ function AppContent() {
               it is the one who has not loaded anything yet. */}
           <Route path="/manual" element={<ManualPage />} />
 
-          {/* Protected routes - wait for the restore, then redirect if there is no file */}
-          <Route
-            path="/dashboard"
-            element={<RequireCapture><DashboardPage /></RequireCapture>}
-          />
-          <Route
-            path="/neighbors"
-            element={<RequireCapture><NeighborsPage /></RequireCapture>}
-          />
-          <Route
-            path="/messages"
-            element={<RequireCapture><MessagesPage /></RequireCapture>}
-          />
-          <Route
-            path="/routes"
-            element={<RequireCapture><RoutesPage /></RequireCapture>}
-          />
-          <Route
-            path="/sql"
-            element={<RequireCapture><SqlConsolePage /></RequireCapture>}
-          />
+          {/* The analysis views share one workspace — the session list and
+              findings down the side, the views as tabs — which waits for the
+              restore and redirects when there is no capture. */}
+          <Route element={<RequireCapture><WorkspaceLayout /></RequireCapture>}>
+            <Route path="/messages" element={<MessagesPage />} />
+            <Route path="/sessions" element={<SessionsPage />} />
+            <Route path="/routes" element={<RoutesPage />} />
+            <Route path="/sql" element={<SqlConsolePage />} />
+          </Route>
+
+          {/* The dashboard's findings now sit beside every view. Old links and
+              bookmarks land where the dashboard used to send people. */}
+          <Route path="/dashboard" element={<RedirectKeepingQuery to="/messages" />} />
+          {/* Neighbors became Sessions; its ?router=&peer= links name a
+              session the workspace scope can take over. */}
+          <Route path="/neighbors" element={<RequireCapture><NeighborsRedirect /></RequireCapture>} />
 
           {/* Catch all - redirect to messages or home */}
           <Route

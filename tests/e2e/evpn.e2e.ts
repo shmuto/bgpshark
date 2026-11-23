@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, evpnCapture, goToDashboard, loadCapture, openMessagesAfterLoad, runSql, shownCount } from './helpers'
+import { applyFilter, evpnCapture, showFindings, loadCapture, openMessagesAfterLoad, runSql, shownCount } from './helpers'
 
 /**
  * EVPN end to end, on a capture of a MAC moving between two leaves.
@@ -20,7 +20,7 @@ test.describe('EVPN in the message list', () => {
   test('the route is named by its MAC, and its extended communities decode', async ({ page }) => {
     // Finding the row by its MAC is half the assertion: an EVPN route has no
     // prefix, so this column would otherwise be blank or show a made-up one.
-    await page.getByText('[2] 00:0c:29:aa:bb:cc').last().click()
+    await page.getByRole('main').getByText('[2] 00:0c:29:aa:bb:cc').last().click()
     await expect(page.getByText('Path Attributes')).toBeVisible()
 
     const body = await page.locator('body').innerText()
@@ -105,14 +105,14 @@ test.describe('EVPN on the route history', () => {
     // The RD column is what says the move happened: same MAC, different leaf.
     expect(body).toContain('10.0.0.2:100')
     expect(body).toContain('10.0.0.1:100')
-    expect(body).toContain('🔴 Withdraw')
-    expect(body).toContain('🟢 Announce')
+    expect(body).toMatch(/\bWithdraw\b/)
+    expect(body).toMatch(/\bAnnounce\b/)
   })
 })
 
-test.describe('EVPN on the dashboard', () => {
+test.describe('EVPN in the findings', () => {
   test('a MAC that moved is named as a move, from one leaf to the other', async ({ page }) => {
-    await goToDashboard(page)
+    await showFindings(page)
     await expect(page.getByText(/MAC moved: \[2\] 00:0c:29:aa:bb:cc/)).toBeVisible()
     await expect(page.getByText('10.0.0.2 → 10.0.0.1')).toBeVisible()
     // Two leaves advertising the same MAC is a move, not an AS_PATH change.

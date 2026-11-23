@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, useEffect, useCallback, useLayoutEffect } from 'react'
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useWorkspace } from '../context/WorkspaceContext'
 import { useFilter } from '../hooks/useFilter'
 import { AddFilterPopover, BackToList, ColumnPicker, PacketList, PaneDivider, QueryInput, type DisplayPacket } from '../components/common'
 import { usePacketColumns } from '../hooks/usePacketColumns'
@@ -25,15 +26,7 @@ import { FILTER_FIELDS, matchTransportFrame, type FilterFieldName } from '../lib
 import { appendCondition, formatCondition } from '../lib/filter/compose'
 import { FilterActionsContext } from '../context/filter-actions'
 import { useI18n } from '../i18n'
-
-const MESSAGE_TYPE_BADGE_COLORS: Record<string, string> = {
-  OPEN: 'bg-bgp-open/15 text-bgp-open',
-  UPDATE: 'bg-bgp-update/15 text-bgp-update',
-  NOTIFICATION: 'bg-bgp-notification/15 text-bgp-notification',
-  KEEPALIVE: 'bg-bgp-keepalive/15 text-bgp-keepalive',
-  ROUTE_REFRESH: 'bg-bgp-route-refresh/15 text-bgp-route-refresh',
-}
-
+import { peeringKey } from '../lib/bgp/peering'
 
 /**
  * Where Messages was left, so coming back to it through the header tab picks
@@ -78,10 +71,11 @@ export function MessagesPage() {
   // Decided once, when the screen is entered. Re-deciding on every render
   // would send the reader back to the saved view whenever the URL went bare
   // again — clearing the filter, or going Back to the list on a phone.
-  const [restore, setRestore] = useState(() => {
+  const [restoreOnEntry] = useState(() => {
     const fresh = (location.state as { fresh?: boolean } | null)?.fresh === true
     return !location.search && !fresh ? loadSavedView(fileName) : null
   })
+  const [restore, setRestore] = useState(restoreOnEntry)
   // The view mounts only once the URL carries the restored state, so it starts
   // from it the way it would from any link: a view mounted first would select
   // the saved frame in the unfiltered list, and the filter arriving a moment
@@ -91,23 +85,63 @@ export function MessagesPage() {
     if (restored) setRestore(null)
   }, [restored])
 
+  // A finding clicked in the workspace column is a new question, and the view
+  // honours `?selected=`, `?frame=` and `?all=1` only as it mounts — the
+  // reader's own clicks own the selection after that. With Messages already
+  // open, the link would otherwise change the filter and nothing else. Each
+  // jump therefore gets a fresh view. The key changes during render, so the
+  // old view never runs against the new link (its URL effects would rewrite
+  // it); the last jump seen is kept because the view's own URL updates drop
+  // navigation state.
+  const jump = (location.state as { jump?: number } | null)?.jump
+  const [seenJump, setSeenJump] = useState(jump)
+  const [viewKey, setViewKey] = useState(0)
+  if (jump !== undefined && jump !== seenJump) {
+    setSeenJump(jump)
+    setViewKey((k) => k + 1)
+  }
+
   if (restore !== null) {
     return restored ? null : <Navigate to={{ pathname: location.pathname, search: restore }} replace />
   }
-  return <MessagesView />
+  // A restored view is the reader's own earlier place, so it fits itself to
+  // the time window they have since chosen rather than undoing it. Everything
+  // else is a link from a screen that looks at the whole capture.
+  return <MessagesView key={viewKey} linked={!(restoreOnEntry !== null && viewKey === 0)} />
 }
 
-function MessagesView() {
+/**
+ * Whether a frame a link names can be listed under the workspace's narrowing.
+ * The session scope is left alone on purpose: a finding opens its evidence
+ * without changing it (see SessionRail). The time window is another matter —
+ * findings, Sessions and SQL always look at the whole capture, so a window
+ * the reader dragged earlier must not hide what they just asked to see.
+ */
+function reachability(
+  frame: { srcIp: string; dstIp: string; timestamp: Date },
+  scope: string | null,
+  range: [number, number] | null
+): 'listed' | 'other-session' | 'outside-range' {
+  if (scope && peeringKey(frame.srcIp, frame.dstIp) !== scope) return 'other-session'
+  const ms = frame.timestamp.getTime()
+  if (range && (ms < range[0] || ms > range[1])) return 'outside-range'
+  return 'listed'
+}
+
+function MessagesView({ linked }: { linked: boolean }) {
   const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
+  // The rows come from the session chosen in the workspace. Everything that
+  // looks *around* a packet — the hold timer, the previous message on the
+  // session, links by index — keeps using the whole capture, so narrowing the
+  // view never changes what a packet's detail says.
+  const { scope, range, setRange, scopedPackets, scopedAllPackets } = useWorkspace()
   const { locale, t } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   // In the URL because a dashboard alert can point at a TCP frame, and the list
   // shows BGP only until this is on — a link naming an RST has to be able to
   // set it, or it lands the reader on a list that cannot contain the frame.
-  const [showAllPackets, setShowAllPackets] = useState(
-    () => new URLSearchParams(window.location.search).get('all') === '1'
-  )
+  const [showAllPackets, setShowAllPackets] = useState(() => searchParams.get('all') === '1')
   // The list gets the larger share by default: its default columns need about
   // 720px to sit side by side, which a 50:50 split of a 1280–1440px window
   // does not leave, while the detail pane reads fine at 40%.
@@ -119,6 +153,47 @@ function MessagesView() {
   const isCompact = useIsCompact()
   const showList = !isCompact || selectedPacketIndex === null
   const showDetail = !isCompact || selectedPacketIndex !== null
+
+  // The selection lives in the app context, which outlives this view: without
+  // this, a view opened by a link — a finding, Sessions' "Messages →", a
+  // restored place — would open on the previous view's row number, a
+  // different packet or a row past the end of a shorter list. A link's own
+  // `?selected=` or `?frame=` is applied by the effects below, which run after
+  // this one. A view remounted for no new question (the capture finishing
+  // loading under it) keeps the row the reader already clicked.
+  const location = useLocation()
+  const [openedByLink] = useState(() => {
+    const state = location.state as { jump?: number; fresh?: boolean } | null
+    return (
+      state?.jump !== undefined ||
+      state?.fresh === true ||
+      searchParams.has('selected') ||
+      searchParams.has('frame')
+    )
+  })
+  useLayoutEffect(() => {
+    if (openedByLink) selectPacket(null)
+    // Once per view; see above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
+   * What to do about a linked frame the list cannot show yet. Outside the
+   * time window, a link widens the window to the whole capture; a restored
+   * view gives the selection up instead. In another session the selection is
+   * given up: left pending, it would fire the moment the reader later changed
+   * the scope, jumping to a packet they asked for long before.
+   */
+  const settleUnreachable = useCallback(
+    (frame: { srcIp: string; dstIp: string; timestamp: Date }, applied: { current: boolean }): boolean => {
+      const reach = reachability(frame, scope, range)
+      if (reach === 'listed') return false
+      if (reach === 'outside-range' && linked) setRange(null)
+      else applied.current = true
+      return true
+    },
+    [scope, range, linked, setRange]
+  )
 
   // Get initial filter from URL
   const initialFilter = searchParams.get('filter') || ''
@@ -134,30 +209,8 @@ function MessagesView() {
     showParseErrors,
     parseErrors,
     isFiltering,
-  } = useFilter(packets, { initialQuery: initialFilter })
+  } = useFilter(scopedPackets, { initialQuery: initialFilter })
 
-  // Set initial selection from URL - find the packet in filtered results by frameIndex
-  useEffect(() => {
-    if (selectionAppliedRef.current) return
-
-    const selected = searchParams.get('selected')
-    if (selected === null) return
-
-    // The capture arrives asynchronously, so this runs again as packets load.
-    const originalIdx = parseInt(selected, 10)
-    if (isNaN(originalIdx) || originalIdx < 0 || originalIdx >= packets.length) return
-
-    // Find the target packet's frameIndex, then find it in the filtered list
-    const targetPacket = packets[originalIdx]
-    const filteredIdx = filteredPackets.findIndex(
-      (p) => p.frameIndex === targetPacket.frameIndex
-    )
-    if (filteredIdx < 0) return
-
-    selectionAppliedRef.current = true
-    selectPacket(filteredIdx)
-    setHighlightedIndex(filteredIdx)
-  }, [searchParams, packets, filteredPackets, selectPacket])
 
   // Clear highlight after animation
   useEffect(() => {
@@ -202,24 +255,6 @@ function MessagesView() {
     setSearchParams(next, { replace: true })
   }, [query, searchParams, setSearchParams])
 
-  // Message counts for the type badges, over the whole capture (not the
-  // filtered view) so the badges keep saying what exists.
-  const messageTypeCounts = useMemo(() => {
-    const counts: Record<string, number> = {
-      OPEN: 0,
-      UPDATE: 0,
-      NOTIFICATION: 0,
-      KEEPALIVE: 0,
-      ROUTE_REFRESH: 0,
-    }
-    for (const packet of packets) {
-      for (const msg of packet.messages) {
-        counts[msg.type] = (counts[msg.type] ?? 0) + 1
-      }
-    }
-    return counts
-  }, [packets])
-
   /**
    * The rows the list shows.
    *
@@ -250,7 +285,7 @@ function MessagesView() {
     const kept = filterActive ? new Set(filteredPackets.map((p) => p.frameIndex)) : null
 
     const rows: DisplayPacket[] = []
-    for (const gp of allPackets) {
+    for (const gp of scopedAllPackets) {
       const bgpPacket = bgpMap.get(gp.frameIndex)
       if (bgpPacket) {
         if (kept && !kept.has(gp.frameIndex)) continue
@@ -261,7 +296,31 @@ function MessagesView() {
       }
     }
     return rows
-  }, [filteredPackets, packets, allPackets, showAllPackets, filterActive, parsedQuery])
+  }, [filteredPackets, packets, scopedAllPackets, showAllPackets, filterActive, parsedQuery])
+
+  // Set initial selection from URL: `?selected=` indexes the BGP packet array,
+  // and the row is found by frame number among the rows actually listed —
+  // in All Packets mode those include frames that carry no BGP, so an index
+  // into the filtered BGP packets would land on the wrong row.
+  useEffect(() => {
+    if (selectionAppliedRef.current) return
+
+    const selected = searchParams.get('selected')
+    if (selected === null) return
+
+    // The capture arrives asynchronously, so this runs again as packets load.
+    const originalIdx = parseInt(selected, 10)
+    if (isNaN(originalIdx) || originalIdx < 0 || originalIdx >= packets.length) return
+
+    const targetPacket = packets[originalIdx]
+    if (settleUnreachable(targetPacket, selectionAppliedRef)) return
+    const displayIdx = displayPackets.findIndex((p) => p.packet.frameIndex === targetPacket.frameIndex)
+    if (displayIdx < 0) return
+
+    selectionAppliedRef.current = true
+    selectPacket(displayIdx)
+    setHighlightedIndex(displayIdx)
+  }, [searchParams, packets, displayPackets, selectPacket, settleUnreachable])
 
   /**
    * The selection is an index into the rows, so a new filter would otherwise
@@ -299,13 +358,15 @@ function MessagesView() {
     const frameIndex = parseInt(requested, 10)
     if (isNaN(frameIndex)) return
 
+    const target = allPackets.find((p) => p.frameIndex === frameIndex)
+    if (target && settleUnreachable(target, frameAppliedRef)) return
     const displayIdx = displayPackets.findIndex((p) => p.packet.frameIndex === frameIndex)
     if (displayIdx < 0) return
 
     frameAppliedRef.current = true
     selectPacket(displayIdx)
     setHighlightedIndex(displayIdx)
-  }, [searchParams, displayPackets, selectPacket])
+  }, [searchParams, allPackets, displayPackets, selectPacket, settleUnreachable])
 
   /**
    * Keep the All Packets toggle in the URL, so the view a reader is looking at
@@ -597,141 +658,76 @@ function MessagesView() {
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-canvas">
-      {/* Filter Bar — one query box, always there, the way Wireshark's
-          display filter is. The menus that used to be a separate "Simple"
-          mode now write into it (+ Filter), so the filter on screen is
-          always the filter in effect. */}
-      <div className="px-4 py-2 border-b border-hair bg-surface-sunken space-y-2">
-        <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
-          <div className="flex-1 min-w-[16rem]">
-            <QueryInput
-              value={query}
-              onChange={setQuery}
-              packets={packets}
-              hasError={showParseErrors}
-              inputRef={filterInputRef}
-              ariaLabel={t.messages.filterAria}
-              placeholder={t.messages.filterPlaceholder}
-            />
-          </div>
-          <AddFilterPopover valuesFor={valuesFor} onAdd={addCondition} />
-          {/* Clearing is the × inside the box; a second button did the same. */}
+      {/* One row: the query box — always there, the way Wireshark's display
+          filter is — and the few controls that change what the list holds.
+          The per-type count badges that sat under it are gone: the counts
+          belong to the findings and the time strip, and `type = X` is one
+          suggestion away in the box. */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-hair bg-surface px-3 py-1.5">
+        <div className="min-w-0 flex-1">
+          <QueryInput
+            value={query}
+            onChange={setQuery}
+            packets={packets}
+            hasError={showParseErrors}
+            inputRef={filterInputRef}
+            ariaLabel={t.messages.filterAria}
+            placeholder={t.messages.filterPlaceholder}
+          />
+        </div>
+        <AddFilterPopover valuesFor={valuesFor} onAdd={addCondition} />
+        {/* Clearing is the × inside the box; a second button did the same. */}
 
-          <div className="h-4 w-px bg-hair-strong shrink-0" />
-
-          {/* Packet display toggle */}
-          <div className="flex items-center gap-1 shrink-0">
-            <span className="text-xs text-muted">{t.messages.showLabel}</span>
+        <div
+          role="group"
+          aria-label={t.messages.showLabel}
+          className="flex shrink-0 overflow-hidden rounded border border-hair text-xs"
+        >
+          {([false, true] as const).map((all) => (
             <button
-              onClick={() => { setShowAllPackets(false); selectPacket(null) }}
-              className={`px-2 py-1 text-xs rounded transition-colors ${
-                !showAllPackets
-                  ? 'bg-accent text-accent-fg'
-                  : 'bg-surface-sunken text-muted hover:bg-surface-raised'
+              key={String(all)}
+              type="button"
+              aria-pressed={showAllPackets === all}
+              onClick={() => { setShowAllPackets(all); selectPacket(null) }}
+              className={`px-2 py-1 transition-colors ${
+                showAllPackets === all ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-surface-sunken'
               }`}
             >
-              {t.messages.bgpOnly}
+              {all ? t.messages.allPackets : t.messages.bgpOnly}
             </button>
-            <button
-              onClick={() => { setShowAllPackets(true); selectPacket(null) }}
-              className={`px-2 py-1 text-xs rounded transition-colors ${
-                showAllPackets
-                  ? 'bg-accent text-accent-fg'
-                  : 'bg-surface-sunken text-muted hover:bg-surface-raised'
-              }`}
-            >
-              {t.messages.allPackets}
-            </button>
-          </div>
+          ))}
         </div>
 
-        {/* Message counts up front, because the list is virtualized: 27 UPDATEs
-            that all sit below the fold are otherwise invisible to someone
-            scanning the Type column. Clicking a badge writes its filter into
-            the query box like any other filter. */}
-        {!showAllPackets && packets.length > 0 && (
-          <div className="flex items-center gap-1.5 text-xs flex-wrap">
-            {(Object.entries(messageTypeCounts) as [string, number][])
-              .filter(([, count]) => count > 0)
-              .map(([type, count]) => {
-                const active = query.trim() === `type = ${type}`
-                return (
-                  <button
-                    key={type}
-                    onClick={() => setQuery(active ? '' : `type = ${type}`)}
-                    title={active ? t.messages.clearFilterTitle : t.messages.filterToTypeTitle(type)}
-                    className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
-                      MESSAGE_TYPE_BADGE_COLORS[type] ?? 'bg-surface-sunken text-muted'
-                    } ${active ? 'ring-1 ring-accent' : 'hover:opacity-75'}`}
-                  >
-                    {type} {count}
-                  </button>
-                )
-              })}
-          </div>
-        )}
-
-        {/* A capture with traffic but no BGP would otherwise present as an
-            empty list, which reads as "nothing captured". Point at the view
-            that actually has the evidence. */}
-        {!showAllPackets && packets.length === 0 && allPackets.length > 0 && (
-          <div className="text-xs text-warning flex items-center gap-2">
-            <span>{t.messages.noBgpBanner(allPackets.length)}</span>
-            <button
-              onClick={() => setShowAllPackets(true)}
-              className="text-accent hover:text-accent-hover underline"
-            >
-              {t.messages.showAllPackets}
-            </button>
-          </div>
-        )}
-
-        {/* Status bar. The gap keeps a parse error from running straight on
-            from the packet count ("…of 50 packetsExpected operator…"). */}
-        <div className="flex items-center justify-between gap-3 text-xs text-muted">
-          <span>
-            {t.messages.showingPackets(
-              displayPackets.length,
-              showAllPackets ? allPackets.length : packets.length
-            )}
-            {showAllPackets && !filterActive && t.messages.bgpSubcount(packets.length)}
-            {/* Say how the filter was applied to frames that carry no BGP, so
-                a short list is not mistaken for a short capture. */}
-            {showAllPackets && filterActive && (
-              <span title={t.messages.nonBgpMatchTooltip}>
-                {t.messages.nonBgpMatchCount(
-                  displayPackets.filter((p) => p.kind === 'bgp').length,
-                  displayPackets.filter((p) => p.kind === 'generic').length
-                )}
-              </span>
-            )}
-          </span>
-          {isFiltering && <span>{t.messages.filtering}</span>}
-          {showParseErrors && (
-            <span className="text-critical" title={parseErrors.map(e => e.message).join('; ')}>
-              {parseErrors[0]?.message}
-            </span>
-          )}
-          <div className="ml-auto flex items-center gap-3">
-            {displayPackets.length > 0 && linkType !== null && (
-              <button
-                onClick={exportPcap}
-                title={t.messages.exportTitle}
-                className="text-accent hover:text-accent-hover hover:underline"
-              >
-                {t.messages.exportButton(displayPackets.length)}
-              </button>
-            )}
-            {/* Out here rather than in the table's header row, which scrolled
-                it out of reach whenever the table was wider than its pane. */}
-            <ColumnPicker
-              visibleColumns={packetColumns.visibleColumns}
-              onToggle={packetColumns.toggleColumn}
-              onReset={packetColumns.resetColumns}
-            />
-          </div>
-        </div>
+        {/* Out here rather than in the table's header row, which scrolled
+            it out of reach whenever the table was wider than its pane. */}
+        <ColumnPicker
+          visibleColumns={packetColumns.visibleColumns}
+          onToggle={packetColumns.toggleColumn}
+          onReset={packetColumns.resetColumns}
+        />
       </div>
+
+      {/* A capture with traffic but no BGP would otherwise present as an
+          empty list, which reads as "nothing captured". Point at the view
+          that actually has the evidence. */}
+      {/* The same holds for a session that never got past TCP, or a time
+          window with only handshakes in it, so the check is on what the
+          workspace narrowed to rather than on the capture. */}
+      {!showAllPackets && scopedPackets.length === 0 && scopedAllPackets.length > 0 && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-hair bg-warning-subtle px-3 py-1.5 text-xs text-warning">
+          <span>
+            {packets.length === 0
+              ? t.messages.noBgpBanner(allPackets.length)
+              : t.messages.noBgpInViewBanner(scopedAllPackets.length)}
+          </span>
+          <button
+            onClick={() => setShowAllPackets(true)}
+            className="text-accent underline hover:text-accent-hover"
+          >
+            {t.messages.showAllPackets}
+          </button>
+        </div>
+      )}
 
       {/* Main content - split view, stacked when there is no room for two columns */}
       <div ref={split.containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0">
@@ -741,6 +737,43 @@ function MessagesView() {
           className="w-full flex-1 lg:flex-none flex flex-col min-h-0"
           style={isCompact ? undefined : { width: `${split.percent}%` }}
         >
+          {/* What the list holds, under it like a status bar. The gap keeps a
+              parse error from running straight on from the packet count
+              ("…of 50 packetsExpected operator…"). */}
+          <div className="order-last flex shrink-0 items-center gap-3 border-t border-hair bg-surface-sunken px-3 py-1 text-[11px] text-muted">
+            <span className="truncate">
+              {t.messages.showingPackets(
+                displayPackets.length,
+                showAllPackets ? allPackets.length : packets.length
+              )}
+              {showAllPackets && !filterActive && t.messages.bgpSubcount(packets.length)}
+              {/* Say how the filter was applied to frames that carry no BGP, so
+                  a short list is not mistaken for a short capture. */}
+              {showAllPackets && filterActive && (
+                <span title={t.messages.nonBgpMatchTooltip}>
+                  {t.messages.nonBgpMatchCount(
+                    displayPackets.filter((p) => p.kind === 'bgp').length,
+                    displayPackets.filter((p) => p.kind === 'generic').length
+                  )}
+                </span>
+              )}
+            </span>
+            {isFiltering && <span>{t.messages.filtering}</span>}
+            {showParseErrors && (
+              <span className="truncate text-critical" title={parseErrors.map((e) => e.message).join('; ')}>
+                {parseErrors[0]?.message}
+              </span>
+            )}
+            {displayPackets.length > 0 && linkType !== null && (
+              <button
+                onClick={exportPcap}
+                title={t.messages.exportTitle}
+                className="ml-auto shrink-0 text-accent hover:text-accent-hover hover:underline"
+              >
+                {t.messages.exportButton(displayPackets.length)}
+              </button>
+            )}
+          </div>
           <div className="flex-1 overflow-auto">
             <PacketList
               packets={displayPackets}
@@ -771,11 +804,11 @@ function MessagesView() {
         {/* Packet Detail */}
         {showDetail && (
         <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 bg-surface">
-          <div className="px-4 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between gap-2 shrink-0">
+          <div className="px-3 py-1.5 bg-surface-sunken border-b border-hair flex items-center justify-between gap-2 shrink-0">
             <BackToList onClick={() => selectPacket(null)} />
-            <span className="text-sm font-semibold text-strong truncate">
-              {selectedPacketIndex !== null
-                ? t.messages.packetNumber(displayPackets[selectedPacketIndex]?.packet.frameIndex)
+            <span className="text-xs font-semibold text-strong truncate">
+              {selectedDisplayPacket
+                ? t.messages.packetNumber(selectedDisplayPacket.packet.frameIndex)
                 : t.messages.packetDetail}
             </span>
             {selectedBgpPacket && (
@@ -805,7 +838,7 @@ function MessagesView() {
             ) : selectedGenericPacket ? (
               <GenericPacketDetail packet={selectedGenericPacket} />
             ) : (
-              <div className="flex items-center justify-center h-full text-dim text-sm">
+              <div className="flex items-center justify-center h-full text-dim text-xs">
                 {t.messages.selectPacket}
               </div>
             )}
@@ -833,10 +866,10 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
   }
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-strong">{t.messages.networkLayer}</h3>
-        <div className="grid grid-cols-2 gap-2 text-sm">
+        <h3 className="text-xs font-semibold text-strong">{t.messages.networkLayer}</h3>
+        <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <span className="text-muted">{t.messages.sourceIp}</span>
             <span className="ml-2 font-mono">{packet.srcIp}</span>
@@ -849,8 +882,8 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-strong">{t.messages.transportLayer}</h3>
-        <div className="grid grid-cols-2 gap-2 text-sm">
+        <h3 className="text-xs font-semibold text-strong">{t.messages.transportLayer}</h3>
+        <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <span className="text-muted">{t.messages.protocol}</span>
             {/* Neutral on purpose: protocol is a category, and the severity
@@ -877,7 +910,7 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
           </div>
         </div>
         {packet.tcpFlags && (
-          <div className="text-sm">
+          <div className="text-xs">
             <span className="text-muted">{t.messages.tcpFlags}</span>
             <span className="ml-2 font-mono">{formatTcpFlags(packet.tcpFlags)}</span>
           </div>
@@ -885,8 +918,8 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-strong">{t.messages.frameInfo}</h3>
-        <div className="grid grid-cols-2 gap-2 text-sm">
+        <h3 className="text-xs font-semibold text-strong">{t.messages.frameInfo}</h3>
+        <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <span className="text-muted">{t.messages.captured}</span>
             <span className="ml-2 font-mono">{t.common.bytes(packet.capturedLength)}</span>

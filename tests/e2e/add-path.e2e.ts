@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { addPathCapture, loadCapture, openMessagesAfterLoad } from './helpers'
+import { addPathCapture, loadCapture, openMessagesAfterLoad, openSessionsTab } from './helpers'
 
 /**
  * ADD-PATH, which is invisible in an UPDATE and decided in the OPEN.
@@ -31,14 +31,15 @@ test.describe('routes that arrived with a Path Identifier', () => {
     await loadCapture(page, 'add-path.pcap', addPathCapture())
     await openMessagesAfterLoad(page)
     await page.getByRole('link', { name: 'Routes' }).click()
-    await page.getByText('10.1.0.0/24').first().click()
+    await page.getByRole('main').getByText('10.1.0.0/24').first().click()
 
     const history = page.locator('body')
     await expect(history).toContainText('Path ID')
     // Three events: two announces and the withdraw, each naming its path. The
-    // emoji keeps this off the Prefix Statistics header, which also has an
-    // "Announced" and a "Withdrawn" in it.
-    const rows = page.getByRole('row').filter({ hasText: /🟢 Announce|🔴 Withdraw/ })
+    // lookaheads keep this off the Prefix Statistics header, which has an
+    // "Announced" and a "Withdrawn" in it. (Not word boundaries: a row's text
+    // runs its cells together, so the action follows "+3.4s" directly.)
+    const rows = page.getByRole('row').filter({ hasText: /Announce(?!d)|Withdraw(?!n)/ })
     await expect(rows).toHaveCount(3)
     await expect(rows.filter({ hasText: 'Withdraw' })).toContainText('2')
   })
@@ -54,9 +55,7 @@ test.describe('what ADD-PATH was actually negotiated', () => {
     // and the outcome is the one that answers "why am I only getting one path".
     await loadCapture(page, 'add-path-send.pcap', addPathCapture('send'))
     await openMessagesAfterLoad(page)
-    await page.getByRole('link', { name: 'Neighbors' }).click()
-    await page.getByText('1.1.1.1').first().click()
-    await page.getByText(/10\.0\.0\.\d+ ↔ 10\.0\.0\.\d+/).first().click()
+    await openSessionsTab(page, '10.0.0.1')
 
     const diff = page.locator('body')
     await expect(diff).toContainText('No capability mismatches detected')
@@ -71,9 +70,7 @@ test.describe('what ADD-PATH was actually negotiated', () => {
   test('a working session says so, in both directions', async ({ page }) => {
     await loadCapture(page, 'add-path.pcap', addPathCapture())
     await openMessagesAfterLoad(page)
-    await page.getByRole('link', { name: 'Neighbors' }).click()
-    await page.getByText('1.1.1.1').first().click()
-    await page.getByText(/10\.0\.0\.\d+ ↔ 10\.0\.0\.\d+/).first().click()
+    await openSessionsTab(page, '10.0.0.1')
 
     // One row per direction, both negotiated.
     const rows = page.getByRole('row').filter({ hasText: 'IPv4 / Unicast' })

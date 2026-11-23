@@ -17,13 +17,11 @@ export async function loadSample(page: Page) {
 }
 
 /**
- * Waits for a freshly loaded capture to land — on the Dashboard, the overview
- * a reader starts from — and then steps into Messages, where most specs work.
+ * Waits for a freshly loaded capture to land on Messages, where it opens and
+ * where most specs work.
  */
 export async function openMessagesAfterLoad(page: Page, timeout = 30_000) {
-  await page.waitForURL('**/dashboard', { timeout })
-  await page.getByRole('link', { name: 'Messages', exact: true }).click()
-  await page.waitForURL('**/messages')
+  await page.waitForURL('**/messages', { timeout })
   await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
 }
 
@@ -38,20 +36,23 @@ export async function loadCapture(page: Page, name: string, bytes: Buffer) {
 }
 
 /**
- * Clicks through to the Dashboard and waits until it has actually rendered.
+ * The workspace's sessions-and-findings column, with every finding group
+ * expanded so each instance and its detail is on the page.
  *
- * Clicking a header link and reading `innerText` on the next line is a race:
- * the assertion can run against the screen you just left. It fails loudly on a
- * positive assertion and — much worse — passes silently on a negative one, so
- * "the dashboard does not say X" would be satisfied by a dashboard that had not
- * appeared yet. The Alerts panel is unconditional on this screen, including
- * when it has nothing to report, so waiting for its heading is the cheapest
- * proof that the render happened.
+ * Waits for the Findings heading first: reading `innerText` straight after a
+ * capture loads is a race, and a negative assertion ("does not say X") would
+ * pass against a column that had not rendered yet.
  */
-export async function goToDashboard(page: Page) {
-  await page.getByRole('link', { name: 'Dashboard', exact: true }).click()
-  await page.waitForURL('**/dashboard')
-  await expect(page.getByRole('heading', { name: /^Alerts/ })).toBeVisible()
+export async function showFindings(page: Page) {
+  const rail = page.getByRole('complementary', { name: 'Sessions and findings' })
+  await expect(rail.getByRole('heading', { name: /^Findings/ })).toBeVisible()
+  // Expanding a group removes it from this selector, so positional locators
+  // from `.all()` would shift under the loop; take the first one each time.
+  const collapsed = rail.locator('button[aria-expanded="false"]')
+  while ((await collapsed.count()) > 0) {
+    await collapsed.first().click()
+  }
+  return rail
 }
 
 /** The "Showing N of M packets" counter, as a number. */
@@ -79,7 +80,11 @@ export async function applyFilter(page: Page, expression: string) {
   await page.waitForTimeout(1200)
 }
 
-/** Runs a query in the SQL console and returns the page text once it settles. */
+/**
+ * Runs a query in the SQL console and returns the view's text once it settles.
+ * The view only: the sessions column beside it lists addresses, and their
+ * digits would answer assertions about the result table.
+ */
 export async function runSql(page: Page, sql: string): Promise<string> {
   const editor = page.locator('textarea').first()
   await editor.click()
@@ -87,7 +92,7 @@ export async function runSql(page: Page, sql: string): Promise<string> {
   await page.keyboard.press('Control+Enter')
   await expect(page.getByText(/Results \(|Error:/).first()).toBeVisible()
   await page.waitForTimeout(600)
-  return page.locator('body').innerText()
+  return page.getByRole('main').innerText()
 }
 
 /**
@@ -694,4 +699,22 @@ export function addPathCapture(sendReceive: 'both' | 'send' = 'both'): Buffer {
     ],
   })
   return Buffer.from(built.bytes)
+}
+
+/**
+ * Opens the Sessions tab and waits for its table. The tab is loaded on demand,
+ * and until it arrives the previous tab — often the packet list, which also
+ * has table rows — is still on screen.
+ */
+export async function openSessionsTab(page: Page, sessionName?: string) {
+  await page.getByRole('link', { name: /^(Sessions|セッション)$/ }).click()
+  await page.waitForURL('**/sessions**')
+  const sessionTable = page.getByRole('main').locator('table').filter({
+    has: page.getByRole('columnheader', { name: /^(Session|セッション)$/ }),
+  })
+  await expect(sessionTable).toBeVisible()
+  if (sessionName !== undefined) {
+    await sessionTable.locator('tbody tr').filter({ hasText: sessionName }).click()
+  }
+  return sessionTable
 }

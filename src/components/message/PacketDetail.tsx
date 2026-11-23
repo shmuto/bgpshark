@@ -54,10 +54,10 @@ export function PacketDetail({
     <div className="h-full overflow-auto p-4 space-y-4">
       {/* Packet Info */}
       <section>
-        <h3 className="text-sm font-semibold text-dim uppercase tracking-wide mb-2">
+        <h3 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
           {t.packetDetail.packetInfo}
         </h3>
-        <div className="bg-surface-sunken rounded-lg p-3 text-sm space-y-1">
+        <div className="bg-surface-sunken rounded p-3 text-xs space-y-1">
           <div className="flex justify-between">
             <span className="text-muted">{t.packetDetail.timeUtc}</span>
             <span className="font-mono">{packet.timestamp.toISOString()}</span>
@@ -109,9 +109,9 @@ export function PacketDetail({
       {/* Parse Warnings */}
       {parseWarnings.length > 0 && (
         <section>
-          <div className="bg-warning-subtle border border-warning/30 rounded-lg p-3">
-            <h4 className="text-sm font-medium text-warning mb-1">{t.packetDetail.parseWarnings}</h4>
-            <ul className="text-sm text-warning space-y-1">
+          <div className="bg-warning-subtle border border-warning/30 rounded p-3">
+            <h4 className="text-xs font-medium text-warning mb-1">{t.packetDetail.parseWarnings}</h4>
+            <ul className="text-xs text-warning space-y-1">
               {parseWarnings.map((warning, i) => (
                 <li key={i}>{warning}</li>
               ))}
@@ -143,7 +143,7 @@ export function PacketDetail({
         onToggle={(e) => setRawOpen(e.currentTarget.open)}
         className="group"
       >
-        <summary className="cursor-pointer select-none text-sm font-semibold text-dim uppercase tracking-wide mb-2 hover:text-muted">
+        <summary className="cursor-pointer select-none text-xs font-semibold text-dim uppercase tracking-wide mb-2 hover:text-muted">
           {t.packetDetail.rawData(rawData.length)}
         </summary>
         {rawOpen && <HexDump data={rawData} />}
@@ -177,7 +177,7 @@ function MessageSection({
 
   return (
     <section>
-      <h3 className="text-sm font-semibold text-dim uppercase tracking-wide mb-2">
+      <h3 className="text-xs font-semibold text-dim uppercase tracking-wide mb-2">
         {title}
       </h3>
       {message.type === 'OPEN' && <OpenMessageView message={message} />}

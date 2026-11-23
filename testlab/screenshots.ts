@@ -39,8 +39,8 @@ const OUT_DIR = join(ROOT, 'public', 'manual')
 const BASE_URL = 'http://localhost:5173/bgpshark/'
 
 /**
- * Wide enough that the packet list keeps every column and the Neighbors screen
- * stays in its two-pane layout, short enough that a viewport-sized shot is
+ * Wide enough that the packet list keeps every column beside the sessions
+ * column and the detail pane, short enough that a viewport-sized shot is
  * still readable when the manual scales it down to the width of a paragraph.
  */
 const VIEWPORT = { width: 1400, height: 820 }
@@ -71,25 +71,49 @@ interface Shot {
 
 // --- Driving the app --------------------------------------------------------
 
-/** The header link for a screen. */
+/** The workspace tab for a view. */
 async function go(page: Page, screen: string): Promise<void> {
   await page.getByRole('link', { name: screen, exact: true }).click()
   await page.waitForTimeout(900)
 }
 
 /**
- * The card a piece of text sits in.
+ * The panel a title belongs to.
  *
- * Every panel in this app is a `rounded-lg` surface with its title in the first
- * row, so the nearest such ancestor of the title is the panel. Addressing them
- * by their visible title rather than by a test id keeps this script honest: a
- * panel the manual names by a title it no longer has should fail here.
+ * Panels are regions named by their visible title, so the nearest region (or
+ * section) around the title is the panel. Addressing them by title rather than
+ * by a test id keeps this script honest: a panel the manual names by a title it
+ * no longer has should fail here.
  */
 function card(page: Page, title: string): Locator {
   return page
     .getByText(title, { exact: false })
     .first()
-    .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]')
+    .locator('xpath=ancestor::*[@role="region" or self::section][1]')
+}
+
+/**
+ * The findings list in the workspace column, with every group expanded so each
+ * instance and its detail is in the picture.
+ */
+async function findings(page: Page): Promise<Locator> {
+  const rail = page.getByRole('complementary', { name: 'Sessions and findings' })
+  const collapsed = rail.locator('button[aria-expanded="false"]')
+  while ((await collapsed.count()) > 0) {
+    await collapsed.first().click()
+  }
+  const region = rail.getByRole('region', { name: 'Findings' })
+  // In the app the list fills the rest of the column and scrolls. For a
+  // picture it should be as tall as what it holds: no empty column under a
+  // short list, and no list cut off mid-scroll above a long one.
+  await region.evaluate((el) => {
+    const panel = el as HTMLElement
+    panel.style.flex = 'none'
+    const list = panel.lastElementChild as HTMLElement | null
+    if (list) list.style.overflow = 'visible'
+  })
+  await page.waitForTimeout(300)
+  return region
 }
 
 /** Types a filter expression and waits past the DuckDB debounce. */
@@ -105,32 +129,25 @@ async function filter(page: Page, expression: string): Promise<void> {
 
 const SHOTS: Shot[] = [
   {
-    // The screen the manual tells everyone to start on, with something on it.
-    file: 'dashboard',
+    // The screen the manual tells everyone to start on, with something on it:
+    // sessions and findings down the side, NOTIFICATIONs on the time strip.
+    file: 'workspace',
     scenario: 's3',
-    take: async (page) => {
-      await go(page, 'Dashboard')
-      return null
-    },
+    take: async () => null,
   },
   {
     file: 's1-tcp-refused',
     scenario: 's1',
-    take: async (page) => {
-      await go(page, 'Dashboard')
-      return card(page, 'Alerts')
-    },
+    take: findings,
   },
   {
     file: 's2-capability-diff',
     scenario: 's2',
     take: async (page) => {
-      await go(page, 'Neighbors')
-      await page.getByText('1.1.1.1').first().click()
-      await page.waitForTimeout(400)
-      await page.getByText('10.0.0.1 ↔ 10.0.0.2').first().click()
+      await go(page, 'Sessions')
+      await page.getByRole('main').locator('tbody tr').filter({ hasText: '10.0.0.1' }).first().click()
       await page.waitForTimeout(800)
-      const diff = card(page, 'Capability Diff')
+      const diff = card(page, 'OPEN comparison')
       await diff.scrollIntoViewIfNeeded()
       return diff
     },
@@ -138,10 +155,7 @@ const SHOTS: Shot[] = [
   {
     file: 's3-holdtimer-alerts',
     scenario: 's3',
-    take: async (page) => {
-      await go(page, 'Dashboard')
-      return card(page, 'Alerts')
-    },
+    take: findings,
   },
   {
     // The NOTIFICATION selected, so the measured silence sits next to the error
@@ -164,7 +178,7 @@ const SHOTS: Shot[] = [
     scenario: 's6',
     take: async (page) => {
       await go(page, 'Messages')
-      await page.getByText('NOTIFICATION').last().click()
+      await page.getByRole('main').getByText('NOTIFICATION').last().click()
       await page.waitForTimeout(600)
       return null
     },
@@ -177,7 +191,6 @@ const SHOTS: Shot[] = [
     scenario: 's9',
     take: async (page) => {
       await go(page, 'Messages')
-      // The row, not the "ROUTE_REFRESH 1" chip above the list — that filters.
       await page.getByText('IPv4/Unicast').first().click()
       await page.waitForTimeout(600)
       await page.getByText('What the refresh changed').first().waitFor()
@@ -189,20 +202,14 @@ const SHOTS: Shot[] = [
     // manual promises: Restart Time, forwarding state, measured convergence.
     file: 's8-graceful-restart',
     scenario: 's8',
-    take: async (page) => {
-      await go(page, 'Dashboard')
-      return card(page, 'Alerts')
-    },
+    take: findings,
   },
   {
     // Both teardown rows next to the flapping warning they do not replace —
     // the manual's point is that these are symptom and cause, not duplicates.
     file: 's11-teardown-alerts',
     scenario: 's11',
-    take: async (page) => {
-      await go(page, 'Dashboard')
-      return card(page, 'Alerts')
-    },
+    take: findings,
   },
   {
     // The reset selected: the packet list shows the gap, the detail names the flags.
@@ -210,7 +217,7 @@ const SHOTS: Shot[] = [
     scenario: 's11',
     take: async (page) => {
       await go(page, 'Messages')
-      await page.getByRole('button', { name: /All Packets/i }).click()
+      await page.getByRole('button', { name: 'All Packets', exact: true }).click()
       await page.waitForTimeout(700)
       await page.getByText('[AR]').first().click()
       await page.waitForTimeout(500)
@@ -223,7 +230,7 @@ const SHOTS: Shot[] = [
     scenario: 's12',
     take: async (page) => {
       await go(page, 'Messages')
-      await page.getByRole('button', { name: /All Packets/i }).click()
+      await page.getByRole('button', { name: 'All Packets', exact: true }).click()
       await page.waitForTimeout(700)
       await page.getByText('[S]', { exact: true }).first().click()
       await page.waitForTimeout(500)
@@ -268,13 +275,11 @@ const SHOTS: Shot[] = [
   {
     file: 's10-churn-alerts',
     scenario: 's10',
-    take: async (page) => {
-      await go(page, 'Dashboard')
-      // The panel shows five rows until asked for more, and the withdrawal
-      // burst the manual points at is below the fold.
-      await page.getByRole('button', { name: /Show \d+ more alerts?/ }).click()
-      return card(page, 'Alerts')
-    },
+    // Every group expanded runs past the default window's height.
+    viewport: { width: 1400, height: 1500 },
+    // Expanded, the flapping and AS_PATH groups list their prefixes, and the
+    // withdrawal burst the manual points at is the last row.
+    take: findings,
   },
   {
     // Sorted worst-first, which takes two clicks: the first sorts ascending.
@@ -365,10 +370,7 @@ async function run(browser: Browser, shot: Shot): Promise<void> {
       mimeType: 'application/vnd.tcpdump.pcap',
       buffer: capture.bytes,
     })
-    // A loaded capture lands on the Dashboard; every shot starts from the
-    // message explorer and navigates on from there, as before.
-    await page.waitForURL('**/dashboard')
-    await page.getByRole('link', { name: 'Messages', exact: true }).click()
+    // A loaded capture lands on Messages; every shot starts there.
     await page.waitForURL('**/messages')
     // The packet list is up as soon as the parser finishes; DuckDB takes longer,
     // and a filtered shot taken before it is ready photographs the in-memory

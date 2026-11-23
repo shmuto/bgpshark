@@ -19,6 +19,7 @@ import type {
   MpUnreachNlriAttribute,
 } from '../../lib/bgp/types'
 import { endOfRibMarker } from '../../lib/bgp/update'
+import { peeringKey } from '../../lib/bgp/peering'
 import type { GenericPacket } from '../../lib/pcap'
 import { aggregatePrefixStats, type PrefixStats } from '../../lib/bgp/prefix-stats'
 import type { DashboardAlert } from './types'
@@ -38,9 +39,7 @@ const WITHDRAWN_BURST_THRESHOLD = 10
 // that points at the Routes screen.
 const ROUTE_ALERT_LIMIT = 5
 
-function sortedPairKey(a: string, b: string): string {
-  return a < b ? `${a}|${b}` : `${b}|${a}`
-}
+const sortedPairKey = peeringKey
 
 function getWithdrawnCount(update: BgpUpdateMessage): number {
   let count = update.withdrawnRoutes.length
@@ -71,6 +70,8 @@ function isRoutineNotification(notif: BgpNotificationMessage): boolean {
 interface NotificationGroup {
   title: string
   routine: boolean
+  errorCode: number
+  errorSubcode: number
   srcIp: string
   dstIp: string
   first: Date
@@ -101,6 +102,8 @@ function groupNotifications(packets: BgpPacket[], locale: Locale): DashboardAler
         groups.set(key, {
           title: t.notifTitle(notif.errorCodeName, notif.errorSubcodeName),
           routine: isRoutineNotification(notif),
+          errorCode: notif.errorCode,
+          errorSubcode: notif.errorSubcode,
           srcIp: packet.srcIp,
           dstIp: packet.dstIp,
           first: packet.timestamp,
@@ -123,7 +126,10 @@ function groupNotifications(packets: BgpPacket[], locale: Locale): DashboardAler
 
   return Array.from(groups.values()).map((group) => ({
     id: `notif-${group.firstPacketIndex}`,
-    severity: group.routine ? ('warning' as const) : ('critical' as const),
+    rule: 'notification' as const,
+    groupKey: `notification-${group.errorCode}-${group.errorSubcode}`,
+    peering: sortedPairKey(group.srcIp, group.dstIp),
+    severity: group.routine ? ('info' as const) : ('critical' as const),
     title: group.title,
     detail: group.routine
       ? t.notifCollisionDetail(group.srcIp, group.dstIp)
@@ -204,6 +210,7 @@ function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAler
     const last = withdraws[withdraws.length - 1] ?? first
     alerts.push({
       id: `route-flap-${stat.key}`,
+      rule: 'route-flap',
       severity: 'warning',
       title: t.routeFlappingTitle(stat.key),
       detail: t.routeFlappingDetail(stat.announced, stat.withdrawn),
@@ -220,11 +227,15 @@ function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAler
     const restFlaps = rest.reduce((sum, stat) => sum + stat.flap, 0)
     alerts.push({
       id: 'route-flap-more',
+      rule: 'route-flap',
       severity: 'warning',
       title: t.morePrefixesFlappedTitle(rest.length),
       detail: t.morePrefixesFlappedDetail(restFlaps),
       timestamp: null,
       filter: 'type=UPDATE',
+      // The rows above count their flaps, so this one counts the rest's:
+      // the group's total is then every flap, not the listed ones plus one.
+      count: restFlaps,
     })
   }
 
@@ -254,6 +265,7 @@ function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAler
     const from = pathId !== undefined ? t.asPathFromPath(source, pathId) : source
     alerts.push({
       id: `route-aspath-${stat.key}`,
+      rule: 'route-aspath',
       severity: 'warning',
       title: t.asPathChangedTitle(stat.key),
       detail: t.asPathChangedDetail(
@@ -287,6 +299,7 @@ function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAler
     const mac = stat.key.match(/[0-9a-f]{2}(?::[0-9a-f]{2}){5}/i)?.[0]
     alerts.push({
       id: `route-macmove-${stat.key}`,
+      rule: 'route-macmove',
       severity: 'warning',
       title: t.macMovedTitle(stat.key),
       detail: `${announcements[0].source} → ${last.source}`,
@@ -301,11 +314,15 @@ function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAler
     const rest = repathed.slice(ROUTE_ALERT_LIMIT)
     alerts.push({
       id: 'route-aspath-more',
+      rule: 'route-aspath',
       severity: 'warning',
       title: t.moreAsPathChangedTitle(rest.length),
       detail: t.moreAsPathChangedDetail,
       timestamp: null,
       filter: 'type=UPDATE',
+      // Counted like the rows above (paths seen per route), for the same
+      // reason as the flap summary.
+      count: rest.reduce((sum, { change }) => sum + change.paths.length, 0),
     })
   }
 
@@ -404,12 +421,13 @@ function computeSessionSetupAlerts(
       const [from] = only.split('>')
       alerts.push({
         id: `one-direction-${sortedPairKey(ipA, ipB)}`,
+        rule: 'one-direction',
+        peering: sortedPairKey(ipA, ipB),
         severity: 'critical',
         title: t.oneDirectionTitle,
         detail: t.oneDirectionDetail(ipA, ipB, from),
         timestamp: facts.firstSeen,
         filter: sessionFilter(ipA, ipB),
-        pairKey: sortedPairKey(ipA, ipB),
         packetIndex: facts.firstBgpIndex,
       })
       // The rule below would fire too, and would be the less useful of the
@@ -427,12 +445,13 @@ function computeSessionSetupAlerts(
       const silent = speaker === ipA ? ipB : ipA
       alerts.push({
         id: `no-reply-${sortedPairKey(ipA, ipB)}`,
+        rule: 'no-reply',
+        peering: sortedPairKey(ipA, ipB),
         severity: 'critical',
         title: t.noReplyTitle(silent),
         detail: t.noReplyDetail(facts.accepted, speaker, silent),
         timestamp: facts.firstSeen,
         filter: sessionFilter(ipA, ipB),
-        pairKey: sortedPairKey(ipA, ipB),
         packetIndex: facts.firstBgpIndex,
         count: facts.accepted > 1 ? facts.accepted : undefined,
       })
@@ -738,6 +757,9 @@ function computeSilentTeardownAlerts(
 
       alerts.push({
         id: `silent-teardown-${kind}-${pairKey}`,
+        rule: 'silent-teardown',
+        groupKey: `silent-teardown-${kind}`,
+        peering: pairKey,
         severity: 'critical',
         title:
           kind === 'RST'
@@ -749,7 +771,6 @@ function computeSilentTeardownAlerts(
             : t.silentCloseDetail(sender),
         timestamp: times[0] ?? null,
         filter: sessionFilter(ipA, ipB),
-        pairKey,
         frameIndex: first.endFrame?.frameIndex,
         showAllPackets: true,
         count: matching.length > 1 ? matching.length : undefined,
@@ -818,6 +839,8 @@ function computeGracefulRestartAlerts(
 
     alerts.push({
       id: `graceful-restart-${pairKey}`,
+      rule: 'graceful-restart',
+      peering: pairKey,
       severity,
       // Names the end that went away and the one that held its routes, rather
       // than repeating the restarter inside a peering string that contains it.
@@ -825,7 +848,6 @@ function computeGracefulRestartAlerts(
       detail: t.grDetail(convergence, forwarding, overran),
       timestamp: first.cameBackAt,
       filter: sessionFilter(ipA, ipB),
-      pairKey,
       packetIndex: first.packetIndex,
       count: events.length > 1 ? events.length : undefined,
       timeSpan:
@@ -885,6 +907,8 @@ export function computeAlerts(
     const establishments = Math.floor(opens.length / 2)
     alerts.push({
       id: `flap-${key}`,
+      rule: 'session-flap',
+      peering: key,
       severity: 'warning',
       title: t.sessionFlapTitle,
       detail: t.sessionFlapDetail(ipA, ipB, opens.length, establishments),
@@ -920,6 +944,7 @@ export function computeAlerts(
     if (windowTotal >= WITHDRAWN_BURST_THRESHOLD) {
       alerts.push({
         id: `withdraw-burst-${cursor}`,
+        rule: 'withdraw-burst',
         severity: 'warning',
         title: t.withdrawBurstTitle,
         detail: t.withdrawBurstDetail(windowTotal, WITHDRAWN_BURST_WINDOW_MS / 1000),
@@ -939,12 +964,16 @@ export function computeAlerts(
 
   // Most severe first, then the rows standing for the most occurrences, then
   // most recent first. Counting before recency keeps a peer that failed 40
-  // times above one that failed once a second later.
-  const severityRank: Record<DashboardAlert['severity'], number> = { critical: 0, warning: 1 }
+  // times above one that failed once a second later. The "N more prefixes"
+  // summaries come after the routes they follow on from: their count adds up
+  // dozens of routes, and ranked by it they led the list they close.
+  const severityRank: Record<DashboardAlert['severity'], number> = { critical: 0, warning: 1, info: 2 }
+  const isSummary = (alert: DashboardAlert) => alert.id.endsWith('-more')
   return alerts.sort((a, b) => {
     if (severityRank[a.severity] !== severityRank[b.severity]) {
       return severityRank[a.severity] - severityRank[b.severity]
     }
+    if (isSummary(a) !== isSummary(b)) return isSummary(a) ? 1 : -1
     if ((a.count ?? 1) !== (b.count ?? 1)) return (b.count ?? 1) - (a.count ?? 1)
     return (b.timestamp?.getTime() ?? 0) - (a.timestamp?.getTime() ?? 0)
   })
@@ -971,6 +1000,7 @@ export function computeTransportAlerts(
     return [
       {
         id: 'transport-no-179',
+        rule: 'transport',
         severity: 'warning',
         title: t.transportNo179Title,
         detail:
@@ -990,6 +1020,7 @@ export function computeTransportAlerts(
     return [
       {
         id: 'transport-refused',
+        rule: 'transport',
         severity: 'critical',
         title: t.transportRefusedTitle,
         detail: t.transportRefusedDetail(syns.length),
@@ -1003,6 +1034,7 @@ export function computeTransportAlerts(
     return [
       {
         id: 'transport-unanswered',
+        rule: 'transport',
         severity: 'critical',
         title: t.transportUnansweredTitle,
         detail: t.transportUnansweredDetail(syns.length),
@@ -1015,6 +1047,7 @@ export function computeTransportAlerts(
   return [
     {
       id: 'transport-no-bgp-payload',
+      rule: 'transport',
       severity: 'warning',
       title: t.transportNoBgpPayloadTitle,
       detail: t.transportNoBgpPayloadDetail(port179.length),

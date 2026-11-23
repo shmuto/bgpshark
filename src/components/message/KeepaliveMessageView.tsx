@@ -14,7 +14,7 @@ export function KeepaliveMessageView({ context }: { context?: KeepaliveContext |
 
   if (!context) {
     return (
-      <div className="bg-bgp-keepalive/10 border border-bgp-keepalive/30 rounded-lg p-3 text-sm text-bgp-keepalive">
+      <div className="bg-bgp-keepalive/10 border border-bgp-keepalive/30 rounded p-3 text-xs text-bgp-keepalive">
         {t.packetDetail.keepalive.headerOnly}
       </div>
     )
@@ -33,7 +33,7 @@ export function KeepaliveMessageView({ context }: { context?: KeepaliveContext |
           : 'text-ok'
 
   return (
-    <div className="bg-surface-sunken rounded-lg p-3 text-sm space-y-1">
+    <div className="bg-surface-sunken rounded p-3 text-xs space-y-1">
       <div className="flex justify-between gap-4">
         <span className="text-muted" title={t.packetDetail.keepalive.sincePreviousTitle}>
           {t.packetDetail.keepalive.sincePrevious(sender, receiver)}

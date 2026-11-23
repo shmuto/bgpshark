@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, goToDashboard, loadSample, shownCount } from './helpers'
+import { applyFilter, showFindings, loadSample, shownCount } from './helpers'
 
 /**
  * The small things that made every packet and every screen change a fresh
@@ -56,8 +56,8 @@ test.describe('moving between screens', () => {
     await page.locator('tbody [role="row"]').nth(2).click()
     const frame = (await page.locator('tbody [role="row"]').nth(2).locator('td').first().textContent())?.trim()
 
-    await page.getByRole('link', { name: 'Neighbors', exact: true }).click()
-    await page.waitForURL('**/neighbors**')
+    await page.getByRole('link', { name: 'Sessions', exact: true }).click()
+    await page.waitForURL('**/sessions**')
     await page.getByRole('link', { name: 'Messages', exact: true }).click()
 
     await expect(page).toHaveURL(/filter=/)
@@ -88,7 +88,7 @@ test.describe('a withdrawal opened from elsewhere', () => {
     await page.getByRole('link', { name: 'Routes', exact: true }).click()
     await page.getByText('1.1.1.1/32').first().click()
     await expect(page.getByRole('heading', { name: 'Route History: 1.1.1.1/32' })).toBeVisible()
-    await page.getByRole('row').filter({ hasText: '🔴 Withdraw' }).first().click()
+    await page.getByRole('row').filter({ hasText: /Withdraw(?!n)/ }).first().click()
 
     await page.waitForURL('**/messages**')
     // Past the DuckDB debounce, so the answer is the database's.
@@ -98,12 +98,8 @@ test.describe('a withdrawal opened from elsewhere', () => {
   })
 
   test('a Route flapping alert opens the withdrawal it names', async ({ page }) => {
-    await goToDashboard(page)
-    await page
-      .getByRole('listitem')
-      .filter({ hasText: 'Route flapping: 1.1.1.1/32' })
-      .getByRole('button', { name: 'View →' })
-      .click()
+    const rail = await showFindings(page)
+    await rail.getByRole('button', { name: /^1\.1\.1\.1\/32/ }).click()
 
     await page.waitForURL('**/messages**')
     await page.waitForTimeout(1200)

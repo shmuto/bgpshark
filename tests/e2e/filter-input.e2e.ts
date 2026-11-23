@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, loadSample, shownCount } from './helpers'
+import { applyFilter, loadSample, shownCount, showFindings } from './helpers'
 
 test.describe('the filter box', () => {
   test.beforeEach(async ({ page }) => {
@@ -56,10 +56,15 @@ test.describe('the filter box', () => {
     await expect(page.getByRole('button', { name: 'Advanced' })).toHaveCount(0)
   })
 
-  test('a type badge writes its filter into the box, and nothing contradicts it', async ({ page }) => {
-    await page.getByRole('button', { name: /^UPDATE \d+/ }).click()
-    await expect(page.getByLabel('Filter', { exact: true })).toHaveValue('type = UPDATE')
-    await expect(page.getByText('No filters applied')).toHaveCount(0)
+  test('the filter, + Filter and the BGP / All toggle share one row', async ({ page }) => {
+    const top = async (name: string) =>
+      (await page.getByRole('button', { name, exact: true }).boundingBox())!.y
+    const input = (await page.getByLabel('Filter', { exact: true }).boundingBox())!
+    for (const name of ['+ Filter', 'BGP Only', 'All Packets']) {
+      expect(Math.abs((await top(name)) - input.y)).toBeLessThan(input.height)
+    }
+    // The per-type count badges are gone; `type = X` is a suggestion away.
+    await expect(page.getByRole('button', { name: /^UPDATE \d+$/ })).toHaveCount(0)
   })
 
   test('+ Filter appends a condition built from menus', async ({ page }) => {
@@ -147,10 +152,10 @@ test.describe('a filter carried in the URL', () => {
     expect(decodeURIComponent(page.url())).toContain('filter=type = NOTIFICATION')
   })
 
-  test('a dashboard alert opens the messages screen on that peer', async ({ page }) => {
+  test('a finding opens the messages screen on that peer', async ({ page }) => {
     await loadSample(page)
-    await page.getByRole('link', { name: 'Dashboard' }).click()
-    await page.getByRole('button', { name: 'View →' }).first().click()
+    const rail = await showFindings(page)
+    await rail.getByRole('button', { name: /^10\.0\.14\.1 → 10\.0\.14\.4/ }).first().click()
     await page.waitForURL('**/messages**')
     await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
     await page.waitForTimeout(600)
@@ -200,7 +205,7 @@ test.describe('the filter box gets out of the way', () => {
     await input.pressSequentially('ip = 10.0.13.1', { delay: 20 })
 
     // The lone suggestion would repeat what is already typed.
-    await expect(page.getByRole('button', { name: /^10\.0\.13\.1/ })).toHaveCount(0)
+    await expect(page.getByRole('main').getByRole('button', { name: /^10\.0\.13\.1/ })).toHaveCount(0)
     const status = page.getByText(/Showing \d+ of \d+ packets/)
     const box = (await status.boundingBox())!
     const hit = await page.evaluate(

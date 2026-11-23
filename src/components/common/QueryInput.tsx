@@ -214,7 +214,7 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError, in
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
           placeholder={placeholder ?? 'type=OPEN and src=10.0.0.1'}
-          className={`w-full pl-8 pr-3 py-1.5 text-sm font-mono border rounded
+          className={`w-full pl-8 pr-3 py-1.5 text-xs font-mono border rounded
                      focus:outline-none focus:ring-2 focus:border-transparent
                      placeholder:text-dim
                      ${hasError
@@ -257,7 +257,7 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError, in
               }}
               onMouseEnter={() => setSelectedIndex(index)}
               className={`
-                w-full px-3 py-2 text-left text-sm flex items-center justify-between
+                w-full px-3 py-2 text-left text-xs flex items-center justify-between
                 ${index === selectedIndex ? 'bg-accent-subtle' : 'hover:bg-surface-sunken'}
               `}
             >

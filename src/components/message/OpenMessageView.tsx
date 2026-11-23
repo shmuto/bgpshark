@@ -13,7 +13,7 @@ export function OpenMessageView({ message }: OpenMessageViewProps) {
   return (
     <div className="space-y-3">
       {/* Basic Fields */}
-      <div className="bg-surface-sunken rounded-lg p-3 text-sm space-y-2">
+      <div className="bg-surface-sunken rounded p-3 text-xs space-y-2">
         <FieldRow label={t.packetDetail.open.version} value={message.version.toString()} />
         <FieldRow
           label={t.packetDetail.open.myAs}
@@ -30,7 +30,7 @@ export function OpenMessageView({ message }: OpenMessageViewProps) {
       {/* Capabilities */}
       {message.capabilities.length > 0 && (
         <div>
-          <h4 className="text-sm font-medium text-strong mb-2">
+          <h4 className="text-xs font-medium text-strong mb-2">
             {t.packetDetail.open.capabilities(message.capabilities.length)}
           </h4>
           <div className="space-y-2">
@@ -59,10 +59,10 @@ function CapabilityItem({ capability }: { capability: BgpCapability }) {
   const hasDetails = capability.parsed && capability.parsed.type !== 'UNKNOWN'
 
   return (
-    <div className="bg-surface-sunken rounded-lg overflow-hidden">
+    <div className="bg-surface-sunken rounded overflow-hidden">
       <button
         onClick={() => hasDetails && setIsExpanded(!isExpanded)}
-        className={`w-full px-3 py-2 text-left text-sm flex items-center justify-between
+        className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between
           ${hasDetails ? 'hover:bg-surface-raised cursor-pointer' : 'cursor-default'}`}
       >
         <div className="flex items-center gap-2">
@@ -82,7 +82,7 @@ function CapabilityItem({ capability }: { capability: BgpCapability }) {
       </button>
 
       {isExpanded && capability.parsed && (
-        <div className="px-3 pb-3 text-sm">
+        <div className="px-3 pb-3 text-xs">
           <CapabilityDetails parsed={capability.parsed} />
         </div>
       )}
@@ -183,7 +183,7 @@ function CapabilityDetails({ parsed }: { parsed: ParsedCapability }) {
     case 'ROUTE_REFRESH':
     case 'ENHANCED_ROUTE_REFRESH':
       return (
-        <div className="bg-surface rounded p-2 text-muted text-sm">{t.packetDetail.open.supported}</div>
+        <div className="bg-surface rounded p-2 text-muted text-xs">{t.packetDetail.open.supported}</div>
       )
 
     default:

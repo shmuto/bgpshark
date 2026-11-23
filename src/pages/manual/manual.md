@@ -10,9 +10,9 @@ Drop a file anywhere in the window, or select one from the start screen. `.pcap`
 
 Large captures take a few seconds to load while a progress bar tracks each stage. Most of that time is spent in the final **Loading into DuckDB** stage, which imports millions of rows for large table transfers.
 
-If you do not have a capture handy, click **Load sample** to explore a sample session, or open **Build** to generate a synthetic capture.
+If you do not have a capture handy, click **Try with sample.pcapng** to explore a sample session, or open **Build** (in the **⋯** menu at the top right) to generate a synthetic capture.
 
-The loaded capture is stored in your browser's local storage (IndexedDB) and restored automatically when you reload the page. Click **New File** to clear it and load another capture.
+The loaded capture is stored in your browser's local storage (IndexedDB) and restored automatically when you reload the page. Click the file name at the top left to clear it and load another capture.
 
 ### If the capture looks wrong
 
@@ -20,32 +20,34 @@ A yellow warning banner under the header indicates that part of the file could n
 
 Three caveats to keep in mind when reading results:
 
-- **One-way captures raise a critical alert, but the cause is up to you to verify.** The Dashboard cannot distinguish a broken mirror or one-sided `tcpdump` filter from a real one-way reachability outage (such as a unidirectional link or one-way ACL). See [The capture may be lying to you](#the-capture-may-be-lying-to-you) to tell them apart quickly.
+- **One-way captures raise a critical finding, but the cause is up to you to verify.** The findings cannot distinguish a broken mirror or one-sided `tcpdump` filter from a real one-way reachability outage (such as a unidirectional link or one-way ACL). See [The capture may be lying to you](#the-capture-may-be-lying-to-you) to tell them apart quickly.
 - **TCP-level frames are hidden by default.** The packet list shows BGP messages only until you switch it to **All Packets**. TCP resets (`[R]`) and closes (`[F]`) only appear in **All Packets** mode. A filter stays applied there: frames without BGP are matched on `src_ip`, `dst_ip`, `src_port`, `dst_port` and `frame`, so `src_ip = 10.0.13.1` shows that peer's handshake and teardown alongside its BGP, while a BGP-only condition such as `type = UPDATE` leaves only the BGP frames it names.
 - **Mid-session captures lack OPEN messages.** Encoding options such as 4-byte AS_PATH width and ADD-PATH Path Identifiers are negotiated in OPEN and are not self-describing inside UPDATE messages. When OPENs are missing, BGPShark infers these settings from the message structure and adds a note in the warning banner. Re-capture from before session establishment whenever possible.
 
 ## The screens
 
-Each screen is designed around a specific troubleshooting question. The header lists the screens for the open capture on the left; **Build** and **Help** sit on the right, apart from them. If you are not sure where to start, open **Dashboard** or jump to [Investigating by symptom](#investigating-by-symptom).
+A loaded capture opens in one workspace. The left column lists the capture's **Sessions** and its **Findings**; the views are tabs on the right; a **time strip** runs across the top. If you are not sure where to start, read the findings, or jump to [Investigating by symptom](#investigating-by-symptom).
 
-| Screen | What it answers |
-|--------|-----------------|
-| **Dashboard** | What problems exist in this capture? |
+| Tab | What it answers |
+|-----|-----------------|
 | **Messages** | What exact packets and bytes were exchanged? |
-| **Neighbors** | What did each pair of peers negotiate in OPEN? |
+| **Sessions** | What did a pair of peers negotiate in OPEN, and when did it go up or down? |
 | **Routes** | What happened to a specific prefix? |
 | **SQL** | Custom aggregations and cross-prefix queries |
-| **Build** | Generate a valid BGP `.pcap` from a session description |
 
-### Dashboard
+**Build**, **Help** and the link to the source code are in the **⋯** menu at the top right, apart from the capture's views.
 
-A loaded capture opens here. Displays the packet and message totals with a count per message type (one TCP packet can carry several BGP messages, so the two totals differ; click a type to list those messages), a timeline, a neighbor summary table, and the **Alerts** panel. Alerts are sorted by severity and grouped per problem rather than per packet (for example, 40 rejected OPEN retries appear as a single row with a count of 40). The five most severe rows are shown; **Show N more alerts** expands the rest.
+### The workspace
 
-Alerts detect NOTIFICATIONs, session flapping, withdrawal bursts, route flapping, AS_PATH changes from the same peer, EVPN MAC moves, graceful restarts, silent TCP teardowns, one-way sessions, and TCP connections that receive no BGP reply. Click **View →** on any alert to jump straight to the relevant packet with an appropriate filter applied.
+**Sessions** lists every pair of addresses that exchanged BGP (or tried to, on TCP port 179), with their AS numbers, message count and the worst finding against them. Choose a session to narrow **every tab** to it: the packet list, the routes, the time strip and the findings. The chosen session is shown at the right of the tab row; click **×** there, or **All sessions**, to go back to the whole capture.
 
-*Cease / Connection Collision Resolution* is shown as a warning rather than critical: it is how BGP closes one of two connections when both ends dial at once (RFC 4271 §6.8), not a failure. Different AS_PATHs from *different* peers (an iBGP peer's empty path next to an eBGP peer's `65001`) are normal and raise nothing; compare them on **Routes**.
+**Findings** are the problems the capture shows, folded one row per kind of problem rather than per packet: a hard reset on a router with three sessions is one *NOTIFICATION: Cease / Hard Reset ×3* row, not three. The worst kind comes first and starts expanded; click a row to list its instances, and click an instance to open the packet it is about in **Messages**, with a filter already applied. Opening a finding does not change the chosen session, so you can step through every instance of one problem.
+
+Findings cover NOTIFICATIONs, session flapping, withdrawal bursts, route flapping, AS_PATH changes from the same peer, EVPN MAC moves, graceful restarts, silent TCP teardowns, one-way sessions, and TCP connections that receive no BGP reply. *Cease / Connection Collision Resolution* is listed last as **Info**: it is how BGP closes one of two connections when both ends dial at once (RFC 4271 §6.8), not a failure. Different AS_PATHs from *different* peers (an iBGP peer's empty path next to an eBGP peer's `65001`) are normal and raise nothing; compare them on **Routes**.
 
 > "No issues detected" means every session in the capture stayed healthy at the session layer. It does not rule out policy problems such as route leaks or unexpected best-path selection.
+
+The **time strip** shows how many messages were exchanged over the whole capture (for the chosen session, if there is one), with NOTIFICATIONs drawn as red rules. Drag across it to narrow **Messages** and **Routes** to that window; click it, or **Show all**, to go back. Findings, the OPEN comparison and SQL always cover the whole capture; opening a packet from one of them that lies outside the window clears the window, so the packet can be shown.
 
 ### Messages
 
@@ -53,13 +55,15 @@ Shows the packet list, a structured detail pane, and a foldable hex dump. Click 
 
 The **Info** column summarizes each message (for example, `AS65001 Hold=90` for OPEN, the announced prefixes and the struck-through withdrawn ones for UPDATE, with `+N` when there are more, or the error name for NOTIFICATION). Empty UPDATE messages are labeled **End-of-RIB**.
 
-Use **Columns** (at the right end of the status bar, above the list) to toggle timestamp and port columns, and **Export** to save the currently filtered packets as a new `.pcap` file (handy for attaching only the relevant frames to a ticket).
+Use **Columns** (at the right end of the filter row) to toggle timestamp and port columns. The line under the list says how many packets are shown, and **Export** there saves them as a new `.pcap` file (handy for attaching only the relevant frames to a ticket). KEEPALIVE-only rows are drawn lighter so the rows that changed something stand out.
 
-Each UPDATE is one card listing its announced and withdrawn prefixes (including those carried in MP_REACH/MP_UNREACH_NLRI) and its path attributes, each once. **Raw Data** is folded; opening it is remembered as you move between packets with `↑`/`↓`. A KEEPALIVE shows the gap since its sender's previous message and how much of the negotiated hold time that gap used. Leaving **Messages** for another tab and coming back through the header restores the filter, **All Packets** mode, and the selected frame.
+Each UPDATE is one card listing its announced and withdrawn prefixes (including those carried in MP_REACH/MP_UNREACH_NLRI) and its path attributes, each once. **Raw Data** is folded; opening it is remembered as you move between packets with `↑`/`↓`. A KEEPALIVE shows the gap since its sender's previous message and how much of the negotiated hold time that gap used. Leaving **Messages** for another tab and coming back through its tab restores the filter, **All Packets** mode, and the selected frame.
 
-### Neighbors
+### Sessions
 
-Groups sessions by Router ID. The **Sent** column counts messages the router sent; the detail pane's **Message Summary** counts both directions. Click a router to see its sessions, messages and announced prefixes (on a wide screen the busiest router is opened for you) (click a prefix to open its route history). Then select one of its sessions to switch the pane to that session: a breadcrumb (**← Router overview** goes back), **Capability Diff**, which compares the two OPEN messages side by side, the session's prefix activity, and its messages with the time since the previous one.
+With no session chosen, this tab is a table of every session: its AS numbers and whether it is iBGP or eBGP, its state when the capture ended, its message counts and its worst finding. Click a row (or choose a session in the left column) to open it.
+
+A chosen session shows, from the top: its state, the hold time both ends agreed on, its NOTIFICATION and message counts, and the prefixes each end announced and withdrew; the **OPEN comparison**, which compares the latest OPEN from each end side by side; and its **Events**, the OPENs and NOTIFICATIONs with the time since the previous one (**All** lists every message). Click an event to open it in **Messages**.
 
 Capabilities are compared per address family (AFI/SAFI), with mismatches listed first. Different Hold Times are marked informational (the lower value is negotiated), while duplicate BGP Identifiers are flagged as errors.
 
@@ -115,11 +119,11 @@ Use this section to go directly from an operational symptom to the screen and ev
 
 Regardless of the symptom, start with the same three checks:
 
-1. Open **Dashboard** and review the counters and **Alerts** panel.
+1. Read the **Findings** in the left column. The worst kind is at the top and already expanded.
 2. Verify that the capture contains both directions (see [The capture may be lying to you](#the-capture-may-be-lying-to-you)).
-3. Click **View →** on the highest-severity alert to open the starting packet with its filter pre-applied.
+3. Click an instance of the top finding to open the starting packet with its filter pre-applied.
 
-![The Dashboard on a capture of a flapping session: counters, two alerts, the neighbour table and the timeline](manual/dashboard.png)
+![The workspace on a capture of a flapping session: the session list and findings on the left, the time strip with NOTIFICATIONs drawn in red, and the packet list](manual/workspace.png)
 
 Remember that *"No issues detected — every session looks healthy"* only reflects session-layer health; policy issues such as route leaks and best-path surprises still show this message.
 
@@ -127,13 +131,13 @@ Remember that *"No issues detected — every session looks healthy"* only reflec
 
 The neighbor stays in Idle or Connect and no BGP messages are exchanged. You need to see how port 179 responds to the TCP SYN.
 
-Open **Dashboard**. When a capture contains no BGP messages, alerts are derived from the TCP layer:
+Read the **Findings**. When a capture contains no BGP messages, findings are derived from the TCP layer:
 
-![A critical alert reading "TCP connections to port 179 are being refused — 3 SYNs answered by RST"](manual/s1-tcp-refused.png)
+![A critical finding reading "TCP connections to port 179 are being refused — 3 SYNs answered by RST"](manual/s1-tcp-refused.png)
 
 - **SYNs answered by RST** — Something is actively refusing port 179 (ACL/firewall, TCP-MD5/TCP-AO mismatch, or BGP not listening on the peer).
 - **SYNs with no reply** — Packets or replies are being dropped below BGP (routing or filtering).
-- **SYN-ACK, then no BGP** — The Dashboard reports *"TCP connects but 10.0.0.2 sends no BGP"*. Because TCP connected, the port is open, SYN is not blocked, and TCP-MD5 matches. Check whether the peer has your neighbor configured, or whether a middlebox, PMTU black hole, or control-plane policing is dropping the OPEN payload.
+- **SYN-ACK, then no BGP** — The findings report *"TCP connects but 10.0.0.2 sends no BGP"*. Because TCP connected, the port is open, SYN is not blocked, and TCP-MD5 matches. Check whether the peer has your neighbor configured, or whether a middlebox, PMTU black hole, or control-plane policing is dropping the OPEN payload.
 
 Switch **Messages** to **All Packets** to inspect retry counts and timing (BGP Only will be empty).
 
@@ -141,9 +145,9 @@ Switch **Messages** to **All Packets** to inspect retry counts and timing (BGP O
 
 IPv4 routes work, but IPv6, EVPN, or VPNv4 routes never appear.
 
-Go to **Neighbors → select a router → select a session** to open **Capability Diff** (the diff appears at the session level, not on the router row):
+Choose the session in the left column and open the **Sessions** tab to see its **OPEN comparison**:
 
-![The Capability Diff: session fields matching, and four capabilities advertised by only one end, including IPv6/Unicast Multiprotocol Extensions](manual/s2-capability-diff.png)
+![The OPEN comparison: session fields matching, and four capabilities advertised by only one end, including IPv6/Unicast Multiprotocol Extensions](manual/s2-capability-diff.png)
 
 Check the **Status** column:
 
@@ -153,9 +157,9 @@ Check the **Status** column:
 
 ### “It flaps every few minutes”
 
-The Dashboard groups repeated teardowns into a single NOTIFICATION row with a count alongside a session-flapping warning:
+The findings fold repeated teardowns into a single NOTIFICATION row with a count, alongside a session-flapping warning:
 
-![Alerts reading "NOTIFICATION: Hold Timer Expired / Unspecific ×3" and "Session flapping detected — 6 OPEN messages (~3 establishments)"](manual/s3-holdtimer-alerts.png)
+![Findings reading "NOTIFICATION: Hold Timer Expired / Unspecific ×3" and "Session flapping detected — 6 OPEN messages (~3 establishments)"](manual/s3-holdtimer-alerts.png)
 
 `Hold Timer Expired` indicates that one peer stopped receiving messages from the other. Open **Messages** and click the NOTIFICATION to check **Silence before the teardown**:
 
@@ -170,16 +174,16 @@ The silence is measured from the **peer's** last message (not simply the previou
 
 No NOTIFICATION appears in the capture, yet the session dropped and re-established. The teardown happened at the TCP layer.
 
-Open **Dashboard**. Silent teardowns appear as critical alerts, separated by teardown type:
+Read the **Findings**. Silent teardowns appear as critical findings, one per teardown type:
 
 - *"…was reset with no NOTIFICATION"* (TCP RST — active rejection such as a firewall or reset socket)
 - *"…was closed with no NOTIFICATION"* (TCP FIN — polite close such as a session idle timeout)
 
-Click **View →** on either alert to switch **Messages** to **All Packets** and select the exact frame.
+Click either finding to switch **Messages** to **All Packets** and select the exact frame.
 
-![The Alerts panel with two critical rows — one reading "10.0.0.1 ↔ 10.0.0.2 was reset with no NOTIFICATION", one "was closed with no NOTIFICATION" — above a "Session flapping detected" warning](manual/s11-teardown-alerts.png)
+![The findings with two critical rows — one reading "10.0.0.1 ↔ 10.0.0.2 was reset with no NOTIFICATION", one "was closed with no NOTIFICATION" — above a "Session flapping detected" warning](manual/s11-teardown-alerts.png)
 
-These alerts appear alongside *"Session flapping detected"*: flapping counts how many times the session re-established, while the teardown rows show how it went down. Sessions that never established are excluded here (they are covered by *"TCP connects but the peer sends no BGP"*).
+These findings appear alongside *"Session flapping detected"*: flapping counts how many times the session re-established, while the teardown rows show how it went down. Sessions that never established are excluded here (they are covered by *"TCP connects but the peer sends no BGP"*).
 
 To inspect manually, switch **Messages** to **All Packets** (gaps in frame numbers in BGP Only mode also point to hidden TCP frames):
 
@@ -208,7 +212,7 @@ Open **Routes** and search using the appropriate match mode:
 - **Subnets** — Check whether the peer is sending more-specific prefixes inside a summary block (e.g. `10.0.0.0/8` finds `10.0.12.0/24`).
 - **Supernets** — Find which aggregate route covers a specific host IP (e.g. `10.0.12.7`).
 
-If nothing matches, the prefix was never advertised on this session (check the peer's export policy). If the prefix is missing for an entire address family, check **Capability Diff** under **Neighbors**.
+If nothing matches, the prefix was never advertised on this session (check the peer's export policy). If the prefix is missing for an entire address family, check the **OPEN comparison** on the **Sessions** tab.
 
 UPDATEs split across multiple TCP segments are reassembled automatically before parsing, so large segmented UPDATEs still report their full prefix counts.
 
@@ -216,7 +220,7 @@ UPDATEs split across multiple TCP segments are reassembled automatically before 
 
 By default, a peer or route reflector advertises only its best path unless **ADD-PATH** (RFC 7911) is negotiated in both directions.
 
-Open **Neighbors → select a router → select a session** and check **ADD-PATH Result** below the capability table. Because ADD-PATH is directional—the sender must advertise *send* and the receiver must advertise *receive*—two peers both configured only for *send* can look matched in the capability table while exchanging no Path Identifiers at all. **ADD-PATH Result** shows the actual per-direction outcome and names whichever half is missing.
+Choose the session and open the **Sessions** tab, then check **ADD-PATH Result** below the capability table. Because ADD-PATH is directional—the sender must advertise *send* and the receiver must advertise *receive*—two peers both configured only for *send* can look matched in the capability table while exchanging no Path Identifiers at all. **ADD-PATH Result** shows the actual per-direction outcome and names whichever half is missing.
 
 When ADD-PATH is active, prefix chips in packet details show `10.1.0.0/24 path 2`, and the route history displays a **Path ID** column so you can distinguish withdrawing one path from withdrawing the entire prefix.
 
@@ -243,9 +247,9 @@ UPDATEs without MED or LOCAL_PREF do not match comparisons on those fields. Note
 
 ### “CPU is high and the RIB will not settle”
 
-Route churn appears directly in the Dashboard **Alerts** panel with per-prefix flap counts, AS_PATH changes, and withdrawal bursts:
+Route churn appears directly in the **Findings**: route flapping and AS_PATH changes, each listing the prefixes involved, and withdrawal bursts:
 
-![An alert panel of route-flapping and AS_PATH-changed rows, ending in "Burst of withdrawn prefixes — 60 prefixes withdrawn within 10s"](manual/s10-churn-alerts.png)
+![Findings for route flapping and AS_PATH changes, expanded to their prefixes,, ending in "Burst of withdrawn prefixes — 60 prefixes withdrawn within 10s"](manual/s10-churn-alerts.png)
 
 Next, open **Routes**, sort by **Flap** (click twice for highest first), and select the top prefix:
 
@@ -258,7 +262,7 @@ Use the **From** column and **AS_PATH Analysis** to localize the instability:
 
 ### “A peer is announcing routes it has no business announcing”
 
-Because a route leak occurs over a healthy BGP session, the Dashboard reports *"No issues detected"*.
+Because a route leak occurs over a healthy BGP session, the findings report *"No issues detected"*.
 
 On **Routes**, type an AS number such as `AS15169` in the search box to list every prefix containing that AS anywhere in its AS_PATH, then select a prefix to inspect the full path:
 
@@ -278,19 +282,19 @@ mac = 00:0c:29:aa:bb:cc
 
 `mac`, `vni`, `rd`, and `evpn_type` match both announcements and withdrawals, and the detail view decodes RD, MAC, VNI, and ESI. Repeated advertisements of the same MAC from two VTEPs point to a MAC move loop (typically a dual-homed host misconfiguration or bridge loop).
 
-**Routes** tracks the MAC's full history, and the Dashboard flags the move itself as *"MAC moved"* (naming the VTEP it left and the one it moved to) alongside *"Route flapping"*. MAC Mobility extended communities are decoded in packet details, though sequence numbers are not compared automatically.
+**Routes** tracks the MAC's full history, and the findings flag the move itself as *"MAC moved"* (naming the VTEP it left and the one it moved to) alongside *"Route flapping"*. MAC Mobility extended communities are decoded in packet details, though sequence numbers are not compared automatically.
 
 ### “After a reload, or after a soft clear”
 
 Both events produce large bursts of BGP traffic that can resemble an outage.
 
-**Graceful restart** is identified on the **Dashboard** as *"10.0.0.1 restarted gracefully"* instead of *"Session flapping detected"*. The alert summarizes the negotiated **Restart Time**, whether **forwarding state was preserved**, and the measured convergence time from re-establishment to **End-of-RIB**:
+**Graceful restart** is identified in the **Findings** as *"10.0.0.1 restarted gracefully"* instead of *"Session flapping detected"*. The finding summarizes the negotiated **Restart Time**, whether **forwarding state was preserved**, and the measured convergence time from re-establishment to **End-of-RIB**:
 
-![The Alerts panel with a single warning row reading "10.0.0.1 restarted gracefully, peer 10.0.0.2", explaining that routes were back 3.8s after the session came up against the 120s it asked for, and that it kept forwarding state](manual/s8-graceful-restart.png)
+![The findings with a single warning row reading "10.0.0.1 restarted gracefully, peer 10.0.0.2", explaining that routes were back 3.8s after the session came up against the 120s it asked for, and that it kept forwarding state](manual/s8-graceful-restart.png)
 
-The alert is a warning when the restart succeeded within its Restart Time with forwarding preserved, and escalates to **critical** if convergence exceeded Restart Time or forwarding state was not preserved. By contrast, a crash loop without Graceful Restart still appears as *"Session flapping detected"* plus a silent teardown alert.
+The finding is a warning when the restart succeeded within its Restart Time with forwarding preserved, and escalates to **critical** if convergence exceeded Restart Time or forwarding state was not preserved. By contrast, a crash loop without Graceful Restart still appears as *"Session flapping detected"* plus a silent teardown finding.
 
-You can also verify the Graceful Restart flags in **Capability Diff**, and empty UPDATEs are labeled `End-of-RIB` in **Messages**.
+You can also verify the Graceful Restart flags in the **OPEN comparison**, and empty UPDATEs are labeled `End-of-RIB` in **Messages**.
 
 **Soft clear (ROUTE-REFRESH)** appears as a ROUTE-REFRESH message followed by re-advertised routes. Select the ROUTE-REFRESH message in **Messages** to see **What the refresh changed**: routes **added**, **no longer advertised**, and **changed attributes** (unchanged routes are counted only). Click any listed route to open its UPDATE.
 
@@ -307,7 +311,7 @@ When a capture contains multiple ROUTE-REFRESH messages, select each one individ
 
 ### The capture may be lying to you
 
-If a capture contains only one direction of a session, the Dashboard raises *"Only one direction of this session is in the capture"* and the neighbor table marks the pair `⚠ Never up`. Because a one-sided SPAN/capture filter and a real one-way network outage look identical at the BGP layer, verify which one you have before drawing conclusions.
+If a capture contains only one direction of a session, the findings raise *"Only one direction of this session is in the capture"* and the session list marks the pair **Critical**. Because a one-sided SPAN/capture filter and a real one-way network outage look identical at the BGP layer, verify which one you have before drawing conclusions.
 
 Open **Messages**, switch to **All Packets**, and inspect the **Source** column and TCP flags:
 
@@ -326,7 +330,7 @@ A healthy bidirectional session produces two rows of comparable size; a single r
 
 ## Filters
 
-The filter bar is a single query box with autocomplete. Press `/` or `Ctrl+K` (`⌘K`) to jump to it. **+ Filter** builds one condition from menus and appends it with `and`; the message-type badges write their filter into the same box.
+The filter bar is a single query box with autocomplete. Press `/` or `Ctrl+K` (`⌘K`) to jump to it. **+ Filter** builds one condition from menus and appends it with `and`. Choosing a session or a time window narrows the list as well, on top of the filter.
 
 In the packet detail, values that can become a filter have a dotted underline. Hover an address, prefix, AS number, next hop or community and click **＋** to narrow the current filter by it, or **=** to filter on it alone.
 
@@ -387,7 +391,7 @@ If an expression is invalid, a red error message appears next to the **Showing N
 
 ## What BGPShark will not tell you
 
-Keep these inherent limitations in mind so you do not mistake absence of an alert for proof that everything is fine:
+Keep these inherent limitations in mind so you do not mistake absence of a finding for proof that everything is fine:
 
 - **Capture defect vs. one-way outage.** BGPShark flags one-way sessions, but confirming whether the capture missed return packets or the network dropped them requires checking the TCP handshake ([see above](#the-capture-may-be-lying-to-you)).
 - **Routing policy correctness.** BGPShark has no knowledge of your intended export/import policies or expected AS_PATHs, so route leaks look identical to legitimate announcements.
