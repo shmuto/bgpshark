@@ -155,12 +155,24 @@ function MessagesView({ linked }: { linked: boolean }) {
   const showDetail = !isCompact || selectedPacketIndex !== null
 
   // The selection lives in the app context, which outlives this view: without
-  // this, a view remounted for a new link (or a return through the header tab)
-  // would open on the previous view's row number — a different packet, or a
-  // row past the end of a shorter list. A link's own `?selected=` or `?frame=`
-  // is applied by the effects below, which run after this one.
+  // this, a view opened by a link — a finding, Sessions' "Messages →", a
+  // restored place — would open on the previous view's row number, a
+  // different packet or a row past the end of a shorter list. A link's own
+  // `?selected=` or `?frame=` is applied by the effects below, which run after
+  // this one. A view remounted for no new question (the capture finishing
+  // loading under it) keeps the row the reader already clicked.
+  const location = useLocation()
+  const [openedByLink] = useState(() => {
+    const state = location.state as { jump?: number; fresh?: boolean } | null
+    return (
+      state?.jump !== undefined ||
+      state?.fresh === true ||
+      searchParams.has('selected') ||
+      searchParams.has('frame')
+    )
+  })
   useLayoutEffect(() => {
-    selectPacket(null)
+    if (openedByLink) selectPacket(null)
     // Once per view; see above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
