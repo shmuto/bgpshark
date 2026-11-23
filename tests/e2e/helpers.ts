@@ -80,7 +80,11 @@ export async function applyFilter(page: Page, expression: string) {
   await page.waitForTimeout(1200)
 }
 
-/** Runs a query in the SQL console and returns the page text once it settles. */
+/**
+ * Runs a query in the SQL console and returns the view's text once it settles.
+ * The view only: the sessions column beside it lists addresses, and their
+ * digits would answer assertions about the result table.
+ */
 export async function runSql(page: Page, sql: string): Promise<string> {
   const editor = page.locator('textarea').first()
   await editor.click()
@@ -88,7 +92,7 @@ export async function runSql(page: Page, sql: string): Promise<string> {
   await page.keyboard.press('Control+Enter')
   await expect(page.getByText(/Results \(|Error:/).first()).toBeVisible()
   await page.waitForTimeout(600)
-  return page.locator('body').innerText()
+  return page.getByRole('main').innerText()
 }
 
 /**
