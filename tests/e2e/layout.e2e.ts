@@ -44,8 +44,13 @@ test.describe('resizable panes', () => {
     expect(await packetListWidth(page)).toBeLessThan(before)
 
     await divider.dblclick()
-    // The packet list's default share is 60%, so its default columns fit.
-    const initial = await page.evaluate(() => Math.round(window.innerWidth * 0.6))
+    // The packet list's default share is 60% of the split it sits in — the
+    // view area, which no longer spans the window now that the sessions
+    // column is beside it.
+    const initial = await page.evaluate(() => {
+      const split = document.querySelector('table[role="grid"]')?.closest('div.flex.flex-col')?.parentElement
+      return Math.round((split?.getBoundingClientRect().width ?? 0) * 0.6)
+    })
     expect(Math.abs((await packetListWidth(page)) - initial)).toBeLessThan(40)
   })
 
