@@ -11,10 +11,10 @@ test.describe('deep links and reloads', () => {
     await loadSample(page)
   })
 
-  for (const path of ['neighbors', 'routes', 'sql']) {
+  for (const path of ['sessions', 'routes', 'sql']) {
     test(`opening /${path} directly stays there`, async ({ page }) => {
       await page.goto(`./${path}`, { waitUntil: 'networkidle' })
-      // Neighbors and Routes add the row they open on to the query string.
+      // Routes adds the row it opens on to the query string.
       await expect(page).toHaveURL(new RegExp(`/${path}(\\?|$)`))
     })
   }

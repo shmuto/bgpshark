@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { openSessionsTab } from './helpers'
 
 /**
  * Japanese UI localization & language switcher.
@@ -64,11 +65,10 @@ test.describe('header language toggle across screens', () => {
     await expect(page.getByText('トラブルシューティングのヒント')).toBeVisible()
     await expect(page.getByText('エラーコード')).toBeVisible()
 
-    // Neighbors: router table + Capability Diff
-    await page.getByRole('link', { name: 'ネイバー', exact: true }).click()
-    await page.waitForURL(/\/neighbors/)
-    await expect(page.getByRole('heading', { name: 'ネイバー一覧' })).toBeVisible()
-    await expect(page.getByText('メッセージ集計')).toBeVisible()
+    // Sessions: session table, then one session's OPEN comparison
+    await openSessionsTab(page, '1.1.1.1')
+    await expect(page.getByText('OPEN の比較', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'すべてのセッションを表示' }).click()
 
     // Routes: search match modes + route history
     await page.getByRole('link', { name: '経路', exact: true }).click()

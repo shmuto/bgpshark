@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { loadSample } from './helpers'
+import { loadSample, openSessionsTab } from './helpers'
 
 const COMPACT = { width: 480, height: 900 }
 
@@ -91,19 +91,18 @@ test.describe('compact viewport', () => {
     await expect(page.getByRole('heading', { name: 'Prefix Statistics' })).toBeVisible()
   })
 
-  test('the neighbors screen swaps the same way', async ({ page }) => {
-    await page.goto('./neighbors', { waitUntil: 'networkidle' })
-    await page.locator('tbody tr').first().click()
-    await expect(page.getByText('Message Summary')).toBeVisible()
+  test('the sessions tab opens a session and goes back to the table', async ({ page }) => {
+    await openSessionsTab(page, '1.1.1.1')
+    await expect(page.getByText('OPEN comparison', { exact: true })).toBeVisible()
 
-    await page.getByRole('button', { name: /Back to routers/i }).click()
-    await expect(page.getByRole('columnheader', { name: /Router ID/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Show all sessions' }).click()
+    await expect(page.getByRole('columnheader', { name: 'Session' })).toBeVisible()
   })
 
   test('the navigation is still reachable and nothing overflows sideways', async ({ page }) => {
     await expect(page.getByRole('link', { name: 'SQL', exact: true })).toBeVisible()
 
-    for (const path of ['messages', 'neighbors', 'routes', 'sql']) {
+    for (const path of ['messages', 'sessions', 'routes', 'sql']) {
       await page.goto(`./${path}`, { waitUntil: 'networkidle' })
       const overflows = await page.evaluate(
         () => document.documentElement.scrollWidth > document.documentElement.clientWidth

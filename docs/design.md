@@ -85,13 +85,13 @@ Path Identifiers are retained per prefix and displayed on packet detail chips an
 #### 2.1.8 Analysis Views
 - **Workspace (`src/components/workspace/`):** The analysis views below are tabs of one workspace. Its left column lists the capture's **Sessions** (address pairs, worst finding per session) and its **Findings** (alerts folded by kind, §2.1.14). Choosing a session sets the workspace **scope** (opening a finding does not; its link already filters to the session, and the findings list stays whole so its instances can be stepped through): Messages and Routes show only that session's packets, and Findings only that session's findings plus those with no session. The scope is held by the workspace layout, so it survives tab changes and is dropped with the capture. Findings are computed in memory, so they stay available without DuckDB. A freshly loaded capture lands on Messages (a deep link's original destination is still honoured); `/dashboard` redirects there, keeping its query string.
 - **Message Explorer (`/messages`):** Filter bar, virtualized packet list, detail view, hex dump, and filtered `.pcap` export.
-- **Neighbor Analysis (`/neighbors`):** Sessions grouped by Router ID, session event summary, and Capability Diff (§2.1.10).
+- **Sessions (`/sessions`):** With no session chosen, a table of every session (state at end of capture, message counts, worst finding). With one chosen, its OPEN comparison (§2.1.10), negotiated hold time, per-direction prefix counts, and its OPEN/NOTIFICATION events (or every message). Old `/neighbors?router=&peer=` links redirect here and choose the session they named.
 - **Route Analysis (`/routes`):** Per-prefix announce/withdraw history, flap counts, AS_PATH analysis, and best-path attribute columns (shown only when present on the selected route; `ORIGIN` shown only when values differ).
 - **SQL Console (`/sql`):** Ad-hoc SQL queries against DuckDB WASM with schema sidebar and templates.
 - **Capture Builder (`/build`):** §2.1.12.
 - **User Manual (`/manual`):** §2.1.13.
 
-Screen state is synchronized with URL query parameters (`?filter=`, `?selected=`, `?frame=`, `?all=1`, `?router=`, `?peer=`, and route search/sort/mode).
+Screen state is synchronized with URL query parameters (`?filter=`, `?selected=`, `?frame=`, `?all=1`, and route search/sort/mode).
 
 #### 2.1.9 Filtering
 One always-visible query box with autocomplete (focused by `/` or Ctrl/⌘+K), plus a **+ Filter** popover that builds a condition from menus and appends it to the box, so the text on screen is always the filter in effect. Packet-detail values (addresses, prefixes, ASNs, next hops, communities) offer "add to filter" / "filter on". Grammar: `field (= | == | != | contains | not contains | < | <= | > | >=) value`, combined with `and`, `or`, `not`, and parentheses. Ordered operators apply to numeric fields only.
@@ -101,7 +101,7 @@ One always-visible query box with autocomplete (focused by `/` or Ctrl/⌘+K), p
 Expressions parse once into an AST (`src/lib/filter/parser.ts`) and run either via DuckDB SQL (`src/lib/db/filter-to-sql.ts`) or in memory when DuckDB is unavailable. Optional numeric attributes (`med`, `local_pref`) are never coerced to `0`: an UPDATE lacking the attribute matches no comparison on that field in either backend.
 
 #### 2.1.10 Capability Diff (`src/components/neighbor/CapabilityDiff.tsx`)
-Selecting a router and then a session on `/neighbors` compares the two OPEN messages side by side:
+Choosing a session (the workspace scope) shows its two latest OPEN messages side by side on `/sessions`:
 - Compares session header fields first (version mismatch, duplicate BGP Identifier, and inconsistent 2-byte/4-byte AS are errors; differing Hold Time is informational).
 - Compares capabilities as a three-state diff (both, local only, remote only) with both icon and text label, sorting mismatches before matches. Multiprotocol Extensions and ADD-PATH are compared per AFI/SAFI pair and deduplicated within each OPEN.
 - Renders an **ADD-PATH Result** section when both OPENs are present and at least one peer advertises ADD-PATH, reporting the crosswise send/receive outcome per direction and AFI/SAFI via `addPathDirections` (`src/lib/bgp/session.ts`).
@@ -255,7 +255,7 @@ AppContext (React)             db/loader.ts → DuckDB WASM (Arrow IPC)
         ▼                              ▼
 Pages & Components             db/queries.ts
   - Workspace, Messages,         - getMatchingFrameIndexes(filter)
-    Neighbors, Routes, SQL       - executeRawSql(sql)
+    Sessions, Routes, SQL        - executeRawSql(sql)
 ```
 
 If DuckDB WASM fails to initialize, filtering automatically falls back to `src/lib/filter/parser.ts` and all screens except the SQL Console remain usable.

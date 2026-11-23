@@ -14,7 +14,7 @@ Inspect OPEN, UPDATE, NOTIFICATION, KEEPALIVE, and ROUTE-REFRESH messages withou
 - **EVPN decoding** — Decodes MAC/IP Advertisement and Inclusive Multicast routes (RD, MAC, VNI, ESI) and identifies other EVPN route types.
 - **Investigation workspace** — Every view shares a sessions list and a findings list that folds alerts by kind (one hard reset across three sessions is one finding, not sixteen rows). Pick a session to narrow every view to it.
 - **Message Explorer** — Packet list, hierarchical message detail, hex dump, and filtered pcap export.
-- **Neighbor Analysis** — Sessions grouped by Router ID with side-by-side OPEN / capability diffs and ADD-PATH negotiation results.
+- **Sessions** — Every session (address pair) with its end-of-capture state; choose one for a side-by-side OPEN / capability diff, ADD-PATH negotiation results, per-direction prefix counts, and its OPEN/NOTIFICATION events.
 - **Route Analysis** — Per-prefix announce/withdraw history, flap counts, and best-path attributes (AS_PATH, Next Hop, MED, LOCAL_PREF, communities).
 - **SQL Console** — Query the capture directly in the browser with DuckDB WASM.
 - **Filter expressions** — one Wireshark-style query box (e.g. `type = NOTIFICATION and ip = 10.0.0.1`, or just `10.0.0.1`) with autocomplete, a menu-driven **+ Filter**, and apply-as-filter from packet details and CIDR-aware prefix matching. See the in-app manual ([`src/pages/manual/manual.md`](src/pages/manual/manual.md)) for the full filter reference.

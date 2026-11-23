@@ -56,8 +56,8 @@ test.describe('moving between screens', () => {
     await page.locator('tbody [role="row"]').nth(2).click()
     const frame = (await page.locator('tbody [role="row"]').nth(2).locator('td').first().textContent())?.trim()
 
-    await page.getByRole('link', { name: 'Neighbors', exact: true }).click()
-    await page.waitForURL('**/neighbors**')
+    await page.getByRole('link', { name: 'Sessions', exact: true }).click()
+    await page.waitForURL('**/sessions**')
     await page.getByRole('link', { name: 'Messages', exact: true }).click()
 
     await expect(page).toHaveURL(/filter=/)

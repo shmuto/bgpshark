@@ -700,3 +700,21 @@ export function addPathCapture(sendReceive: 'both' | 'send' = 'both'): Buffer {
   })
   return Buffer.from(built.bytes)
 }
+
+/**
+ * Opens the Sessions tab and waits for its table. The tab is loaded on demand,
+ * and until it arrives the previous tab — often the packet list, which also
+ * has table rows — is still on screen.
+ */
+export async function openSessionsTab(page: Page, sessionName?: string) {
+  await page.getByRole('link', { name: /^(Sessions|セッション)$/ }).click()
+  await page.waitForURL('**/sessions**')
+  const sessionTable = page.getByRole('main').locator('table').filter({
+    has: page.getByRole('columnheader', { name: /^(Session|セッション)$/ }),
+  })
+  await expect(sessionTable).toBeVisible()
+  if (sessionName !== undefined) {
+    await sessionTable.locator('tbody tr').filter({ hasText: sessionName }).click()
+  }
+  return sessionTable
+}

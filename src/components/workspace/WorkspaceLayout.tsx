@@ -87,8 +87,8 @@ function WorkspaceTabs({ onOpenRail }: { onOpenRail?: () => void }) {
       )}
       <nav aria-label={t.nav.captureAria} className="flex min-w-0 items-stretch overflow-x-auto">
         <Tab to="/messages">{t.nav.messages}</Tab>
+        <Tab to="/sessions">{t.nav.sessions}</Tab>
         <Tab to="/routes">{t.nav.routes}</Tab>
-        <Tab to="/neighbors">{t.nav.neighbors}</Tab>
         <Tab to="/sql">{t.nav.sql}</Tab>
       </nav>
       {/* The scope is said once, here, rather than in every view: it is the

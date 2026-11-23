@@ -1,5 +1,4 @@
 export { FileUploadPage } from './FileUploadPage'
-export { NeighborsPage } from './NeighborsPage'
 export { MessagesPage } from './MessagesPage'
 export { RoutesPage } from './RoutesPage'
 export { SqlConsolePage } from './SqlConsolePage'

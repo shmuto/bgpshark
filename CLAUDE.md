@@ -44,7 +44,7 @@ CHROMIUM_PATH=/path/to/chromium bun run test:e2e
 - **Type-checking covers scripts:** `tsconfig.json` includes `src`, `tests`, and `testlab`, so `bun run build` validates test and lab scripts too.
 - **Comments explain *why*:** Preserve and match the codebase's existing docblocks explaining module rationale and prevented failure modes.
 - **UI navigation notes for debugging:**
-  - **Capability Diff** appears only after selecting **Neighbors → router → session**.
+  - **Capability Diff** appears on the **Sessions** tab once a session is chosen (in the workspace's left column or the tab's own table); with none chosen the tab is a table of sessions.
   - **Filter errors** render next to the `"Showing N of M packets"` counter and leave the list unfiltered.
   - **TCP-level frames** (`SYN`, `RST`, `FIN`) appear only when the packet list is switched to **All Packets**.
 

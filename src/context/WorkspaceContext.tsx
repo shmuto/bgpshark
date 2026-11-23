@@ -1,4 +1,5 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useLocation } from 'react-router-dom'
 import { useApp } from './AppContext'
 import { useI18n } from '../i18n'
 import { computeAlerts, computeTransportAlerts } from '../components/dashboard/alerts'
@@ -115,6 +116,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const { packets, allPackets } = useApp()
   const { locale } = useI18n()
   const [scope, setScope] = useState<string | null>(null)
+
+  // A link can open the workspace on a session by carrying it in navigation
+  // state (`{ scope: key }`) — how old /neighbors links keep their meaning.
+  const requestedScope = (useLocation().state as { scope?: string } | null)?.scope
+  useEffect(() => {
+    if (requestedScope) setScope(requestedScope)
+  }, [requestedScope])
 
   const alerts = useMemo(
     () =>
