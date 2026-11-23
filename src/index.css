@@ -309,9 +309,11 @@
   /* `h-auto` is load-bearing: the width and height attributes on these images
      are there so the browser reserves the right box before a lazily loaded
      screenshot arrives, and without it the fixed height would win and squash
-     them. */
+     them. `max-w-full` rather than `w-full`: a narrow shot such as the
+     findings column stays at its own width instead of being blown up to the
+     width of the text. */
   .manual-prose img {
-    @apply h-auto w-full rounded-lg border border-hair-strong shadow-sm;
+    @apply h-auto max-w-full rounded-lg border border-hair-strong shadow-sm;
   }
 
   .manual-prose figcaption {

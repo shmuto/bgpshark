@@ -47,7 +47,6 @@ export const en = {
 
   common: {
     backToList: 'Back to list',
-    backToRouters: 'Back to routers',
     resizePanes: 'Resize panes',
     resizeHint: 'Drag to resize, double-click to reset',
     error: 'Error',
@@ -240,8 +239,6 @@ export const en = {
     showLabel: 'Show:',
     bgpOnly: 'BGP Only',
     allPackets: 'All Packets',
-    clearFilterTitle: 'Clear filter',
-    filterToTypeTitle: (type: string) => `Filter to ${type} messages`,
     noBgpBanner: (count: number) =>
       `⚠ No BGP messages in this capture, but it contains ${count} other packets (TCP handshakes, resets, …).`,
     showAllPackets: 'Show all packets',

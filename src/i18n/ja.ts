@@ -49,7 +49,6 @@ export const ja: Messages = {
 
   common: {
     backToList: '一覧へ戻る',
-    backToRouters: 'ルータ一覧へ戻る',
     resizePanes: 'ペインの幅を調整',
     resizeHint: 'ドラッグで幅を調整、ダブルクリックでリセット',
     error: 'エラー',
@@ -223,8 +222,6 @@ export const ja: Messages = {
     showLabel: '表示:',
     bgpOnly: 'BGP のみ',
     allPackets: 'すべてのパケット',
-    clearFilterTitle: 'フィルタをクリア',
-    filterToTypeTitle: (type: string) => `${type} メッセージで絞り込む`,
     noBgpBanner: (count: number) =>
       `⚠ このキャプチャには BGP メッセージがありませんが、その他のパケット（TCP ハンドシェイクや RST など）が ${count} 件含まれています。`,
     showAllPackets: 'すべてのパケットを表示',

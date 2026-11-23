@@ -215,7 +215,11 @@ function instanceLabel(alert: DashboardAlert, group: FindingGroup): string {
   // Route rules filter on the route they are about, which is the subject.
   // The summary rows ("5 more prefixes flapped") have no single route.
   const subject = alert.filter.match(/^(?:prefix|mac) = (.+)$/)?.[1]
-  return subject && !alert.id.endsWith('-more') ? subject : alert.title
+  if (subject && !alert.id.endsWith('-more')) return subject
+  // Instances that share one title (withdrawal bursts) differ only in their
+  // detail, so the detail is what tells them apart.
+  if (group.alerts.every((other) => other.title === alert.title)) return alert.detail
+  return alert.title
 }
 
 /** The detail, less whatever the label already said. */
