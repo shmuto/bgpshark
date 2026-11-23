@@ -46,8 +46,11 @@ export async function loadCapture(page: Page, name: string, bytes: Buffer) {
 export async function showFindings(page: Page) {
   const rail = page.getByRole('complementary', { name: 'Sessions and findings' })
   await expect(rail.getByRole('heading', { name: /^Findings/ })).toBeVisible()
-  for (const group of await rail.locator('button[aria-expanded="false"]').all()) {
-    await group.click()
+  // Expanding a group removes it from this selector, so positional locators
+  // from `.all()` would shift under the loop; take the first one each time.
+  const collapsed = rail.locator('button[aria-expanded="false"]')
+  while ((await collapsed.count()) > 0) {
+    await collapsed.first().click()
   }
   return rail
 }
