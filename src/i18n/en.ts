@@ -128,6 +128,10 @@ export const en = {
     noFindings: 'No issues detected — every session looks healthy.',
     messageCount: (n: number) => `${n} msg${n === 1 ? '' : 's'}`,
     clearScope: 'Show all sessions',
+    wholeCapture: 'Whole capture',
+    dragToNarrow: 'Drag to narrow',
+    clearRange: 'Show all',
+    timeStripAria: 'Messages over time. Drag across it to narrow every view to that window.',
     severity: { critical: 'Critical', warning: 'Warning', info: 'Info' },
     groupSessions: (n: number) => (n === 0 ? 'Across the capture' : `${n} session${n === 1 ? '' : 's'}`),
     /** A group's heading; rules whose alert titles name a subject get a generic one. */

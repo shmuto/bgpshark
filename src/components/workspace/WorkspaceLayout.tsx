@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { WorkspaceProvider, useWorkspace } from '../../context/WorkspaceContext'
 import { SessionRail } from './SessionRail'
+import { TimeStrip } from './TimeStrip'
 import { useIsCompact } from '../../hooks/useMediaQuery'
 import { useI18n } from '../../i18n'
 
@@ -46,6 +47,7 @@ function Workspace() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <TimeStrip />
         <WorkspaceTabs onOpenRail={isCompact ? () => setRailOpen(true) : undefined} />
         <main className="flex min-h-0 flex-1 flex-col">
           <Outlet />

@@ -29,13 +29,26 @@ interface WorkspaceValue {
   setScope: (key: string | null) => void
   alerts: DashboardAlert[]
   sessions: SessionSummary[]
-  /** The capture's BGP packets, narrowed to the scope. */
+  /**
+   * The time window every view is narrowed to, as epoch milliseconds
+   * (inclusive), or null for the whole capture.
+   */
+  range: [number, number] | null
+  setRange: (range: [number, number] | null) => void
+  /** The capture's BGP packets, narrowed to the scope and the time window. */
   scopedPackets: BgpPacket[]
-  /** Every frame, narrowed to the scope. */
+  /** Every frame, narrowed to the scope and the time window. */
   scopedAllPackets: GenericPacket[]
+  /** The scope's BGP packets over the whole capture, for drawing the time strip. */
+  sessionPackets: BgpPacket[]
 }
 
 const WorkspaceContext = createContext<WorkspaceValue | null>(null)
+
+function inRange(timestamp: Date, [from, to]: [number, number]): boolean {
+  const ms = timestamp.getTime()
+  return ms >= from && ms <= to
+}
 
 const SEVERITY_RANK: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 }
 
@@ -136,18 +149,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [packets, allPackets, alerts]
   )
 
-  const scopedPackets = useMemo(
+  const [range, setRange] = useState<[number, number] | null>(null)
+
+  const sessionPackets = useMemo(
     () => (scope ? packets.filter((p) => peeringKey(p.srcIp, p.dstIp) === scope) : packets),
     [packets, scope]
   )
+  const scopedPackets = useMemo(
+    () => (range ? sessionPackets.filter((p) => inRange(p.timestamp, range)) : sessionPackets),
+    [sessionPackets, range]
+  )
   const scopedAllPackets = useMemo(
-    () => (scope ? allPackets.filter((p) => peeringKey(p.srcIp, p.dstIp) === scope) : allPackets),
-    [allPackets, scope]
+    () =>
+      scope || range
+        ? allPackets.filter(
+            (p) => (!scope || peeringKey(p.srcIp, p.dstIp) === scope) && (!range || inRange(p.timestamp, range))
+          )
+        : allPackets,
+    [allPackets, scope, range]
   )
 
   const value = useMemo(
-    () => ({ scope, setScope, alerts, sessions, scopedPackets, scopedAllPackets }),
-    [scope, alerts, sessions, scopedPackets, scopedAllPackets]
+    () => ({ scope, setScope, alerts, sessions, range, setRange, scopedPackets, scopedAllPackets, sessionPackets }),
+    [scope, alerts, sessions, range, scopedPackets, scopedAllPackets, sessionPackets]
   )
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
 }

@@ -130,6 +130,10 @@ export const ja: Messages = {
     noFindings: '問題は検出されませんでした。すべてのセッションは正常です。',
     messageCount: (n: number) => `${n} 件`,
     clearScope: 'すべてのセッションを表示',
+    wholeCapture: '全期間',
+    dragToNarrow: 'ドラッグで絞り込み',
+    clearRange: '全期間に戻す',
+    timeStripAria: '時間ごとのメッセージ数。ドラッグすると、全タブをその期間に絞り込みます。',
     severity: { critical: '重大', warning: '注意', info: '参考' },
     groupSessions: (n: number) => (n === 0 ? 'キャプチャ全体' : `${n} セッション`),
     groupTitle: (rule: string, firstTitle: string): string =>
