@@ -233,6 +233,9 @@ function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAler
       detail: t.morePrefixesFlappedDetail(restFlaps),
       timestamp: null,
       filter: 'type=UPDATE',
+      // The rows above count their flaps, so this one counts the rest's:
+      // the group's total is then every flap, not the listed ones plus one.
+      count: restFlaps,
     })
   }
 
@@ -317,6 +320,9 @@ function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAler
       detail: t.moreAsPathChangedDetail,
       timestamp: null,
       filter: 'type=UPDATE',
+      // Counted like the rows above (paths seen per route), for the same
+      // reason as the flap summary.
+      count: rest.reduce((sum, { change }) => sum + change.paths.length, 0),
     })
   }
 

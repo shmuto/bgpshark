@@ -180,7 +180,9 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
               next, so it is shown rather than left to a tooltip; clamped so a
               long explanation does not push the rest of the list away. */}
           <span
-            className={`mt-0.5 block text-[11px] text-muted ${single ? 'line-clamp-3' : 'truncate'}`}
+            // `line-clamp-*` sets its own display; `block` beside it would
+            // override that and let a long detail run to its full length.
+            className={`mt-0.5 text-[11px] text-muted ${single ? 'line-clamp-3' : 'block truncate'}`}
             title={single ? group.alerts[0].detail : undefined}
           >
             {single ? group.alerts[0].detail : t.workspace.groupSessions(group.peerings.length)}
@@ -201,23 +203,27 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
                 className="group block w-full py-1 pr-3 text-left text-[11px] text-muted"
                 title={alert.detail}
               >
+                {/* The label is the only part that may be cut short. The
+                    count sits outside it, and a time range gets its own line:
+                    beside the label it took most of the width and pushed both
+                    the prefix and its count out of sight. */}
                 <span className="flex items-baseline justify-between gap-2 group-hover:text-accent">
-                  <span className="min-w-0 truncate font-mono">
-                    {instanceLabel(alert, group)}
-                    {alert.count !== undefined && alert.count > 1 && (
-                      <span className="text-dim"> ×{alert.count}</span>
+                  <span className="flex min-w-0 items-baseline gap-1">
+                    <span className="min-w-0 truncate font-mono">{instanceLabel(alert, group)}</span>
+                    {/* A summary row's title and detail already give its size. */}
+                    {alert.count !== undefined && alert.count > 1 && !isSummary(alert) && (
+                      <span className="shrink-0 tabular-nums text-dim">×{alert.count}</span>
                     )}
                   </span>
-                  {alert.timeSpan ? (
-                    <span className="shrink-0 tabular-nums text-dim">{spanLabel(alert.timeSpan)}</span>
-                  ) : (
-                    alert.timestamp && (
-                      <span className="shrink-0 tabular-nums text-dim">{formatTimeOfDayUtc(alert.timestamp)}</span>
-                    )
+                  {!alert.timeSpan && alert.timestamp && (
+                    <span className="shrink-0 tabular-nums text-dim">{formatTimeOfDayUtc(alert.timestamp)}</span>
                   )}
                 </span>
+                {alert.timeSpan && (
+                  <span className="mt-px block tabular-nums text-dim">{spanLabel(alert.timeSpan)}</span>
+                )}
                 {instanceDetail(alert, group) && (
-                  <span className="mt-px block text-dim line-clamp-2">{instanceDetail(alert, group)}</span>
+                  <span className="mt-px text-dim line-clamp-2">{instanceDetail(alert, group)}</span>
                 )}
               </button>
             </li>
@@ -226,6 +232,11 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
       )}
     </div>
   )
+}
+
+/** The "N more prefixes …" rows that stand for the routes past the rule's limit. */
+function isSummary(alert: DashboardAlert): boolean {
+  return alert.id.endsWith('-more')
 }
 
 /** First to last occurrence of a repeated finding, in the packet list's clock. */
@@ -244,7 +255,7 @@ function instanceLabel(alert: DashboardAlert, group: FindingGroup): string {
   // Route rules filter on the route they are about, which is the subject.
   // The summary rows ("5 more prefixes flapped") have no single route.
   const subject = alert.filter.match(/^(?:prefix|mac) = (.+)$/)?.[1]
-  if (subject && !alert.id.endsWith('-more')) return subject
+  if (subject && !isSummary(alert)) return subject
   // Instances that share one title (withdrawal bursts) differ only in their
   // detail, so the detail is what tells them apart.
   if (group.alerts.every((other) => other.title === alert.title)) return alert.detail
