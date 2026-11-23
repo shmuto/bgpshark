@@ -105,8 +105,8 @@ test.describe('EVPN on the route history', () => {
     // The RD column is what says the move happened: same MAC, different leaf.
     expect(body).toContain('10.0.0.2:100')
     expect(body).toContain('10.0.0.1:100')
-    expect(body).toContain('🔴 Withdraw')
-    expect(body).toContain('🟢 Announce')
+    expect(body).toMatch(/\bWithdraw\b/)
+    expect(body).toMatch(/\bAnnounce\b/)
   })
 })
 

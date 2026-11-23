@@ -74,7 +74,7 @@ export function AddFilterPopover({ valuesFor, onAdd }: AddFilterPopoverProps) {
         <form
           onSubmit={submit}
           aria-label={t.messages.addFilterFormAria}
-          className="absolute right-0 top-full mt-1 z-30 bg-surface-raised border border-hair rounded-lg shadow-lg p-3 flex flex-col gap-2 w-72"
+          className="absolute right-0 top-full mt-1 z-30 bg-surface-raised border border-hair rounded shadow-lg p-3 flex flex-col gap-2 w-72"
         >
           <div className="flex items-center gap-2">
             <select

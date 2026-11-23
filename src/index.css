@@ -79,26 +79,26 @@
 @layer base {
   :root {
     /* Surfaces, furthest back to nearest */
-    --canvas: 250 250 251;
+    --canvas: 238 240 243;
     --surface: 255 255 255;
-    --surface-sunken: 244 244 246;
+    --surface-sunken: 245 246 248;
     --surface-raised: 255 255 255;
 
     /* Hairlines */
-    --hair: 228 228 233;
-    --hair-strong: 205 205 213;
+    --hair: 221 225 231;
+    --hair-strong: 197 203 212;
 
     /* Text, most to least prominent */
-    --text-strong: 23 23 26;
-    --text-body: 45 45 52;
-    --text-muted: 92 92 103;
-    --text-dim: 138 138 149;
+    --text-strong: 28 35 48;
+    --text-body: 43 51 66;
+    --text-muted: 91 101 117;
+    --text-dim: 138 147 162;
 
     /* Interactive */
-    --accent: 37 99 235;
-    --accent-hover: 29 78 216;
+    --accent: 43 98 217;
+    --accent-hover: 33 82 189;
     --accent-fg: 255 255 255;
-    --accent-subtle: 239 244 255;
+    --accent-subtle: 230 238 252;
 
     /* Foreground for text sitting on any solid, saturated fill (accent,
        critical, ok...). It flips with the theme because those fills darken in
@@ -106,20 +106,24 @@
     --on-solid: 255 255 255;
 
     /* BGP message types. These carry meaning, so they are the only colours
-       allowed to vary by content rather than by state. */
-    --msg-open: 22 163 74;
-    --msg-update: 37 99 235;
-    --msg-notification: 220 38 38;
-    --msg-keepalive: 147 51 234;
+       allowed to vary by content rather than by state. KEEPALIVE is a neutral
+       on purpose: it is most of the rows in most captures and the least
+       interesting, so it recedes and the rows that changed something stand
+       out. OPEN and NOTIFICATION share the ok and critical hues because they
+       are, in practice, a session coming up and a session going down. */
+    --msg-open: 31 138 76;
+    --msg-update: 43 98 217;
+    --msg-notification: 201 48 44;
+    --msg-keepalive: 138 147 162;
     --msg-route-refresh: 13 148 136;
 
     /* Severity */
-    --critical: 220 38 38;
-    --critical-subtle: 254 242 242;
-    --warning: 180 83 9;
-    --warning-subtle: 255 247 237;
-    --ok: 21 128 61;
-    --ok-subtle: 240 253 244;
+    --critical: 201 48 44;
+    --critical-subtle: 251 234 234;
+    --warning: 178 106 0;
+    --warning-subtle: 253 243 226;
+    --ok: 31 138 76;
+    --ok-subtle: 230 244 236;
 
     color-scheme: light;
   }
@@ -127,74 +131,74 @@
   /* Follow the OS unless the user explicitly chose light */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme='light']) {
-      --canvas: 12 13 17;
-      --surface: 20 22 28;
-      --surface-sunken: 16 18 24;
-      --surface-raised: 27 30 38;
+      --canvas: 15 19 25;
+      --surface: 22 27 35;
+      --surface-sunken: 27 33 43;
+      --surface-raised: 31 38 49;
 
-      --hair: 35 38 47;
-      --hair-strong: 51 55 67;
+      --hair: 38 46 58;
+      --hair-strong: 54 65 82;
 
-      --text-strong: 237 238 242;
-      --text-body: 214 216 223;
-      --text-muted: 158 162 173;
-      --text-dim: 108 112 121;
+      --text-strong: 223 228 236;
+      --text-body: 198 205 216;
+      --text-muted: 154 164 180;
+      --text-dim: 108 118 134;
 
-      --accent: 96 141 255;
-      --accent-hover: 129 173 255;
-      --accent-fg: 12 13 17;
-      --accent-subtle: 22 32 58;
-      --on-solid: 12 13 17;
+      --accent: 91 140 240;
+      --accent-hover: 126 166 245;
+      --accent-fg: 15 19 25;
+      --accent-subtle: 29 42 69;
+      --on-solid: 15 19 25;
 
-      --msg-open: 74 222 128;
-      --msg-update: 96 165 250;
-      --msg-notification: 248 113 113;
-      --msg-keepalive: 192 132 252;
+      --msg-open: 79 194 127;
+      --msg-update: 111 156 245;
+      --msg-notification: 240 112 106;
+      --msg-keepalive: 123 132 148;
       --msg-route-refresh: 45 212 191;
 
-      --critical: 248 113 113;
-      --critical-subtle: 45 21 24;
-      --warning: 251 191 36;
-      --warning-subtle: 43 32 15;
-      --ok: 74 222 128;
-      --ok-subtle: 17 38 26;
+      --critical: 240 112 106;
+      --critical-subtle: 58 31 34;
+      --warning: 227 164 71;
+      --warning-subtle: 58 46 26;
+      --ok: 79 194 127;
+      --ok-subtle: 23 49 38;
 
       color-scheme: dark;
     }
   }
 
   :root[data-theme='dark'] {
-    --canvas: 12 13 17;
-    --surface: 20 22 28;
-    --surface-sunken: 16 18 24;
-    --surface-raised: 27 30 38;
+    --canvas: 15 19 25;
+    --surface: 22 27 35;
+    --surface-sunken: 27 33 43;
+    --surface-raised: 31 38 49;
 
-    --hair: 35 38 47;
-    --hair-strong: 51 55 67;
+    --hair: 38 46 58;
+    --hair-strong: 54 65 82;
 
-    --text-strong: 237 238 242;
-    --text-body: 214 216 223;
-    --text-muted: 158 162 173;
-    --text-dim: 108 112 121;
+    --text-strong: 223 228 236;
+    --text-body: 198 205 216;
+    --text-muted: 154 164 180;
+    --text-dim: 108 118 134;
 
-    --accent: 96 141 255;
-    --accent-hover: 129 173 255;
-    --accent-fg: 12 13 17;
-    --accent-subtle: 22 32 58;
-    --on-solid: 12 13 17;
+    --accent: 91 140 240;
+    --accent-hover: 126 166 245;
+    --accent-fg: 15 19 25;
+    --accent-subtle: 29 42 69;
+    --on-solid: 15 19 25;
 
-    --msg-open: 74 222 128;
-    --msg-update: 96 165 250;
-    --msg-notification: 248 113 113;
-    --msg-keepalive: 192 132 252;
+    --msg-open: 79 194 127;
+    --msg-update: 111 156 245;
+    --msg-notification: 240 112 106;
+    --msg-keepalive: 123 132 148;
     --msg-route-refresh: 45 212 191;
 
-    --critical: 248 113 113;
-    --critical-subtle: 45 21 24;
-    --warning: 251 191 36;
-    --warning-subtle: 43 32 15;
-    --ok: 74 222 128;
-    --ok-subtle: 17 38 26;
+    --critical: 240 112 106;
+    --critical-subtle: 58 31 34;
+    --warning: 227 164 71;
+    --warning-subtle: 58 46 26;
+    --ok: 79 194 127;
+    --ok-subtle: 23 49 38;
 
     color-scheme: dark;
   }

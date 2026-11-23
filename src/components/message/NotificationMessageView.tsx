@@ -42,13 +42,13 @@ function HoldTimer({ context }: { context: HoldTimerContext }) {
     : null
 
   return (
-    <div className="rounded-lg border border-hair bg-surface-sunken p-3">
+    <div className="rounded border border-hair bg-surface-sunken p-3">
       <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-dim">
         {nt.silenceHeading}
       </h4>
 
       {line ? (
-        <div className="space-y-1 text-sm text-body">
+        <div className="space-y-1 text-xs text-body">
           <p>
             <span className="font-mono font-medium text-strong">{line.duration}</span>
             {line.afterDuration}
@@ -75,7 +75,7 @@ function HoldTimer({ context }: { context: HoldTimerContext }) {
           )}
         </div>
       ) : (
-        <p className="text-sm text-body">{nt.silenceNoneBefore(peer)}</p>
+        <p className="text-xs text-body">{nt.silenceNoneBefore(peer)}</p>
       )}
     </div>
   )
@@ -166,9 +166,9 @@ function DecodedData({ decoded }: { decoded: NotificationData }) {
 
 function Decoded({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-hair bg-surface-sunken p-3">
+    <div className="rounded border border-hair bg-surface-sunken p-3">
       <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-dim">{label}</h4>
-      <div className="text-sm text-body">{children}</div>
+      <div className="text-xs text-body">{children}</div>
     </div>
   )
 }
@@ -192,7 +192,7 @@ export function NotificationMessageView({ message, holdTimer }: NotificationMess
   return (
     <div className="space-y-3">
       {/* Error Info */}
-      <div className="bg-critical-subtle border border-critical/30 rounded-lg p-3 text-sm space-y-2">
+      <div className="bg-critical-subtle border border-critical/30 rounded p-3 text-xs space-y-2">
         <div className="flex justify-between">
           <span className="text-critical">{nt.errorCode}</span>
           <span className="font-mono font-medium text-critical">
@@ -213,7 +213,7 @@ export function NotificationMessageView({ message, holdTimer }: NotificationMess
 
       {/* Hint */}
       {hint && (
-        <div className="bg-accent-subtle border border-accent/30 rounded-lg p-3">
+        <div className="bg-accent-subtle border border-accent/30 rounded p-3">
           <div className="flex items-start gap-2">
             <svg
               className="w-5 h-5 text-accent flex-shrink-0 mt-0.5"
@@ -229,8 +229,8 @@ export function NotificationMessageView({ message, holdTimer }: NotificationMess
               />
             </svg>
             <div>
-              <h4 className="text-sm font-medium text-strong mb-1">{nt.troubleshootingHint}</h4>
-              <p className="text-sm text-body">{hint}</p>
+              <h4 className="text-xs font-medium text-strong mb-1">{nt.troubleshootingHint}</h4>
+              <p className="text-xs text-body">{hint}</p>
             </div>
           </div>
         </div>
@@ -242,7 +242,7 @@ export function NotificationMessageView({ message, holdTimer }: NotificationMess
       {/* Error Data */}
       {message.data.length > 0 && (
         <div>
-          <h4 className="text-sm font-medium text-strong mb-2">
+          <h4 className="text-xs font-medium text-strong mb-2">
             {nt.errorData(message.data.length)}
           </h4>
           <HexDump data={message.data} />

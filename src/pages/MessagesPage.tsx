@@ -731,9 +731,9 @@ function MessagesView() {
         {/* Packet Detail */}
         {showDetail && (
         <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 bg-surface">
-          <div className="px-4 py-2 bg-surface-sunken border-b border-hair flex items-center justify-between gap-2 shrink-0">
+          <div className="px-3 py-1.5 bg-surface-sunken border-b border-hair flex items-center justify-between gap-2 shrink-0">
             <BackToList onClick={() => selectPacket(null)} />
-            <span className="text-sm font-semibold text-strong truncate">
+            <span className="text-xs font-semibold text-strong truncate">
               {selectedPacketIndex !== null
                 ? t.messages.packetNumber(displayPackets[selectedPacketIndex]?.packet.frameIndex)
                 : t.messages.packetDetail}
@@ -765,7 +765,7 @@ function MessagesView() {
             ) : selectedGenericPacket ? (
               <GenericPacketDetail packet={selectedGenericPacket} />
             ) : (
-              <div className="flex items-center justify-center h-full text-dim text-sm">
+              <div className="flex items-center justify-center h-full text-dim text-xs">
                 {t.messages.selectPacket}
               </div>
             )}
@@ -793,10 +793,10 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
   }
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-3 space-y-3">
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-strong">{t.messages.networkLayer}</h3>
-        <div className="grid grid-cols-2 gap-2 text-sm">
+        <h3 className="text-xs font-semibold text-strong">{t.messages.networkLayer}</h3>
+        <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <span className="text-muted">{t.messages.sourceIp}</span>
             <span className="ml-2 font-mono">{packet.srcIp}</span>
@@ -809,8 +809,8 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-strong">{t.messages.transportLayer}</h3>
-        <div className="grid grid-cols-2 gap-2 text-sm">
+        <h3 className="text-xs font-semibold text-strong">{t.messages.transportLayer}</h3>
+        <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <span className="text-muted">{t.messages.protocol}</span>
             {/* Neutral on purpose: protocol is a category, and the severity
@@ -837,7 +837,7 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
           </div>
         </div>
         {packet.tcpFlags && (
-          <div className="text-sm">
+          <div className="text-xs">
             <span className="text-muted">{t.messages.tcpFlags}</span>
             <span className="ml-2 font-mono">{formatTcpFlags(packet.tcpFlags)}</span>
           </div>
@@ -845,8 +845,8 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-strong">{t.messages.frameInfo}</h3>
-        <div className="grid grid-cols-2 gap-2 text-sm">
+        <h3 className="text-xs font-semibold text-strong">{t.messages.frameInfo}</h3>
+        <div className="grid grid-cols-2 gap-2 text-xs">
           <div>
             <span className="text-muted">{t.messages.captured}</span>
             <span className="ml-2 font-mono">{t.common.bytes(packet.capturedLength)}</span>

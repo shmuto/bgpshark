@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { MessageTypeLabel } from './MessageTypeLabel'
 import type { BgpMessage, BgpPacket, BgpUpdateMessage } from '../../lib/bgp/types'
 import { endOfRibMarker, countUpdatePrefixes } from '../../lib/bgp/update'
 import {
@@ -124,22 +125,9 @@ const ALL_COLUMNS: ColumnDef[] = [
     getValue: (dp) => {
       if (dp.kind === 'bgp') {
         const messages = dp.packet.messages
-        if (messages.length === 1) {
-          const typeClass = messageTypeColors[messages[0].type] ?? 'bg-surface-sunken text-muted'
-          return (
-            <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${typeClass}`}>
-              {messages[0].type}
-            </span>
-          )
-        }
-        // Multiple messages - show count and primary type
-        const primaryType = messages[0].type
-        const typeClass = messageTypeColors[primaryType] ?? 'bg-surface-sunken text-muted'
-        return (
-          <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${typeClass}`}>
-            {primaryType} +{messages.length - 1}
-          </span>
-        )
+        // Several messages in one segment: the first names the row, the
+        // count says there is more.
+        return <MessageTypeLabel type={messages[0].type} extra={messages.length - 1} />
       }
       // For generic packets, show TCP flags if available
       if (dp.packet.tcpFlags) {
@@ -278,25 +266,10 @@ interface PacketListProps {
   visibleColumns: ColumnId[]
 }
 
-// Message-type badges use a tinted background derived from the message colour
-// itself (opacity modifier) rather than a solid fill: the msg-* tokens are
-// calibrated as *text* colours that stay legible on the canvas in both
-// palettes (e.g. msg-open flips from a dark green in light mode to a bright
-// green in dark mode). A solid fill with a fixed white foreground would lose
-// contrast in dark mode once the token brightens, so text stays the message
-// colour and only the background gets a low-opacity tint of the same colour.
-const messageTypeColors: Record<string, string> = {
-  OPEN: 'bg-bgp-open/15 text-bgp-open',
-  UPDATE: 'bg-bgp-update/15 text-bgp-update',
-  NOTIFICATION: 'bg-bgp-notification/15 text-bgp-notification',
-  KEEPALIVE: 'bg-bgp-keepalive/15 text-bgp-keepalive',
-  ROUTE_REFRESH: 'bg-bgp-route-refresh/15 text-bgp-route-refresh',
-}
-
 // Virtualization tuning. Row/header heights are measured from the live DOM
 // once rows exist; these are just first-paint estimates so the initial
 // windowed range is roughly right before real measurements land.
-const ESTIMATED_ROW_HEIGHT = 29
+const ESTIMATED_ROW_HEIGHT = 25
 const ESTIMATED_HEADER_HEIGHT = 33
 const OVERSCAN_ROWS = 8
 
@@ -546,6 +519,7 @@ export function PacketList({
                   cursor-pointer border-b border-hair transition-colors duration-300
                   ${isHighlighted ? 'animate-flash' : ''}
                   ${isSelected ? 'bg-accent-subtle' : isBgp ? 'hover:bg-surface-sunken' : 'bg-surface-sunken/50 hover:bg-surface-raised'}
+                  ${!isSelected && isKeepaliveOnly(dp) ? 'text-dim' : ''}
                 `}
               >
                 {columns.map((col) => (
@@ -566,4 +540,12 @@ export function PacketList({
 
     </div>
   )
+}
+
+/**
+ * KEEPALIVE-only rows are set back a step: they are most of the rows in most
+ * captures, and the question is almost always about the ones between them.
+ */
+function isKeepaliveOnly(dp: DisplayPacket): boolean {
+  return dp.kind === 'bgp' && dp.packet.messages.every((m) => m.type === 'KEEPALIVE')
 }

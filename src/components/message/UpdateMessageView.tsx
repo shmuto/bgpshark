@@ -69,7 +69,7 @@ export function UpdateMessageView({ message }: UpdateMessageViewProps) {
   const showWithdrawn = plainWithdrawn.length > 0
 
   return (
-    <div data-testid="update-message" className="bg-surface-sunken rounded-lg border border-hair text-sm divide-y divide-hair">
+    <div data-testid="update-message" className="bg-surface-sunken rounded border border-hair text-xs divide-y divide-hair">
       {/* An UPDATE that announces and withdraws nothing is the End-of-RIB
           marker (RFC 4724) — the landmark of a finished initial
           advertisement. Without the label it reads as a puzzling no-op. */}
@@ -290,7 +290,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
       return (
         <div className="flex flex-wrap gap-1 mt-1">
           {parsed.communities.map((comm, i) => (
-            <span key={i} className="font-mono text-xs bg-bgp-keepalive/15 text-bgp-keepalive px-1.5 py-0.5 rounded">
+            <span key={i} className="font-mono text-xs bg-surface-sunken text-body px-1.5 py-0.5 rounded">
               <FilterableValue field="community" value={comm} />
             </span>
           ))}
@@ -310,7 +310,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
                   ? 'bg-accent-subtle text-accent'
                   : comm.unknown
                     ? 'bg-surface-sunken text-muted'
-                    : 'bg-bgp-keepalive/15 text-bgp-keepalive'
+                    : 'bg-surface-sunken text-body'
               }`}
               title={comm.transitive ? undefined : ut.nonTransitiveTitle}
             >
@@ -325,7 +325,7 @@ function ParsedAttributeValue({ parsed }: { parsed: NonNullable<BgpPathAttribute
       return (
         <div className="flex flex-wrap gap-1 mt-1">
           {parsed.communities.map((comm, i) => (
-            <span key={i} className="font-mono text-xs bg-bgp-keepalive/15 text-bgp-keepalive px-1.5 py-0.5 rounded">
+            <span key={i} className="font-mono text-xs bg-surface-sunken text-body px-1.5 py-0.5 rounded">
               <FilterableValue field="community" value={`${comm.globalAdmin}:${comm.localData1}:${comm.localData2}`} />
             </span>
           ))}
@@ -412,7 +412,7 @@ function EvpnRouteTable({ routes, tone }: { routes: EvpnRoute[]; tone: 'announce
   const toneClass = tone === 'announced' ? 'text-ok' : 'text-critical line-through'
 
   return (
-    <div className="rounded-lg border border-hair overflow-x-auto">
+    <div className="rounded border border-hair overflow-x-auto">
       <table className="w-full text-xs">
         <thead className="bg-surface-sunken text-muted">
           <tr className="text-left">

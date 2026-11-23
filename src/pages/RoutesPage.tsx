@@ -402,7 +402,7 @@ export function RoutesPage() {
                 if (!e.target.value.trim()) updateParams({ q: null })
               }}
               placeholder={rt.searchPlaceholder}
-              className="w-full pl-8 pr-8 py-1.5 border border-hair-strong rounded focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-sm font-mono placeholder:font-sans placeholder:text-dim"
+              className="w-full pl-8 pr-8 py-1.5 border border-hair-strong rounded focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent text-xs font-mono placeholder:font-sans placeholder:text-dim"
             />
             {searchDraft && (
               <button
@@ -425,12 +425,12 @@ export function RoutesPage() {
                 questions about the block typed, not one question with a
                 modifier on it. */}
             <div role="radiogroup" aria-label={rt.matchLabel} className="flex items-center gap-2">
-              <span className="text-sm text-muted">{rt.matchLabel}</span>
+              <span className="text-xs text-muted">{rt.matchLabel}</span>
               {/* The focus ring goes round the whole control rather than the
                   segment: the segments are clipped to the rounded corners, so
                   an outline on one of them would be cut off, and arrow keys
                   move between them anyway. */}
-              <div className="flex rounded-lg border border-hair-strong overflow-hidden has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
+              <div className="flex rounded border border-hair-strong overflow-hidden has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
                 {matchModes.map(mode => (
                   <label
                     key={mode.value}
@@ -448,7 +448,7 @@ export function RoutesPage() {
                       onChange={() => setMatchMode(mode.value)}
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer peer"
                     />
-                    <span className="block px-3 py-1 text-sm text-muted hover:bg-surface-sunken peer-checked:bg-accent peer-checked:text-accent-fg">
+                    <span className="block px-3 py-1 text-xs text-muted hover:bg-surface-sunken peer-checked:bg-accent peer-checked:text-accent-fg">
                       {mode.label}
                     </span>
                   </label>
@@ -463,15 +463,15 @@ export function RoutesPage() {
       </div>
 
       {/* Main Content */}
-      <div ref={split.containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0 p-4 gap-4 lg:gap-0">
+      <div ref={split.containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0 p-2 gap-2 lg:gap-0">
         {/* Prefix Statistics */}
         {showList && (
         <div
-          className="w-full flex-1 lg:flex-none bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0"
+          className="w-full flex-1 lg:flex-none bg-surface border border-hair flex flex-col min-h-0"
           style={isCompact ? undefined : { width: `calc(${split.percent}% - 0.5rem)` }}
         >
-          <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
-            <h2 className="font-semibold text-strong">{rt.prefixStatistics}</h2>
+          <div className="px-3 py-2 border-b border-hair flex items-center gap-2 shrink-0">
+            <h2 className="text-xs font-semibold text-strong">{rt.prefixStatistics}</h2>
             {peerFilter.length > 0 && (
               <button
                 onClick={() => updateParams({ peer: null })}
@@ -484,7 +484,7 @@ export function RoutesPage() {
             <span className="text-xs text-muted ml-auto">{rt.prefixesCount(filteredPrefixes.length)}</span>
           </div>
           <div ref={rows.containerRef} onScroll={rows.onScroll} className="flex-1 overflow-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-xs">
               <thead ref={rows.measureHeaderRef} className="bg-surface-sunken sticky top-0">
                 <tr className="text-left text-muted">
                   <SortableHeader column="prefix" {...{ sortColumn, sortDirection, toggleSort }}>
@@ -523,13 +523,13 @@ export function RoutesPage() {
                       selectedPrefix === stat.key ? 'bg-accent-subtle' : ''
                     }`}
                   >
-                    <td className="px-4 py-2 font-mono text-strong">{stat.key}</td>
-                    <td className="px-4 py-2 text-right text-ok">{stat.announced}</td>
-                    <td className="px-4 py-2 text-right text-critical">{stat.withdrawn}</td>
-                    <td className="px-4 py-2 text-right font-mono text-muted">
+                    <td className="px-3 py-1 font-mono text-strong">{stat.key}</td>
+                    <td className="px-3 py-1 text-right text-ok">{stat.announced}</td>
+                    <td className="px-3 py-1 text-right text-critical">{stat.withdrawn}</td>
+                    <td className="px-3 py-1 text-right font-mono text-muted">
                       {formatTimeOfDayUtc(stat.lastSeen)}
                     </td>
-                    <td className="px-4 py-2 text-right">
+                    <td className="px-3 py-1 text-right">
                       <span className={stat.flap > 10 ? 'text-warning font-medium' : 'text-muted'}>
                         {stat.flap}
                         {stat.flap > 10 && ' ⚠'}
@@ -569,21 +569,21 @@ export function RoutesPage() {
             AS_PATH Analysis included — past the right edge of the window,
             instead of scrolling inside the table's own container. */}
         {showDetail && (
-        <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 gap-4 lg:ml-2">
-        <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 flex-1">
-          <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
+        <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 gap-2 lg:ml-1">
+        <div className="bg-surface border border-hair flex flex-col min-h-0 flex-1">
+          <div className="px-3 py-2 border-b border-hair flex items-center gap-2 shrink-0">
             <BackToList onClick={() => setSelectedPrefix(null)} />
-            <h2 className="font-semibold text-strong truncate">
+            <h2 className="text-xs font-semibold text-strong truncate">
               {rt.routeHistory(selectedPrefix)}
             </h2>
           </div>
           <div className="flex-1 overflow-auto">
             {selectedPrefixStats ? (
-              <table className="w-full text-sm">
+              <table className="w-full text-xs">
                 <thead className="bg-surface-sunken sticky top-0">
                   <tr className="text-left text-muted">
                     <th
-                      className="px-3 py-2 font-medium whitespace-nowrap"
+                      className="px-3 py-1.5 font-medium whitespace-nowrap"
                       aria-sort={historyOrder === 'asc' ? 'ascending' : 'descending'}
                     >
                       <button
@@ -595,12 +595,12 @@ export function RoutesPage() {
                         {rt.colTimeUtc} <span aria-hidden="true">{historyOrder === 'asc' ? '▲' : '▼'}</span>
                       </button>
                     </th>
-                    <th className="px-3 py-2 font-medium" title={rt.colDeltaTitle}>Δ</th>
-                    <th className="px-3 py-2 font-medium">{rt.colAction}</th>
-                    <th className="px-3 py-2 font-medium">AS_PATH</th>
+                    <th className="px-3 py-1.5 font-medium" title={rt.colDeltaTitle}>Δ</th>
+                    <th className="px-3 py-1.5 font-medium">{rt.colAction}</th>
+                    <th className="px-3 py-1.5 font-medium">AS_PATH</th>
                     {showPathIdColumn && (
                       <th
-                        className="px-3 py-2 font-medium"
+                        className="px-3 py-1.5 font-medium"
                         title={rt.colPathIdTitle}
                       >
                         {rt.colPathId}
@@ -608,17 +608,17 @@ export function RoutesPage() {
                     )}
                     {showRdColumn && (
                       <th
-                        className="px-3 py-2 font-medium"
+                        className="px-3 py-1.5 font-medium"
                         title={rt.colRdTitle}
                       >
                         RD
                       </th>
                     )}
-                    <th className="px-3 py-2 font-medium" title={rt.colFromTitle}>{rt.colFrom}</th>
-                    <th className="px-3 py-2 font-medium">{rt.colNextHop}</th>
+                    <th className="px-3 py-1.5 font-medium" title={rt.colFromTitle}>{rt.colFrom}</th>
+                    <th className="px-3 py-1.5 font-medium">{rt.colNextHop}</th>
                     {showMedColumn && (
                       <th
-                        className="px-3 py-2 font-medium"
+                        className="px-3 py-1.5 font-medium"
                         title={rt.colMedTitle}
                       >
                         MED
@@ -626,19 +626,19 @@ export function RoutesPage() {
                     )}
                     {showLocalPrefColumn && (
                       <th
-                        className="px-3 py-2 font-medium"
+                        className="px-3 py-1.5 font-medium"
                         title={rt.colLocalPrefTitle}
                       >
                         LOCAL_PREF
                       </th>
                     )}
                     {showOriginColumn && (
-                      <th className="px-3 py-2 font-medium" title={rt.colOriginTitle}>
+                      <th className="px-3 py-1.5 font-medium" title={rt.colOriginTitle}>
                         {rt.colOrigin}
                       </th>
                     )}
                     {showCommunitiesColumn && (
-                      <th className="px-3 py-2 font-medium">{rt.colCommunities}</th>
+                      <th className="px-3 py-1.5 font-medium">{rt.colCommunities}</th>
                     )}
                   </tr>
                 </thead>
@@ -657,47 +657,47 @@ export function RoutesPage() {
                       onClick={() => handleHistoryClick(event)}
                       className="cursor-pointer hover:bg-surface-sunken"
                     >
-                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
+                      <td className="px-3 py-1 font-mono text-muted whitespace-nowrap">
                         {formatTimeOfDayUtc(event.timestamp)}
                       </td>
-                      <td className="px-3 py-2 font-mono text-dim whitespace-nowrap">
+                      <td className="px-3 py-1 font-mono text-dim whitespace-nowrap">
                         {earlier ? formatDelta(event.timestamp.getTime() - earlier.timestamp.getTime()) : '-'}
                       </td>
-                      <td className="px-3 py-2 whitespace-nowrap">
+                      <td className="px-3 py-1 whitespace-nowrap">
                         {event.action === 'announce' ? (
                           <span className="text-ok">{rt.actionAnnounce}</span>
                         ) : (
                           <span className="text-critical">{rt.actionWithdraw}</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
+                      <td className="px-3 py-1 font-mono text-muted whitespace-nowrap">
                         {event.asPath ? formatAsPath(event.asPath) : '-'}
                       </td>
                       {showPathIdColumn && (
-                        <td className="px-3 py-2 font-mono text-muted">{event.pathId ?? '-'}</td>
+                        <td className="px-3 py-1 font-mono text-muted">{event.pathId ?? '-'}</td>
                       )}
                       {showRdColumn && (
-                        <td className="px-3 py-2 font-mono text-muted">{event.rd ?? '-'}</td>
+                        <td className="px-3 py-1 font-mono text-muted">{event.rd ?? '-'}</td>
                       )}
-                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">{event.source}</td>
-                      <td className="px-3 py-2 font-mono text-muted whitespace-nowrap">
+                      <td className="px-3 py-1 font-mono text-muted whitespace-nowrap">{event.source}</td>
+                      <td className="px-3 py-1 font-mono text-muted whitespace-nowrap">
                         {event.nextHop || '-'}
                       </td>
                       {/* `-` means the attribute was not on the UPDATE, which is
                           not the same as a value of zero — hence `?? '-'` rather
                           than a falsy check. */}
                       {showMedColumn && (
-                        <td className="px-3 py-2 font-mono text-muted">{event.med ?? '-'}</td>
+                        <td className="px-3 py-1 font-mono text-muted">{event.med ?? '-'}</td>
                       )}
                       {showLocalPrefColumn && (
-                        <td className="px-3 py-2 font-mono text-muted">{event.localPref ?? '-'}</td>
+                        <td className="px-3 py-1 font-mono text-muted">{event.localPref ?? '-'}</td>
                       )}
                       {showOriginColumn && (
-                        <td className="px-3 py-2 font-mono text-muted">{event.origin ?? '-'}</td>
+                        <td className="px-3 py-1 font-mono text-muted">{event.origin ?? '-'}</td>
                       )}
                       {showCommunitiesColumn && (
                         <td
-                          className="px-3 py-2 font-mono text-muted"
+                          className="px-3 py-1 font-mono text-muted"
                           title={event.communities?.join(' ')}
                         >
                           {event.communities?.join(' ') || '-'}
@@ -717,9 +717,9 @@ export function RoutesPage() {
         </div>
 
         {asPathVariants.length > 0 && (
-          <div className="bg-surface rounded-lg shadow-sm border border-hair flex flex-col min-h-0 shrink-0 max-h-64">
-            <div className="px-4 py-3 border-b border-hair flex items-center gap-2 shrink-0">
-              <h2 className="font-semibold text-strong">{rt.asPathAnalysis}</h2>
+          <div className="bg-surface border border-hair flex flex-col min-h-0 shrink-0 max-h-64">
+            <div className="px-3 py-2 border-b border-hair flex items-center gap-2 shrink-0">
+              <h2 className="text-xs font-semibold text-strong">{rt.asPathAnalysis}</h2>
               <span className="text-xs text-muted ml-auto">
                 {asPathVariants.length === 1
                   ? rt.singlePath
@@ -730,7 +730,7 @@ export function RoutesPage() {
               {asPathVariants.map((variant, idx) => (
                 <div
                   key={variant.path.join(' ')}
-                  className="flex items-center gap-2 flex-wrap text-sm"
+                  className="flex items-center gap-2 flex-wrap text-xs"
                 >
                   <div className="flex items-center gap-1 flex-wrap">
                     {collapsePrepends(variant.path).map((hop, i) => (
@@ -784,7 +784,7 @@ function SortableHeader({
   const active = column === sortColumn
 
   return (
-    <th className={`px-4 py-2 font-medium ${align === 'right' ? 'text-right' : ''}`}>
+    <th className={`px-3 py-1.5 font-medium ${align === 'right' ? 'text-right' : ''}`}>
       <button
         type="button"
         onClick={() => toggleSort(column)}

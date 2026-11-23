@@ -28,12 +28,12 @@ function RefreshDiff({
   const total = diff.added.length + diff.removed.length + diff.changed.length
 
   return (
-    <div className="rounded-lg border border-hair bg-surface-sunken p-3">
+    <div className="rounded border border-hair bg-surface-sunken p-3">
       <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-dim">
         {rt.heading}
       </h4>
 
-      <p className="text-sm text-body">
+      <p className="text-xs text-body">
         <span className="font-mono">{diff.peer}</span> {rt.reAdvertisedVerb} {diff.afiName}{' '}
         {diff.safiName}
         {total === 0 ? rt.nothingChanged(diff.unchanged) : rt.someChanged(diff.unchanged)}
@@ -66,10 +66,10 @@ function RefreshDiff({
           from a partial window is still worth showing — it is the only one
           available — but not without saying which half is partial. */}
       {diff.beforeIncomplete && (
-        <p className="mt-2 text-sm text-muted">{rt.beforeIncomplete}</p>
+        <p className="mt-2 text-xs text-muted">{rt.beforeIncomplete}</p>
       )}
       {diff.afterIncomplete && (
-        <p className="mt-2 text-sm text-muted">{rt.afterIncomplete}</p>
+        <p className="mt-2 text-xs text-muted">{rt.afterIncomplete}</p>
       )}
     </div>
   )
@@ -93,7 +93,7 @@ function ChangeList({
       <div className={`text-xs font-medium ${tone}`}>
         {title} ({changes.length})
       </div>
-      <ul className="mt-1 space-y-0.5 text-sm text-body">
+      <ul className="mt-1 space-y-0.5 text-xs text-body">
         {changes.map((change) => (
           <li key={`${title}-${change.key}`}>
             <button
@@ -118,7 +118,7 @@ export function RouteRefreshMessageView({
 }: RouteRefreshMessageViewProps) {
   return (
     <div className="space-y-3">
-      <div className="bg-bgp-route-refresh/10 border border-bgp-route-refresh/30 rounded-lg p-3 text-sm space-y-2 text-bgp-route-refresh">
+      <div className="bg-bgp-route-refresh/10 border border-bgp-route-refresh/30 rounded p-3 text-xs space-y-2 text-bgp-route-refresh">
         <div className="flex justify-between">
           <span>AFI</span>
           <span className="font-mono">

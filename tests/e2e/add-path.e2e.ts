@@ -36,9 +36,9 @@ test.describe('routes that arrived with a Path Identifier', () => {
     const history = page.locator('body')
     await expect(history).toContainText('Path ID')
     // Three events: two announces and the withdraw, each naming its path. The
-    // emoji keeps this off the Prefix Statistics header, which also has an
+    // word boundaries keep this off the Prefix Statistics header, which has an
     // "Announced" and a "Withdrawn" in it.
-    const rows = page.getByRole('row').filter({ hasText: /🟢 Announce|🔴 Withdraw/ })
+    const rows = page.getByRole('row').filter({ hasText: /\bAnnounce\b|\bWithdraw\b/ })
     await expect(rows).toHaveCount(3)
     await expect(rows.filter({ hasText: 'Withdraw' })).toContainText('2')
   })
