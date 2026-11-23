@@ -88,7 +88,7 @@ test.describe('a withdrawal opened from elsewhere', () => {
     await page.getByRole('link', { name: 'Routes', exact: true }).click()
     await page.getByText('1.1.1.1/32').first().click()
     await expect(page.getByRole('heading', { name: 'Route History: 1.1.1.1/32' })).toBeVisible()
-    await page.getByRole('row').filter({ hasText: /\bWithdraw\b/ }).first().click()
+    await page.getByRole('row').filter({ hasText: /Withdraw(?!n)/ }).first().click()
 
     await page.waitForURL('**/messages**')
     // Past the DuckDB debounce, so the answer is the database's.

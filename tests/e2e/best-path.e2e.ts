@@ -17,12 +17,9 @@ test.describe('the attributes a best path is settled with', () => {
     await page.getByRole('link', { name: 'Routes', exact: true }).click()
     await page.getByText('172.20.0.0/16').first().click()
 
-    // The panel, not just its heading: the nearest rounded-lg ancestor is the
-    // card, which is how `testlab/screenshots.ts` addresses these too.
-    const history = page
-      .getByText('Route History')
-      .first()
-      .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]')
+    // The panel, not just its heading: each Routes panel is a region named by
+    // its title, which is how `testlab/screenshots.ts` addresses them too.
+    const history = page.getByRole('region', { name: /^Route History/ })
     await expect(history).toBeVisible()
     const text = await history.innerText()
 

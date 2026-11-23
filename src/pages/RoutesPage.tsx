@@ -467,11 +467,13 @@ export function RoutesPage() {
         {/* Prefix Statistics */}
         {showList && (
         <div
+          role="region"
+          aria-labelledby="routes-prefix-statistics"
           className="w-full flex-1 lg:flex-none bg-surface border border-hair flex flex-col min-h-0"
           style={isCompact ? undefined : { width: `calc(${split.percent}% - 0.5rem)` }}
         >
           <div className="px-3 py-2 border-b border-hair flex items-center gap-2 shrink-0">
-            <h2 className="text-xs font-semibold text-strong">{rt.prefixStatistics}</h2>
+            <h2 id="routes-prefix-statistics" className="text-xs font-semibold text-strong">{rt.prefixStatistics}</h2>
             {peerFilter.length > 0 && (
               <button
                 onClick={() => updateParams({ peer: null })}
@@ -570,10 +572,10 @@ export function RoutesPage() {
             instead of scrolling inside the table's own container. */}
         {showDetail && (
         <div className="w-full flex-1 flex flex-col min-h-0 min-w-0 gap-2 lg:ml-1">
-        <div className="bg-surface border border-hair flex flex-col min-h-0 flex-1">
+        <div role="region" aria-labelledby="routes-history" className="bg-surface border border-hair flex flex-col min-h-0 flex-1">
           <div className="px-3 py-2 border-b border-hair flex items-center gap-2 shrink-0">
             <BackToList onClick={() => setSelectedPrefix(null)} />
-            <h2 className="text-xs font-semibold text-strong truncate">
+            <h2 id="routes-history" className="text-xs font-semibold text-strong truncate">
               {rt.routeHistory(selectedPrefix)}
             </h2>
           </div>
@@ -717,9 +719,9 @@ export function RoutesPage() {
         </div>
 
         {asPathVariants.length > 0 && (
-          <div className="bg-surface border border-hair flex flex-col min-h-0 shrink-0 max-h-64">
+          <div role="region" aria-labelledby="routes-as-path" className="bg-surface border border-hair flex flex-col min-h-0 shrink-0 max-h-64">
             <div className="px-3 py-2 border-b border-hair flex items-center gap-2 shrink-0">
-              <h2 className="text-xs font-semibold text-strong">{rt.asPathAnalysis}</h2>
+              <h2 id="routes-as-path" className="text-xs font-semibold text-strong">{rt.asPathAnalysis}</h2>
               <span className="text-xs text-muted ml-auto">
                 {asPathVariants.length === 1
                   ? rt.singlePath

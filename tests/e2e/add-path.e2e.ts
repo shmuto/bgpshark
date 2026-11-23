@@ -36,9 +36,10 @@ test.describe('routes that arrived with a Path Identifier', () => {
     const history = page.locator('body')
     await expect(history).toContainText('Path ID')
     // Three events: two announces and the withdraw, each naming its path. The
-    // word boundaries keep this off the Prefix Statistics header, which has an
-    // "Announced" and a "Withdrawn" in it.
-    const rows = page.getByRole('row').filter({ hasText: /\bAnnounce\b|\bWithdraw\b/ })
+    // lookaheads keep this off the Prefix Statistics header, which has an
+    // "Announced" and a "Withdrawn" in it. (Not word boundaries: a row's text
+    // runs its cells together, so the action follows "+3.4s" directly.)
+    const rows = page.getByRole('row').filter({ hasText: /Announce(?!d)|Withdraw(?!n)/ })
     await expect(rows).toHaveCount(3)
     await expect(rows.filter({ hasText: 'Withdraw' })).toContainText('2')
   })

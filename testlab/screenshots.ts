@@ -78,18 +78,18 @@ async function go(page: Page, screen: string): Promise<void> {
 }
 
 /**
- * The card a piece of text sits in.
+ * The panel a title belongs to.
  *
- * Every panel in this app is a `rounded-lg` surface with its title in the first
- * row, so the nearest such ancestor of the title is the panel. Addressing them
- * by their visible title rather than by a test id keeps this script honest: a
- * panel the manual names by a title it no longer has should fail here.
+ * Panels are regions named by their visible title, so the nearest region (or
+ * section) around the title is the panel. Addressing them by title rather than
+ * by a test id keeps this script honest: a panel the manual names by a title it
+ * no longer has should fail here.
  */
 function card(page: Page, title: string): Locator {
   return page
     .getByText(title, { exact: false })
     .first()
-    .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]')
+    .locator('xpath=ancestor::*[@role="region" or self::section][1]')
 }
 
 /** Types a filter expression and waits past the DuckDB debounce. */
