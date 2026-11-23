@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useWorkspace } from '../context/WorkspaceContext'
 import { useAutoSelectFirst } from '../hooks/useAutoSelectFirst'
 import { useIsCompact } from '../hooks/useMediaQuery'
 import { BackToList, PaneDivider } from '../components/common'
@@ -70,6 +71,10 @@ function isSortColumn(value: string | null): value is SortColumn {
 
 export function RoutesPage() {
   const { packets } = useApp()
+  // Narrowed to the session chosen in the workspace. History rows still have
+  // to open the right packet, and their indexes count from the scoped list, so
+  // they are mapped back to the capture's own index before linking.
+  const { scopedPackets } = useWorkspace()
   const { t } = useI18n()
   const rt = t.routes
   const navigate = useNavigate()
@@ -156,7 +161,7 @@ export function RoutesPage() {
 
   // The one pass over the capture. Searching and sorting work on the result, so
   // typing in the box or clicking a header never walks the packets again.
-  const prefixStats = useMemo(() => aggregatePrefixStats(packets), [packets])
+  const prefixStats = useMemo(() => aggregatePrefixStats(scopedPackets), [scopedPackets])
 
   /** Decide what kind of search the text is before matching anything against it. */
   const search = useMemo((): Search | null => {
@@ -302,7 +307,8 @@ export function RoutesPage() {
     const filter = selectedPrefix ? routeFilter(selectedPrefix) : null
     const params = new URLSearchParams()
     if (filter) params.set('filter', filter)
-    params.set('selected', String(event.packetIndex))
+    const index = packets.indexOf(scopedPackets[event.packetIndex])
+    params.set('selected', String(index >= 0 ? index : event.packetIndex))
     navigate(`/messages?${params.toString()}`)
   }
 

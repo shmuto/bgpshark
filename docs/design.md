@@ -83,7 +83,7 @@ Because AS width and ADD-PATH Path Identifiers are negotiated in OPEN and absent
 Path Identifiers are retained per prefix and displayed on packet detail chips and in the Route Analysis **Path ID** column.
 
 #### 2.1.8 Analysis Views
-- **Dashboard (`/dashboard`):** Where a freshly loaded capture lands (a deep link's original destination is still honoured). Summary counters, severity-sorted alerts (§2.1.14), neighbor table, and message timeline. Computed in memory so it stays functional without DuckDB.
+- **Workspace (`src/components/workspace/`):** The analysis views below are tabs of one workspace. Its left column lists the capture's **Sessions** (address pairs, worst finding per session) and its **Findings** (alerts folded by kind, §2.1.14). Choosing a session sets the workspace **scope**: Messages and Routes show only that session's packets, and Findings only that session's findings plus those with no session. The scope is held by the workspace layout, so it survives tab changes and is dropped with the capture. Findings are computed in memory, so they stay available without DuckDB. A freshly loaded capture lands on Messages (a deep link's original destination is still honoured); `/dashboard` redirects there, keeping its query string.
 - **Message Explorer (`/messages`):** Filter bar, virtualized packet list, detail view, hex dump, and filtered `.pcap` export.
 - **Neighbor Analysis (`/neighbors`):** Sessions grouped by Router ID, session event summary, and Capability Diff (§2.1.10).
 - **Route Analysis (`/routes`):** Per-prefix announce/withdraw history, flap counts, AS_PATH analysis, and best-path attribute columns (shown only when present on the selected route; `ORIGIN` shown only when values differ).
@@ -120,12 +120,14 @@ Embedded offline Help page outside `RequireCapture` so it is accessible before l
 - Headings (`h2`/`h3`) receive slug IDs (or explicit `{#id}` markers in Japanese) used to build the sidebar table of contents and support hash links such as `/manual#filters`. Both language manuals are verified by `tests/e2e/manual.e2e.ts` to publish the exact same ordered list of heading IDs.
 - Screenshots in `public/manual/` are shared across languages with localized captions and intrinsic dimensions injected at build time to prevent layout shifts with lazy loading.
 
-#### 2.1.14 Dashboard Alert Rules (`src/components/dashboard/alerts.ts`)
-Alerts are grouped **one row per problem** (not per packet) and sorted by severity, occurrence count, and recency. The panel shows the top five and folds the rest behind a **Show N more** toggle, so the neighbor table and timeline stay on the first screen.
+#### 2.1.14 Alert Rules (`src/components/dashboard/alerts.ts`)
+The rule engine reports **one alert per problem instance** (not per packet), sorted by severity (`critical`, `warning`, `info`), occurrence count, and recency. Every alert names the rule that produced it (`rule`) and, where it concerns one session, that session (`peering`).
+
+The workspace's **Findings** list then folds instances into **one row per kind of problem** (`groupFindings`, `src/components/dashboard/findings.ts`): alerts sharing a `groupKey` (default: the rule) form a group that ranks by its worst severity and expands to its instances. NOTIFICATIONs are keyed by code and subcode so different faults stay apart. Selecting a session narrows the list to that session's findings plus those with no session of their own (`alertsForPeering`). On the bundled sample, 16 instances fold into 4 rows.
 
 | Rule | Severity | Fires when | Must stay quiet about |
 |------|----------|------------|-----------------------|
-| NOTIFICATION | critical (warning for Cease / Connection Collision Resolution, 6/7) | Any NOTIFICATION, grouped by sender → receiver, code, and subcode | Collision resolution is RFC 4271 §6.8 behaviour, so it never ranks with the teardown that caused the reconnect |
+| NOTIFICATION | critical (info for Cease / Connection Collision Resolution, 6/7) | Any NOTIFICATION, grouped by sender → receiver, code, and subcode | Collision resolution is RFC 4271 §6.8 behaviour, so it is `info`: listed last and never marks a session as faulty |
 | Session flapping | warning | ≥ 4 OPENs between a peer pair | Single establishment; re-establishment after clean Cease; peerings fully accounted for by Graceful Restart |
 | Withdrawn burst | warning | ≥ 10 prefixes withdrawn within 10s | Steady-state withdrawals spread over time |
 | Route flapping | warning | Prefix withdrawn at least once per announcing peer (top 5 + summary row) | Stable routes never withdrawn |
@@ -223,7 +225,7 @@ No failure is allowed to silently display empty data:
 | `public/` | Static assets (`favicon.svg`, `sample.pcapng`, `THIRD-PARTY-LICENSES.txt`, `manual/*.png`) |
 | `docs/` | Technical design, DuckDB ADR, troubleshooting scenario assessment |
 | `src/pages/` | Route-level pages and Markdown sources for the user manual (`manual/`) |
-| `src/components/` | Feature UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`) |
+| `src/components/` | Feature UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `workspace/`) |
 | `src/hooks/` | State, filtering, virtualization, theming, split pane, and file drop hooks |
 | `src/lib/pcap/` | libpcap/pcapng parsers, IPv6 walking, BGP marker detection, pcap writer |
 | `src/lib/bgp/` | Message & path attribute parsers, EVPN, error hints, hold-timer, route-refresh, neighbor & prefix stats |
@@ -252,7 +254,7 @@ AppContext (React)             db/loader.ts → DuckDB WASM (Arrow IPC)
         │                              │
         ▼                              ▼
 Pages & Components             db/queries.ts
-  - Dashboard, Messages,         - getMatchingFrameIndexes(filter)
+  - Workspace, Messages,         - getMatchingFrameIndexes(filter)
     Neighbors, Routes, SQL       - executeRawSql(sql)
 ```
 
@@ -283,7 +285,7 @@ Components reference semantic roles rather than raw hex colors (`src/index.css` 
 
 ### 5.2 Layout
 
-The app is a multi-page SPA with a persistent navigation header. The upload screen (`/`) is shown when no capture is loaded, though files can be dropped anywhere at any time. **Messages** (`/messages`) uses a resizable two-pane layout (filter bar above a virtualized packet list on the left and structured detail + hex dump on the right).
+The app is an SPA with a thin header (capture name, language, theme, and a menu holding Build, Help and the repository link). The upload screen (`/`) is shown when no capture is loaded, though files can be dropped anywhere at any time. Once a capture is open, the analysis views share one workspace: sessions and findings in a left column (a drawer below the `lg` breakpoint) and the views as tabs. **Messages** (`/messages`) uses a resizable two-pane layout (filter bar above a virtualized packet list on the left and structured detail + hex dump on the right).
 
 ---
 

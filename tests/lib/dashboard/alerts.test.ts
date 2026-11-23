@@ -885,7 +885,7 @@ describe('noise the alert panel must not raise', () => {
     expect(changed.packetIndex).toBe(2)
   })
 
-  test('Connection Collision Resolution is a warning, below the real cause', () => {
+  test('Connection Collision Resolution is informational, below the real cause', () => {
     const alerts = computeAlerts([
       notification('10.10.0.1', '10.10.0.2', 0, 6, 1),
       notification('10.10.0.2', '10.10.0.1', 1, 6, 7),
@@ -894,7 +894,7 @@ describe('noise the alert panel must not raise', () => {
 
     expect(alerts[0].severity).toBe('critical')
     const collision = alerts.find((alert) => alert.packetIndex === 1)
-    expect(collision?.severity).toBe('warning')
+    expect(collision?.severity).toBe('info')
     expect(collision?.detail).toContain('normal')
   })
 })

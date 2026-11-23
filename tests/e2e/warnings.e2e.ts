@@ -36,7 +36,7 @@ test.describe('nothing goes wrong quietly', () => {
     await loadCapture(page, 'sample.pcapng', readFileSync(SAMPLE))
     await openMessagesAfterLoad(page)
 
-    for (const name of ['Dashboard', 'Neighbors', 'Routes', 'SQL', 'Messages']) {
+    for (const name of ['Neighbors', 'Routes', 'SQL', 'Messages']) {
       await page.getByRole('link', { name, exact: true }).click()
       await page.waitForTimeout(800)
     }

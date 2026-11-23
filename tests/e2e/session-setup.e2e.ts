@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { goToDashboard, loadCapture, loadSample, oneDirectionCapture, openMessagesAfterLoad, unansweredOpenCapture } from './helpers'
+import { showFindings, loadCapture, loadSample, oneDirectionCapture, openMessagesAfterLoad, unansweredOpenCapture } from './helpers'
 
 /**
  * The two alerts that fire on something missing from the capture.
@@ -13,21 +13,23 @@ test.describe('sessions that never got going', () => {
   test('a connection accepted and then never answered is called out', async ({ page }) => {
     await loadCapture(page, 'open-unanswered.pcap', unansweredOpenCapture())
     await openMessagesAfterLoad(page)
-    await goToDashboard(page)
+    await showFindings(page)
 
     const body = await page.locator('body').innerText()
     expect(body).not.toContain('No issues detected')
     expect(body).toContain('sends no BGP')
     // What the successful handshake rules out is the useful half of the row.
     expect(body).toContain('port 179')
-    // And the neighbour table must not contradict it two rows further down.
-    expect(body).toContain('Never up')
+    // And the session list must not contradict it beside the finding.
+    await expect(
+      page.getByRole('button', { name: /10\.0\.\d+\.\d+ ↔ 10\.0\.\d+\.\d+.*Critical/ }).first()
+    ).toBeVisible()
   })
 
   test('a capture with one direction in it is called out, without blaming the capture', async ({ page }) => {
     await loadCapture(page, 'one-direction.pcap', oneDirectionCapture())
     await openMessagesAfterLoad(page)
-    await goToDashboard(page)
+    await showFindings(page)
 
     const body = await page.locator('body').innerText()
     expect(body).not.toContain('No issues detected')
@@ -41,11 +43,10 @@ test.describe('sessions that never got going', () => {
     // The rules judge whole sessions, so a false positive here would fire on
     // every capture in the suite rather than on an edge case.
     await loadSample(page)
-    await goToDashboard(page)
+    await showFindings(page)
 
     const body = await page.locator('body').innerText()
     expect(body).not.toContain('sends no BGP')
     expect(body).not.toContain('Only one direction')
-    expect(body).not.toContain('Never up')
   })
 })

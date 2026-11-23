@@ -116,8 +116,8 @@ describe('i18n locale helpers', () => {
   test('returns distinct English and Japanese catalogs', () => {
     const en = getMessages('en')
     const ja = getMessages('ja')
-    expect(en.nav.dashboard).toBe('Dashboard')
-    expect(ja.nav.dashboard).toBe('ダッシュボード')
+    expect(en.nav.messages).toBe('Messages')
+    expect(ja.nav.messages).toBe('メッセージ')
     expect(ja.app.title).toMatch(HAS_JAPANESE)
   })
 })

@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, useEffect, useCallback, useLayoutEffect } from 'react'
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
+import { useWorkspace } from '../context/WorkspaceContext'
 import { useFilter } from '../hooks/useFilter'
 import { AddFilterPopover, BackToList, ColumnPicker, PacketList, PaneDivider, QueryInput, type DisplayPacket } from '../components/common'
 import { usePacketColumns } from '../hooks/usePacketColumns'
@@ -99,6 +100,11 @@ export function MessagesPage() {
 
 function MessagesView() {
   const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
+  // The rows come from the session chosen in the workspace. Everything that
+  // looks *around* a packet — the hold timer, the previous message on the
+  // session, links by index — keeps using the whole capture, so narrowing the
+  // view never changes what a packet's detail says.
+  const { scopedPackets, scopedAllPackets } = useWorkspace()
   const { locale, t } = useI18n()
   const [searchParams, setSearchParams] = useSearchParams()
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
@@ -134,7 +140,7 @@ function MessagesView() {
     showParseErrors,
     parseErrors,
     isFiltering,
-  } = useFilter(packets, { initialQuery: initialFilter })
+  } = useFilter(scopedPackets, { initialQuery: initialFilter })
 
   // Set initial selection from URL - find the packet in filtered results by frameIndex
   useEffect(() => {
@@ -250,7 +256,7 @@ function MessagesView() {
     const kept = filterActive ? new Set(filteredPackets.map((p) => p.frameIndex)) : null
 
     const rows: DisplayPacket[] = []
-    for (const gp of allPackets) {
+    for (const gp of scopedAllPackets) {
       const bgpPacket = bgpMap.get(gp.frameIndex)
       if (bgpPacket) {
         if (kept && !kept.has(gp.frameIndex)) continue
@@ -261,7 +267,7 @@ function MessagesView() {
       }
     }
     return rows
-  }, [filteredPackets, packets, allPackets, showAllPackets, filterActive, parsedQuery])
+  }, [filteredPackets, packets, scopedAllPackets, showAllPackets, filterActive, parsedQuery])
 
   /**
    * The selection is an index into the rows, so a new filter would otherwise

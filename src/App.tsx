@@ -6,6 +6,7 @@ import { AppHeader } from './components/layout/AppHeader'
 import { ErrorBoundary, LoadProgressBar, WarningBanner } from './components/common'
 import { useFileDropzone } from './hooks/useFileDropzone'
 import { FileUploadPage } from './pages'
+import { WorkspaceLayout } from './components/workspace/WorkspaceLayout'
 
 /**
  * Every screen but the first is loaded on demand.
@@ -15,9 +16,6 @@ import { FileUploadPage } from './pages'
  * of the app's own code, so keeping them out of the first download is most of
  * what makes it small.
  */
-const DashboardPage = lazy(() =>
-  import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage }))
-)
 const NeighborsPage = lazy(() =>
   import('./pages/NeighborsPage').then((m) => ({ default: m.NeighborsPage }))
 )
@@ -75,6 +73,11 @@ function RequireCapture({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+function RedirectKeepingQuery({ to }: { to: string }) {
+  const { search } = useLocation()
+  return <Navigate to={{ pathname: to, search }} replace />
+}
+
 function ScreenSpinner({ label }: { label?: string }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-canvas">
@@ -121,27 +124,19 @@ function AppContent() {
               it is the one who has not loaded anything yet. */}
           <Route path="/manual" element={<ManualPage />} />
 
-          {/* Protected routes - wait for the restore, then redirect if there is no file */}
-          <Route
-            path="/dashboard"
-            element={<RequireCapture><DashboardPage /></RequireCapture>}
-          />
-          <Route
-            path="/neighbors"
-            element={<RequireCapture><NeighborsPage /></RequireCapture>}
-          />
-          <Route
-            path="/messages"
-            element={<RequireCapture><MessagesPage /></RequireCapture>}
-          />
-          <Route
-            path="/routes"
-            element={<RequireCapture><RoutesPage /></RequireCapture>}
-          />
-          <Route
-            path="/sql"
-            element={<RequireCapture><SqlConsolePage /></RequireCapture>}
-          />
+          {/* The analysis views share one workspace — the session list and
+              findings down the side, the views as tabs — which waits for the
+              restore and redirects when there is no capture. */}
+          <Route element={<RequireCapture><WorkspaceLayout /></RequireCapture>}>
+            <Route path="/messages" element={<MessagesPage />} />
+            <Route path="/routes" element={<RoutesPage />} />
+            <Route path="/neighbors" element={<NeighborsPage />} />
+            <Route path="/sql" element={<SqlConsolePage />} />
+          </Route>
+
+          {/* The dashboard's findings now sit beside every view. Old links and
+              bookmarks land where the dashboard used to send people. */}
+          <Route path="/dashboard" element={<RedirectKeepingQuery to="/messages" />} />
 
           {/* Catch all - redirect to messages or home */}
           <Route

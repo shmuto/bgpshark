@@ -1,112 +1,120 @@
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useApp } from '../../context/AppContext'
 import { useI18n } from '../../i18n'
 import { LanguageToggle } from './LanguageToggle'
 import { ThemeToggle } from './ThemeToggle'
 
+/**
+ * One thin bar: what is open, and the few controls that are not about it.
+ *
+ * The analysis views moved into the workspace's own tab row, so this bar no
+ * longer carries navigation. The capture's name sits where the eye lands after
+ * the logo and doubles as the way to open another one; Build, Help and the
+ * repository link are reached rarely enough to live behind one menu button.
+ */
 export function AppHeader() {
-  const { status, fileName, reset } = useApp()
+  const { status, fileName, packets, reset } = useApp()
   const { t } = useI18n()
   const navigate = useNavigate()
   const isReady = status === 'ready'
 
-  const handleNewFile = () => {
+  const openAnother = () => {
     reset()
     navigate('/')
   }
 
   return (
-    <header className="flex shrink-0 items-center justify-between gap-3 border-b border-hair bg-surface px-4 py-2.5">
-      {/* min-w-0 lets this side shrink so the nav can scroll instead of pushing
-          the buttons on the right off the screen */}
-      <div className="flex min-w-0 items-center gap-3 sm:gap-6">
-        {/* Logo */}
-        <NavLink to={isReady ? '/messages' : '/'} className="flex shrink-0 items-center gap-2.5">
-          <span className="text-lg leading-none" aria-hidden="true">🦈</span>
-          <h1 className="hidden text-sm font-semibold tracking-tight text-strong sm:block">
-            BGPShark
-          </h1>
-        </NavLink>
+    <header className="flex h-10 shrink-0 items-center gap-3 border-b border-hair bg-surface px-3">
+      <NavLink to={isReady ? '/messages' : '/'} className="flex shrink-0 items-center gap-2">
+        <span className="text-base leading-none" aria-hidden="true">🦈</span>
+        <h1 className="hidden text-sm font-semibold tracking-tight text-strong sm:block">BGPShark</h1>
+      </NavLink>
 
-        {/* The screens that analyse the open capture. Build and Help sit with
-            the utilities on the right instead: side by side with these, Build
-            read as one more view of the current capture, when it is a separate
-            tool whose output replaces it. */}
-        {isReady && (
-          <nav aria-label={t.nav.captureAria} className="-mx-1 flex items-center gap-1 overflow-x-auto px-1">
-            <NavItem to="/dashboard">{t.nav.dashboard}</NavItem>
-            <NavItem to="/messages">{t.nav.messages}</NavItem>
-            <NavItem to="/neighbors">{t.nav.neighbors}</NavItem>
-            <NavItem to="/routes">{t.nav.routes}</NavItem>
-            <NavItem to="/sql">{t.nav.sql}</NavItem>
-          </nav>
-        )}
-      </div>
-
-      <div className="flex shrink-0 items-center gap-2">
-        {/* The builder is how you get a capture, so it is offered either way. */}
-        <nav aria-label={t.nav.toolsAria} className="flex items-center gap-1">
-          <NavItem to="/builder">{t.nav.build}</NavItem>
-          <NavItem to="/manual">{t.nav.help}</NavItem>
-        </nav>
-        <div className="h-4 w-px bg-hair-strong" aria-hidden="true" />
-        {/* File name */}
-        {fileName && (
-          <span className="hidden max-w-[16rem] truncate rounded border border-hair bg-surface-sunken px-2 py-1 font-mono text-xs text-muted md:block">
-            {fileName}
+      {isReady && fileName && (
+        <button
+          type="button"
+          onClick={openAnother}
+          title={t.nav.openAnother}
+          className="flex min-w-0 items-center gap-2 rounded border border-hair bg-surface-sunken px-2 py-1 text-xs transition-colors hover:border-hair-strong"
+        >
+          <span className="truncate font-medium text-strong">{fileName}</span>
+          <span className="hidden shrink-0 font-mono text-[11px] text-muted md:inline">
+            {t.nav.captureMeta(packets.length)}
           </span>
-        )}
+          <span className="sr-only">— {t.nav.openAnother}</span>
+        </button>
+      )}
 
-        {/* New File button */}
-        {isReady && (
-          <button
-            onClick={handleNewFile}
-            className="flex items-center gap-1.5 rounded border border-hair px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-hair-strong hover:text-strong"
-          >
-            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            {t.nav.newFile}
-          </button>
-        )}
-
+      <div className="ml-auto flex shrink-0 items-center gap-1">
         <LanguageToggle />
         <ThemeToggle />
-
-        {/* GitHub link */}
-        <a
-          href="https://github.com/shmuto/bgpshark"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-dim transition-colors hover:text-strong"
-          aria-label={t.nav.viewOnGithub}
-        >
-          <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
-            <path
-              fillRule="evenodd"
-              d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"
-              clipRule="evenodd"
-            />
-          </svg>
-        </a>
+        <AppMenu />
       </div>
     </header>
   )
 }
 
-function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
+function AppMenu() {
+  const { t } = useI18n()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const item = 'flex items-center justify-between gap-6 rounded px-2.5 py-1.5 text-xs text-body hover:bg-surface-sunken hover:text-strong'
+
   return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `shrink-0 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-          isActive
-            ? 'bg-accent text-accent-fg'
-            : 'text-muted hover:bg-surface-sunken hover:text-strong'
-        }`
-      }
-    >
-      {children}
-    </NavLink>
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-label={t.nav.menu}
+        title={t.nav.menu}
+        className="grid h-7 w-7 place-items-center rounded text-muted transition-colors hover:bg-surface-raised hover:text-strong"
+      >
+        <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.6" />
+          <circle cx="12" cy="12" r="1.6" />
+          <circle cx="19" cy="12" r="1.6" />
+        </svg>
+      </button>
+      {open && (
+        <nav
+          aria-label={t.nav.toolsAria}
+          className="absolute right-0 top-full z-50 mt-1 flex w-56 flex-col rounded-md border border-hair-strong bg-surface p-1 shadow-lg"
+          onClick={() => setOpen(false)}
+        >
+          <NavLink to="/builder" className={item}>
+            {t.nav.build}
+            <span className="text-[11px] text-dim">{t.nav.buildHint}</span>
+          </NavLink>
+          <NavLink to="/manual" className={item}>
+            {t.nav.help}
+          </NavLink>
+          <div className="my-1 border-t border-hair" />
+          <a href="https://github.com/shmuto/bgpshark" target="_blank" rel="noopener noreferrer" className={item}>
+            {t.nav.viewOnGithub}
+            <span className="text-dim" aria-hidden="true">↗</span>
+          </a>
+        </nav>
+      )}
+    </div>
   )
 }

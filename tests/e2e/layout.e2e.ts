@@ -98,7 +98,7 @@ test.describe('compact viewport', () => {
   test('the navigation is still reachable and nothing overflows sideways', async ({ page }) => {
     await expect(page.getByRole('link', { name: 'SQL', exact: true })).toBeVisible()
 
-    for (const path of ['messages', 'neighbors', 'routes', 'sql', 'dashboard']) {
+    for (const path of ['messages', 'neighbors', 'routes', 'sql']) {
       await page.goto(`./${path}`, { waitUntil: 'networkidle' })
       const overflows = await page.evaluate(
         () => document.documentElement.scrollWidth > document.documentElement.clientWidth

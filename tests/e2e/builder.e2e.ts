@@ -57,9 +57,9 @@ test.describe('the capture builder', () => {
     await page.getByRole('combobox').first().selectOption('flap')
     await page.getByRole('button', { name: 'Open in analyzer' }).click()
 
-    // Lands on the overview, like any freshly loaded capture.
-    await page.waitForURL('**/dashboard')
-    await expect(page.getByRole('heading', { name: /^Alerts/ })).toBeVisible()
+    // Lands on Messages, like any freshly loaded capture.
+    await page.waitForURL('**/messages')
+    await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
 
     // The route analysis screen should see the flapping prefix the scenario
     // announced and withdrew five times.

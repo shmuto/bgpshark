@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, loadSample, shownCount } from './helpers'
+import { applyFilter, loadSample, shownCount, showFindings } from './helpers'
 
 test.describe('the filter box', () => {
   test.beforeEach(async ({ page }) => {
@@ -147,10 +147,10 @@ test.describe('a filter carried in the URL', () => {
     expect(decodeURIComponent(page.url())).toContain('filter=type = NOTIFICATION')
   })
 
-  test('a dashboard alert opens the messages screen on that peer', async ({ page }) => {
+  test('a finding opens the messages screen on that peer', async ({ page }) => {
     await loadSample(page)
-    await page.getByRole('link', { name: 'Dashboard' }).click()
-    await page.getByRole('button', { name: 'View →' }).first().click()
+    const rail = await showFindings(page)
+    await rail.getByRole('button', { name: /^10\.0\.14\.1 → 10\.0\.14\.4/ }).first().click()
     await page.waitForURL('**/messages**')
     await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
     await page.waitForTimeout(600)

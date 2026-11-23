@@ -14,6 +14,7 @@ import { test, expect } from '@playwright/test'
 test.describe('the user manual', () => {
   test('opens from the header with nothing loaded', async ({ page }) => {
     await page.goto('./', { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: 'More' }).click()
     await page.getByRole('link', { name: 'Help', exact: true }).click()
 
     await expect(page).toHaveURL(/\/manual$/)

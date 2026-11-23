@@ -58,11 +58,15 @@ test.describe('on a narrow screen', () => {
 })
 
 test.describe('the header', () => {
-  test('separates the capture screens from Build and Help', async ({ page }) => {
+  test('keeps the capture views in the workspace tabs and the tools behind one menu', async ({ page }) => {
     await loadSample(page)
     const capture = page.getByRole('navigation', { name: 'Capture' })
+    await expect(capture.getByRole('link')).toHaveText(['Messages', 'Routes', 'Neighbors', 'SQL'])
+
     const tools = page.getByRole('navigation', { name: 'Tools' })
-    await expect(capture.getByRole('link')).toHaveText(['Dashboard', 'Messages', 'Neighbors', 'Routes', 'SQL'])
-    await expect(tools.getByRole('link')).toHaveText(['Build', 'Help'])
+    await expect(tools).toHaveCount(0)
+    await page.getByRole('button', { name: 'More' }).click()
+    await expect(tools.getByRole('link', { name: /^Build/ })).toBeVisible()
+    await expect(tools.getByRole('link', { name: 'Help', exact: true })).toBeVisible()
   })
 })

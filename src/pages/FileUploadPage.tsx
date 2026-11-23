@@ -14,11 +14,12 @@ export function FileUploadPage() {
   const from = (location.state as { from?: string } | null)?.from
 
   // Take the user to the screen they asked for once the capture is ready,
-  // falling back to the dashboard when they came here directly: the overview
-  // first, then down into Messages, Neighbors or Routes from what it flags.
+  // falling back to Messages when they came here directly: the workspace's
+  // findings list is beside it, so there is no overview to stop at first.
+  // `fresh` keeps a view saved from a previous capture from being restored.
   useEffect(() => {
     if (status === 'ready') {
-      navigate(from ?? '/dashboard', { replace: true })
+      navigate(from ?? '/messages', { replace: true, state: from ? undefined : { fresh: true } })
     }
   }, [status, from, navigate])
 

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { explainedTeardownCapture, goToDashboard, loadCapture, openMessagesAfterLoad, silentTeardownCapture } from './helpers'
+import { explainedTeardownCapture, showFindings, loadCapture, openMessagesAfterLoad, silentTeardownCapture } from './helpers'
 
 /**
  * A session that went down with nothing at the BGP layer recording it.
@@ -16,7 +16,7 @@ test.describe('a teardown nothing explained', () => {
   test('is two rows, one per shape, on a capture that drops both ways', async ({ page }) => {
     await loadCapture(page, 'silent.pcap', silentTeardownCapture())
     await openMessagesAfterLoad(page)
-    await goToDashboard(page)
+    await showFindings(page)
 
     const body = await page.locator('body').innerText()
     expect(body).not.toContain('No issues detected')
@@ -38,23 +38,19 @@ test.describe('a teardown nothing explained', () => {
     // the capture; a Cease explains them, so they are not this rule's business.
     await loadCapture(page, 'explained.pcap', explainedTeardownCapture())
     await openMessagesAfterLoad(page)
-    await goToDashboard(page)
+    await showFindings(page)
 
     const body = await page.locator('body').innerText()
     expect(body).toContain('NOTIFICATION')
     expect(body).not.toContain('with no NOTIFICATION')
   })
 
-  test('View → lands on the frame it is talking about', async ({ page }) => {
+  test('the finding lands on the frame it is talking about', async ({ page }) => {
     await loadCapture(page, 'silent.pcap', silentTeardownCapture())
     await openMessagesAfterLoad(page)
-    await goToDashboard(page)
+    const rail = await showFindings(page)
 
-    const row = page
-      .locator('li')
-      .filter({ hasText: 'was reset with no NOTIFICATION' })
-      .first()
-    await row.getByRole('button', { name: /View/ }).click()
+    await rail.getByRole('button', { name: /was reset with no NOTIFICATION/ }).first().click()
 
     await page.waitForURL('**/messages**')
 

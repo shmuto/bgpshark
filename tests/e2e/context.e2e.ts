@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, goToDashboard, loadSample, shownCount } from './helpers'
+import { applyFilter, showFindings, loadSample, shownCount } from './helpers'
 
 /**
  * The small things that made every packet and every screen change a fresh
@@ -98,12 +98,8 @@ test.describe('a withdrawal opened from elsewhere', () => {
   })
 
   test('a Route flapping alert opens the withdrawal it names', async ({ page }) => {
-    await goToDashboard(page)
-    await page
-      .getByRole('listitem')
-      .filter({ hasText: 'Route flapping: 1.1.1.1/32' })
-      .getByRole('button', { name: 'View →' })
-      .click()
+    const rail = await showFindings(page)
+    await rail.getByRole('button', { name: /^1\.1\.1\.1\/32/ }).click()
 
     await page.waitForURL('**/messages**')
     await page.waitForTimeout(1200)

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { goToDashboard, gracefulRestartCapture, loadCapture, openMessagesAfterLoad, silentTeardownCapture } from './helpers'
+import { showFindings, gracefulRestartCapture, loadCapture, openMessagesAfterLoad, silentTeardownCapture } from './helpers'
 
 /**
  * A reload the two ends had agreed to ride out, told apart from a crash loop.
@@ -15,7 +15,7 @@ test.describe('a router that restarted gracefully', () => {
   test('is reported as a restart, with the numbers that make it one', async ({ page }) => {
     await loadCapture(page, 'gr.pcap', gracefulRestartCapture())
     await openMessagesAfterLoad(page)
-    await goToDashboard(page)
+    await showFindings(page)
 
     const body = await page.locator('body').innerText()
     expect(body).toContain('10.0.0.1 restarted gracefully')
@@ -32,7 +32,7 @@ test.describe('a router that restarted gracefully', () => {
     // The complaint in S8 exactly: a reload and a crash loop read identically.
     await loadCapture(page, 'gr.pcap', gracefulRestartCapture())
     await openMessagesAfterLoad(page)
-    await goToDashboard(page)
+    await showFindings(page)
 
     const body = await page.locator('body').innerText()
     expect(body).not.toContain('Session flapping detected')
@@ -46,7 +46,7 @@ test.describe('a router that restarted gracefully', () => {
     // the dataplane dropped traffic for the whole window.
     await loadCapture(page, 'gr-nf.pcap', gracefulRestartCapture({ forwarding: false }))
     await openMessagesAfterLoad(page)
-    await goToDashboard(page)
+    await showFindings(page)
 
     const body = await page.locator('body').innerText()
     expect(body).toContain('restarted gracefully')
@@ -58,7 +58,7 @@ test.describe('a router that restarted gracefully', () => {
     // nobody agreed to hold the routes and nothing was graceful about it.
     await loadCapture(page, 'silent.pcap', silentTeardownCapture())
     await openMessagesAfterLoad(page)
-    await goToDashboard(page)
+    await showFindings(page)
 
     const body = await page.locator('body').innerText()
     expect(body).not.toContain('restarted gracefully')

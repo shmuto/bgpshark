@@ -12,7 +12,7 @@ Inspect OPEN, UPDATE, NOTIFICATION, KEEPALIVE, and ROUTE-REFRESH messages withou
 - **pcap / pcapng support** — Auto-detected (`.pcap`, `.pcapng`, `.cap` up to 50 MB). Handles Ethernet and Linux SLL link types, strips 802.1Q / QinQ tags, reassembles TCP segments, and supports IPv4/IPv6 transport as well as BGP on non-standard ports.
 - **Full BGP decoding** — OPEN capabilities, UPDATE path attributes (AS_PATH, communities, large/extended communities, MP_REACH/MP_UNREACH including IPv6 NLRI, ADD-PATH), NOTIFICATION error codes with decoded data fields and troubleshooting hints, Hold Timer silence analysis, and ROUTE-REFRESH diffs.
 - **EVPN decoding** — Decodes MAC/IP Advertisement and Inclusive Multicast routes (RD, MAC, VNI, ESI) and identifies other EVPN route types.
-- **Dashboard** — Summary counts, severity-sorted problem alerts, neighbor status table, and message timeline.
+- **Investigation workspace** — Every view shares a sessions list and a findings list that folds alerts by kind (one hard reset across three sessions is one finding, not sixteen rows). Pick a session to narrow every view to it.
 - **Message Explorer** — Packet list, hierarchical message detail, hex dump, and filtered pcap export.
 - **Neighbor Analysis** — Sessions grouped by Router ID with side-by-side OPEN / capability diffs and ADD-PATH negotiation results.
 - **Route Analysis** — Per-prefix announce/withdraw history, flap counts, and best-path attributes (AS_PATH, Next Hop, MED, LOCAL_PREF, communities).
@@ -105,7 +105,7 @@ Filter expressions parse once into an AST and run either against DuckDB WASM or 
 | `src/lib/filter/` | Filter expression lexer, parser, and in-memory evaluator |
 | `src/lib/net/` | Prefix parsing and CIDR containment arithmetic |
 | `src/pages/` | Page components and the in-app manual (`manual/manual.md`, `manual/manual.ja.md`) |
-| `src/components/` | UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`) |
+| `src/components/` | UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `workspace/`) |
 | `testlab/` | ContainerLab topology, fault scenario generator (`scenarios.ts`), screenshot script |
 | `docs/` | Technical design and troubleshooting scenario assessment |
 

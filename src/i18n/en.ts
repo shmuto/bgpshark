@@ -16,14 +16,16 @@ export const en = {
   nav: {
     captureAria: 'Capture',
     toolsAria: 'Tools',
-    dashboard: 'Dashboard',
     messages: 'Messages',
     neighbors: 'Neighbors',
     routes: 'Routes',
     sql: 'SQL',
     build: 'Build',
     help: 'Help',
-    newFile: 'New File',
+    openAnother: 'Open another capture',
+    captureMeta: (packets: number) => `${packets} BGP packet${packets === 1 ? '' : 's'}`,
+    menu: 'More',
+    buildHint: 'Make a capture',
     viewOnGithub: 'View on GitHub',
   },
 
@@ -115,30 +117,29 @@ export const en = {
     ossLink: 'licenses',
   },
 
-  dashboard: {
-    title: 'Dashboard',
-    bgpPackets: 'BGP packets',
-    messagesCount: (formatted: string) => `(${formatted} messages)`,
-    alertsHeading: (count: number) => `Alerts${count > 0 ? ` (${count})` : ''}`,
-    noIssues: 'No issues detected — every session looks healthy.',
-    viewAlert: 'View →',
-    showFewer: 'Show fewer',
-    showMoreAlerts: (hidden: number) =>
-      `Show ${hidden} more alert${hidden === 1 ? '' : 's'}`,
-    neighborsHeading: 'BGP Neighbors',
-    viewAllNeighbors: 'View All Neighbors →',
-    noNeighborPairs: 'No neighbor pairs observed',
-    colNeighborPair: 'Neighbor Pair',
-    colMsgs: 'Msgs',
-    colMsgsTitle: 'BGP messages exchanged by the pair',
-    colStatus: 'Status',
-    statusNeverUp: '⚠ Never up',
-    statusAlert: '⚠ Alert',
-    statusOk: '✓ OK',
-    timelineHeading: 'Timeline',
-    noTimelineData: 'No timeline data',
-    timelineAria: 'BGP message volume over the capture duration',
-    timelineNotificationAt: (elapsed: string) => `NOTIFICATION at ${elapsed}`,
+  workspace: {
+    railAria: 'Sessions and findings',
+    openRail: 'Sessions and findings',
+    sessionsHeading: 'Sessions',
+    allSessions: 'All sessions',
+    findingsHeading: 'Findings',
+    findingsCount: (groups: number, instances: number) =>
+      `${groups} kind${groups === 1 ? '' : 's'} · ${instances} alert${instances === 1 ? '' : 's'}`,
+    noFindings: 'No issues detected — every session looks healthy.',
+    messageCount: (n: number) => `${n} msg${n === 1 ? '' : 's'}`,
+    clearScope: 'Show all sessions',
+    severity: { critical: 'Critical', warning: 'Warning', info: 'Info' },
+    groupSessions: (n: number) => (n === 0 ? 'Across the capture' : `${n} session${n === 1 ? '' : 's'}`),
+    /** A group's heading; rules whose alert titles name a subject get a generic one. */
+    groupTitle: (rule: string, firstTitle: string): string =>
+      ({
+        'no-reply': 'TCP connects but the peer sends no BGP',
+        'silent-teardown': 'Session ended with no NOTIFICATION',
+        'graceful-restart': 'Graceful restart',
+        'route-flap': 'Route flapping',
+        'route-aspath': 'AS_PATH changed',
+        'route-macmove': 'MAC moved',
+      })[rule] ?? firstTitle,
   },
 
   alerts: {
