@@ -133,16 +133,20 @@ function SessionRow({ session, active, onSelect }: { session: SessionSummary; ac
 function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: () => void }) {
   const { t } = useI18n()
   const navigate = useNavigate()
-  const { setScope } = useWorkspace()
   // The worst group starts open, so the first screen names the problem and
   // the packet it is in without a click.
   const [open, setOpen] = useState(group.severity === 'critical')
   const single = group.alerts.length === 1
   const title = single ? group.alerts[0].title : t.workspace.groupTitle(group.rule, group.alerts[0].title)
 
+  // A finding opens its evidence without changing the scope. The link's own
+  // filter already narrows the list to the session, and keeping the findings
+  // list as it is lets the reader step through one finding's instances —
+  // narrowing to the first would hide the rest.
   const go = (alert: DashboardAlert) => {
-    if (alert.peering) setScope(alert.peering)
-    navigate(alertLink(alert))
+    // `jump` asks Messages to start over from the link even when it is the
+    // screen already open; see MessagesPage.
+    navigate(alertLink(alert), { state: { jump: Date.now() } })
     onNavigate?.()
   }
 

@@ -69,3 +69,23 @@ test.describe('choosing a session', () => {
     await expect(page.getByTestId('session-scope')).toHaveText('10.0.13.1 ↔ 10.0.13.3')
   })
 })
+
+test.describe('opening findings one after another', () => {
+  test('each finding selects its own packet while Messages stays open', async ({ page }) => {
+    // Messages honours `?selected=` only as it mounts, and it is already open
+    // when the first finding is clicked; the second click used to change the
+    // filter and leave the first packet selected.
+    await loadSample(page)
+    const rail = await showFindings(page)
+    const packet = page.getByText(/^Packet #\d+$/)
+
+    await rail.getByRole('button', { name: /^10\.0\.14\.1 → 10\.0\.14\.4/ }).first().click()
+    await expect(packet).toHaveText('Packet #39')
+
+    await rail.getByRole('button', { name: /^1\.1\.1\.1 → 2\.2\.2\.2/ }).first().click()
+    await expect(packet).toHaveText('Packet #12')
+    // Opening evidence does not narrow the workspace; the list of findings
+    // stays whole so the next instance is still there to click.
+    await expect(page.getByTestId('session-scope')).toHaveCount(0)
+  })
+})

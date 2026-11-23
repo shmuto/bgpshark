@@ -92,10 +92,26 @@ export function MessagesPage() {
     if (restored) setRestore(null)
   }, [restored])
 
+  // A finding clicked in the workspace column is a new question, and the view
+  // honours `?selected=`, `?frame=` and `?all=1` only as it mounts — the
+  // reader's own clicks own the selection after that. With Messages already
+  // open, the link would otherwise change the filter and nothing else. Each
+  // jump therefore gets a fresh view. The key changes during render, so the
+  // old view never runs against the new link (its URL effects would rewrite
+  // it); the last jump seen is kept because the view's own URL updates drop
+  // navigation state.
+  const jump = (location.state as { jump?: number } | null)?.jump
+  const [seenJump, setSeenJump] = useState(jump)
+  const [viewKey, setViewKey] = useState(0)
+  if (jump !== undefined && jump !== seenJump) {
+    setSeenJump(jump)
+    setViewKey((k) => k + 1)
+  }
+
   if (restore !== null) {
     return restored ? null : <Navigate to={{ pathname: location.pathname, search: restore }} replace />
   }
-  return <MessagesView />
+  return <MessagesView key={viewKey} />
 }
 
 function MessagesView() {
