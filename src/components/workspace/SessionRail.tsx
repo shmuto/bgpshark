@@ -177,14 +177,11 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
             {title}
           </span>
           {/* The detail is the half of a finding that says what to check
-              next, so it is shown rather than left to a tooltip; clamped so a
-              long explanation does not push the rest of the list away. */}
-          <span
-            // `line-clamp-*` sets its own display; `block` beside it would
-            // override that and let a long detail run to its full length.
-            className={`mt-0.5 text-[11px] text-muted ${single ? 'line-clamp-3' : 'block truncate'}`}
-            title={single ? group.alerts[0].detail : undefined}
-          >
+              next, so it is shown rather than left to a tooltip, and shown
+              whole: its last clause is usually the number or the place to
+              look, which a clamp cut off first. The column scrolls, so a
+              long explanation costs little. */}
+          <span className={`mt-0.5 block text-[11px] text-muted ${single ? '' : 'truncate'}`}>
             {single ? group.alerts[0].detail : t.workspace.groupSessions(group.peerings.length)}
           </span>
           {single && group.alerts[0].timeSpan && (

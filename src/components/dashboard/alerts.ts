@@ -964,12 +964,16 @@ export function computeAlerts(
 
   // Most severe first, then the rows standing for the most occurrences, then
   // most recent first. Counting before recency keeps a peer that failed 40
-  // times above one that failed once a second later.
+  // times above one that failed once a second later. The "N more prefixes"
+  // summaries come after the routes they follow on from: their count adds up
+  // dozens of routes, and ranked by it they led the list they close.
   const severityRank: Record<DashboardAlert['severity'], number> = { critical: 0, warning: 1, info: 2 }
+  const isSummary = (alert: DashboardAlert) => alert.id.endsWith('-more')
   return alerts.sort((a, b) => {
     if (severityRank[a.severity] !== severityRank[b.severity]) {
       return severityRank[a.severity] - severityRank[b.severity]
     }
+    if (isSummary(a) !== isSummary(b)) return isSummary(a) ? 1 : -1
     if ((a.count ?? 1) !== (b.count ?? 1)) return (b.count ?? 1) - (a.count ?? 1)
     return (b.timestamp?.getTime() ?? 0) - (a.timestamp?.getTime() ?? 0)
   })
