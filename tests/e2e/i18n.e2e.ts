@@ -54,6 +54,12 @@ test.describe('header language toggle across screens', () => {
     await expect(page.getByRole('heading', { name: /^セッション/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: /^検出事項/ })).toBeVisible()
     await expect(page.getByText('すべてのセッション')).toBeVisible()
+    // Counts carry their unit: "23 件" left open whether it meant packets or
+    // messages, and the total beside "すべてのセッション" had none at all.
+    const rail = page.getByRole('complementary', { name: 'セッションと検出事項' })
+    await expect(rail.getByRole('button', { name: /^すべてのセッション/ })).toContainText('68 メッセージ')
+    await expect(rail.getByRole('button', { name: /^1\.1\.1\.1 ↔ 2\.2\.2\.2/ })).toContainText('23 メッセージ')
+    await expect(rail.getByRole('heading', { name: /^検出事項/ })).toContainText('4 種類 · 計 18 回')
 
     // Messages: list, filter suggestions, column picker, NOTIFICATION troubleshooting hint
     await expect(page.getByText(/\d+ 件中 \d+ 件のパケットを表示/)).toBeVisible()

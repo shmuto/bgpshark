@@ -35,6 +35,13 @@ export type Token =
   | { type: 'lparen' }
   | { type: 'rparen' }
   | { type: 'comma' }
+  /**
+   * Characters the language has no use for, kept as one token rather than
+   * skipped. Skipping them made `type = X and !!!` read as a query that simply
+   * ended after `and`, and the error then talked about the end of the input
+   * instead of the `!!!` the reader had typed.
+   */
+  | { type: 'invalid'; value: string }
   | { type: 'eof' }
 
 // Ordered comparisons only exist for integer fields — see NUMERIC_FIELDS.
@@ -337,13 +344,32 @@ export class Tokenizer {
       } else if (this.isWordChar(char)) {
         this.readWord()
       } else {
-        // Unknown character, skip
-        this.pos++
+        // A run of characters with no meaning here, reported where it stands.
+        let text = ''
+        while (
+          this.pos < this.input.length &&
+          !/\s/.test(this.input[this.pos]) &&
+          !this.startsToken(this.input[this.pos])
+        ) {
+          text += this.input[this.pos]
+          this.pos++
+        }
+        this.tokens.push({ type: 'invalid', value: text })
       }
     }
 
     this.tokens.push({ type: 'eof' })
     return this.tokens
+  }
+
+  /** Whether `char` begins a token the language knows, which ends an invalid run. */
+  private startsToken(char: string): boolean {
+    return (
+      '(),=<>"\''.includes(char) ||
+      (char === '!' && this.peek(1) === '=') ||
+      this.isDigit(char) ||
+      this.isWordChar(char)
+    )
   }
 
   private skipWhitespace(): void {
@@ -467,9 +493,45 @@ export class Tokenizer {
 // Recursive Descent Parser
 // =============================================================================
 
+/**
+ * What went wrong, as data, so the interface can say it in the reader's
+ * language. `message` is the same thing in English, for logs and tests.
+ *
+ * `got` is the offending text as typed, or null where the query simply ended.
+ */
+export type ParseErrorDetail =
+  | { code: 'unexpected-token'; got: string | null }
+  | { code: 'expected-field'; got: string | null }
+  | { code: 'expected-operator'; field: string; got: string | null }
+  | { code: 'expected-value'; field: string; operator: string }
+  | { code: 'ordered-not-numeric'; field: string; operator: string; numericFields: string[] }
+  | { code: 'expected-number'; field: string; operator: string }
+
 export interface ParseError {
   message: string
   position: number
+  detail: ParseErrorDetail
+}
+
+/** The English wording of a parse error. */
+export function describeParseError(detail: ParseErrorDetail): string {
+  const got = (text: string | null) => (text === null ? 'end of input' : `"${text}"`)
+  switch (detail.code) {
+    case 'unexpected-token':
+      return `Unexpected ${got(detail.got)}`
+    case 'expected-field':
+      return detail.got === null
+        ? 'The filter ends where a field name was expected'
+        : `Expected a field name, got ${got(detail.got)}`
+    case 'expected-operator':
+      return `Expected an operator after "${detail.field}", got ${got(detail.got)}`
+    case 'expected-value':
+      return `Expected a value after "${detail.field} ${detail.operator}"`
+    case 'ordered-not-numeric':
+      return `Operator "${detail.operator}" is only valid for numeric fields (${detail.numericFields.join(', ')}), got "${detail.field}"`
+    case 'expected-number':
+      return `Expected a number after "${detail.field} ${detail.operator}"`
+  }
 }
 
 export class Parser {
@@ -489,7 +551,7 @@ export class Parser {
 
     // Check for unconsumed tokens (except eof)
     if (this.current().type !== 'eof') {
-      this.addError(`Unexpected token: ${this.tokenToString(this.current())}`)
+      this.addError({ code: 'unexpected-token', got: this.tokenToString(this.current()) })
     }
 
     return expr
@@ -499,15 +561,17 @@ export class Parser {
     return this.errors
   }
 
-  private addError(message: string): void {
-    this.errors.push({ message, position: this.pos })
+  private addError(detail: ParseErrorDetail): void {
+    this.errors.push({ message: describeParseError(detail), position: this.pos, detail })
   }
 
-  private tokenToString(token: Token): string {
+  /** The token as the reader typed it; null for the end of the input. */
+  private tokenToString(token: Token): string | null {
     switch (token.type) {
       case 'field':
       case 'string':
-        return `"${token.value}"`
+      case 'invalid':
+        return token.value
       case 'number':
         return String(token.value)
       case 'operator':
@@ -525,7 +589,7 @@ export class Parser {
       case 'comma':
         return ','
       case 'eof':
-        return 'end of input'
+        return null
     }
   }
 
@@ -625,7 +689,7 @@ export class Parser {
   private parseComparison(): Expression {
     const fieldToken = this.advance()
     if (fieldToken.type !== 'field') {
-      this.addError(`Expected field name, got ${this.tokenToString(fieldToken)}`)
+      this.addError({ code: 'expected-field', got: this.tokenToString(fieldToken) })
       return { type: 'comparison', field: '', operator: '=', value: '' }
     }
 
@@ -633,7 +697,7 @@ export class Parser {
 
     const opToken = this.advance()
     if (opToken.type !== 'operator') {
-      this.addError(`Expected operator after "${field}", got ${this.tokenToString(opToken)}`)
+      this.addError({ code: 'expected-operator', field, got: this.tokenToString(opToken) })
       return { type: 'comparison', field, operator: '=', value: '' }
     }
 
@@ -642,16 +706,14 @@ export class Parser {
     const value = this.parseValue()
 
     if (value === '') {
-      this.addError(`Expected value after "${field} ${operator}"`)
+      this.addError({ code: 'expected-value', field, operator })
     } else if (isOrderedOperator(operator)) {
       // Both evaluators can only order integers, so the combination is rejected
       // here rather than silently matching nothing.
       if (!isNumericField(field)) {
-        this.addError(
-          `Operator "${operator}" is only valid for numeric fields (${[...NUMERIC_FIELDS].join(', ')}), got "${field}"`
-        )
+        this.addError({ code: 'ordered-not-numeric', field, operator, numericFields: [...NUMERIC_FIELDS] })
       } else if (typeof coerceNumericValue(value) !== 'number') {
-        this.addError(`Expected a number after "${field} ${operator}"`)
+        this.addError({ code: 'expected-number', field, operator })
       }
     }
 

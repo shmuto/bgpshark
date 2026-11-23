@@ -39,7 +39,7 @@ A loaded capture opens in one workspace. The left column lists the capture's **S
 
 ### The workspace
 
-**Sessions** lists every pair of addresses that exchanged BGP (or tried to, on TCP port 179), with their AS numbers, message count and the worst finding against them. Choose a session to narrow **every tab** to it: the packet list, the routes, the time strip and the findings. The chosen session is shown at the right of the tab row; click **×** there, or **All sessions**, to go back to the whole capture.
+**Sessions** lists every pair of addresses that exchanged BGP (or tried to, on TCP port 179), with their AS numbers, message count and the worst finding against them. Choose a session to narrow **every tab** to it: the packet list, the routes, the time strip and the findings. Route findings (route flapping, AS_PATH changes, MAC moves, withdrawal bursts) are then counted over that session's messages alone, and say *In this session*. The chosen session is shown at the right of the tab row; click **×** there, or **All sessions**, to go back to the whole capture.
 
 **Findings** are the problems the capture shows, folded one row per kind of problem rather than per packet: a hard reset on a router with three sessions is one *NOTIFICATION: Cease / Hard Reset ×3* row, not three. The worst kind comes first and starts expanded; click a row to list its instances, and click an instance to open the packet it is about in **Messages**, with a filter already applied. Opening a finding does not change the chosen session, so you can step through every instance of one problem.
 
@@ -69,7 +69,7 @@ Capabilities are compared per address family (AFI/SAFI), with mismatches listed 
 
 ### Routes
 
-Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs (on a wide screen the top prefix is opened for you). The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
+Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. **Flap** counts the times the route went away: each withdrawal of a route the same peer had announced (or had announced before the capture began). Re-announcing is not a flap, and neither is withdrawing a route that is already withdrawn, so in the sample capture 1.1.1.1/32, announced 6 times and withdrawn twice, has 2 flaps. The SQL console's *Prefix Flapping* template counts the same way. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs (on a wide screen the top prefix is opened for you). The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
 
 The search box supports three match modes:
 

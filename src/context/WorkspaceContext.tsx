@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useLocation } from 'react-router-dom'
 import { useApp } from './AppContext'
 import { useI18n } from '../i18n'
-import { computeAlerts, computeTransportAlerts } from '../components/dashboard/alerts'
+import { computeAlerts, computeTransportAlerts, scopeAlerts } from '../components/dashboard/alerts'
 import type { AlertSeverity, DashboardAlert } from '../components/dashboard/types'
 import { peeringKey, peeringAddresses } from '../lib/bgp/peering'
 import type { BgpOpenMessage, BgpPacket } from '../lib/bgp/types'
@@ -28,6 +28,11 @@ interface WorkspaceValue {
   scope: string | null
   setScope: (key: string | null) => void
   alerts: DashboardAlert[]
+  /**
+   * The findings for the scope: its session's own, and route findings counted
+   * over its packets alone. The whole capture's when nothing is chosen.
+   */
+  scopedAlerts: DashboardAlert[]
   sessions: SessionSummary[]
   /**
    * The time window every view is narrowed to, as epoch milliseconds
@@ -155,6 +160,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     () => (scope ? packets.filter((p) => peeringKey(p.srcIp, p.dstIp) === scope) : packets),
     [packets, scope]
   )
+  const scopedAlerts = useMemo(
+    () => scopeAlerts(alerts, packets, scope, locale),
+    [alerts, packets, scope, locale]
+  )
   const scopedPackets = useMemo(
     () => (range ? sessionPackets.filter((p) => inRange(p.timestamp, range)) : sessionPackets),
     [sessionPackets, range]
@@ -170,8 +179,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   )
 
   const value = useMemo(
-    () => ({ scope, setScope, alerts, sessions, range, setRange, scopedPackets, scopedAllPackets, sessionPackets }),
-    [scope, alerts, sessions, range, scopedPackets, scopedAllPackets, sessionPackets]
+    () => ({
+      scope,
+      setScope,
+      alerts,
+      scopedAlerts,
+      sessions,
+      range,
+      setRange,
+      scopedPackets,
+      scopedAllPackets,
+      sessionPackets,
+    }),
+    [scope, alerts, scopedAlerts, sessions, range, scopedPackets, scopedAllPackets, sessionPackets]
   )
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
 }

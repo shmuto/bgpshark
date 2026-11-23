@@ -6,6 +6,8 @@
  * a compile-time error in every translation until it is updated.
  */
 
+import { describeParseError, type ParseErrorDetail } from '../lib/filter/parser'
+
 export const en = {
   app: {
     title: 'BGP Packet Analyzer',
@@ -122,8 +124,9 @@ export const en = {
     sessionsHeading: 'Sessions',
     allSessions: 'All sessions',
     findingsHeading: 'Findings',
-    findingsCount: (groups: number, instances: number) =>
-      `${groups} kind${groups === 1 ? '' : 's'} · ${instances} alert${instances === 1 ? '' : 's'}`,
+    /** Kinds of finding, and occurrences summed the way each finding's ×N is. */
+    findingsCount: (groups: number, occurrences: number) =>
+      `${groups} kind${groups === 1 ? '' : 's'} · ${occurrences} occurrence${occurrences === 1 ? '' : 's'}`,
     noFindings: 'No issues detected — every session looks healthy.',
     messageCount: (n: number) => `${n} msg${n === 1 ? '' : 's'}`,
     clearScope: 'Show all sessions',
@@ -132,6 +135,7 @@ export const en = {
     clearRange: 'Show all',
     timeStripAria: 'Messages over time. Drag across it to narrow every view to that window.',
     severity: { critical: 'Critical', warning: 'Warning', info: 'Info' },
+    groupInSession: 'In this session',
     groupSessions: (n: number) => (n === 0 ? 'Across the capture' : `${n} session${n === 1 ? '' : 's'}`),
     /** A group's heading; rules whose alert titles name a subject get a generic one. */
     groupTitle: (rule: string, firstTitle: string): string =>
@@ -152,10 +156,10 @@ export const en = {
       `${srcIp} → ${dstIp} — both ends connected at once; one connection closed (normal)`,
     routeFlappingTitle: (key: string) => `Route flapping: ${key}`,
     routeFlappingDetail: (announced: number, withdrawn: number) =>
-      `${announced} announcements, ${withdrawn} withdrawals`,
+      `${announced} announcement${announced === 1 ? '' : 's'}, ${withdrawn} withdrawal${withdrawn === 1 ? '' : 's'}`,
     morePrefixesFlappedTitle: (count: number) => `${count} more prefixes flapped`,
     morePrefixesFlappedDetail: (flaps: number) =>
-      `${flaps} further withdrawals — sort the Routes screen by Flap to see them all`,
+      `${flaps} further flap${flaps === 1 ? '' : 's'} — sort the Routes screen by Flap to see them all`,
     asPathChangedTitle: (key: string) => `AS_PATH changed: ${key}`,
     asPathChangedDetail: (from: string, first: string, last: string) =>
       `from ${from}: ${first} → ${last}`,
@@ -233,6 +237,9 @@ export const en = {
 
   messages: {
     filterAria: 'Filter',
+    /** A filter the parser rejected, with the list left unfiltered. */
+    parseError: (detail: ParseErrorDetail) => describeParseError(detail),
+    parseErrorUnapplied: 'The filter is not applied until this is fixed.',
     filterPlaceholder:
       'Filter — type = UPDATE, ip = 192.0.2.1, 198.51.100.0/24, AS65001   ( / to focus)',
     clearFilterAria: 'Clear filter',
@@ -559,6 +566,8 @@ export const en = {
     colWithdrawn: 'Withdrawn',
     colLastSeen: 'Last Seen (UTC)',
     colFlap: 'Flap',
+    colFlapTitle:
+      'Times the route went away: withdrawals of a route the same peer had announced (or announced before the capture began). Re-announcing is not a flap, nor is a repeated withdrawal.',
     noPrefixesFound: 'No prefixes found',
     resizePrefixList: 'Resize the prefix list',
     routeHistory: (prefix: string | null) =>

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useWorkspace, type SessionSummary } from '../../context/WorkspaceContext'
-import { groupFindings, alertsForPeering, type FindingGroup } from '../dashboard/findings'
+import { groupFindings, type FindingGroup } from '../dashboard/findings'
 import { alertLink } from '../dashboard/alert-link'
 import type { AlertSeverity, DashboardAlert } from '../dashboard/types'
 import { formatTimeOfDayUtc } from '../../lib/format-time'
@@ -29,11 +29,10 @@ const STRIPE: Record<AlertSeverity, string> = {
  * wrong here" next to "where am I looking".
  */
 export function SessionRail({ onNavigate }: { onNavigate?: () => void }) {
-  const { sessions, alerts, scope, setScope } = useWorkspace()
+  const { sessions, scopedAlerts, scope, setScope } = useWorkspace()
   const { t } = useI18n()
   const total = sessions.reduce((sum, s) => sum + s.messages, 0)
 
-  const scopedAlerts = useMemo(() => alertsForPeering(alerts, scope), [alerts, scope])
   const groups = useMemo(() => groupFindings(scopedAlerts), [scopedAlerts])
 
   const choose = (key: string | null) => {
@@ -55,7 +54,9 @@ export function SessionRail({ onNavigate }: { onNavigate?: () => void }) {
             >
               <span className="h-2 w-2 shrink-0 rounded-full bg-hair-strong" aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate text-left">{t.workspace.allSessions}</span>
-              <span className="text-[11px] tabular-nums text-dim">{total}</span>
+              {/* With its unit, as each session's own count has: a bare 68 next
+                  to a header counting 50 packets read as a third kind of thing. */}
+              <span className="shrink-0 text-[11px] tabular-nums text-dim">{t.workspace.messageCount(total)}</span>
             </button>
           </li>
           {sessions.map((session) => (
@@ -69,7 +70,14 @@ export function SessionRail({ onNavigate }: { onNavigate?: () => void }) {
       <section aria-label={t.workspace.findingsHeading} className="flex min-h-0 flex-1 flex-col">
         <RailHeading
           title={t.workspace.findingsHeading}
-          count={groups.length > 0 ? t.workspace.findingsCount(groups.length, scopedAlerts.length) : ''}
+          count={
+            groups.length > 0
+              ? t.workspace.findingsCount(
+                  groups.length,
+                  groups.reduce((sum, group) => sum + group.occurrences, 0)
+                )
+              : ''
+          }
         />
         <div className="min-h-0 flex-1 overflow-y-auto">
           {groups.length === 0 ? (
@@ -78,7 +86,7 @@ export function SessionRail({ onNavigate }: { onNavigate?: () => void }) {
             <ul>
               {groups.map((group) => (
                 <li key={group.key} className="border-t border-hair first:border-t-0">
-                  <FindingRow group={group} onNavigate={onNavigate} />
+                  <FindingRow group={group} scoped={scope !== null} onNavigate={onNavigate} />
                 </li>
               ))}
             </ul>
@@ -137,7 +145,16 @@ function SessionRow({ session, active, onSelect }: { session: SessionSummary; ac
   )
 }
 
-function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: () => void }) {
+function FindingRow({
+  group,
+  scoped,
+  onNavigate,
+}: {
+  group: FindingGroup
+  /** Whether a session is chosen, which is what a route finding is then counted over. */
+  scoped: boolean
+  onNavigate?: () => void
+}) {
   const { t } = useI18n()
   const navigate = useNavigate()
   // The worst group starts open, so the first screen names the problem and
@@ -148,7 +165,7 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
   // NOTIFICATIONs on one session are one row with `count: 3`), so the badge
   // counts occurrences, not rows — "×1" for a session torn down three times
   // undersold the very repetition the rule exists to report.
-  const occurrences = group.alerts.reduce((sum, alert) => sum + (alert.count ?? 1), 0)
+  const occurrences = group.occurrences
   const title = single ? group.alerts[0].title : t.workspace.groupTitle(group.rule, group.alerts[0].title)
 
   // A finding opens its evidence without changing the scope. The link's own
@@ -182,7 +199,11 @@ function FindingRow({ group, onNavigate }: { group: FindingGroup; onNavigate?: (
               look, which a clamp cut off first. The column scrolls, so a
               long explanation costs little. */}
           <span className={`mt-0.5 block text-[11px] text-muted ${single ? '' : 'truncate'}`}>
-            {single ? group.alerts[0].detail : t.workspace.groupSessions(group.peerings.length)}
+            {single
+              ? group.alerts[0].detail
+              : group.peerings.length === 0 && scoped
+                ? t.workspace.groupInSession
+                : t.workspace.groupSessions(group.peerings.length)}
           </span>
           {single && group.alerts[0].timeSpan && (
             <span className="mt-0.5 block text-[11px] tabular-nums text-dim">{spanLabel(group.alerts[0].timeSpan)}</span>

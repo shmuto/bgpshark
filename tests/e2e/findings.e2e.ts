@@ -13,7 +13,7 @@ test.describe('findings beside the views', () => {
 
   test('one hard reset on three sessions reads as one finding, not sixteen rows', async ({ page }) => {
     const rail = await showFindings(page)
-    await expect(rail.getByRole('heading', { name: /^Findings/ })).toContainText('4 kinds · 16 alerts')
+    await expect(rail.getByRole('heading', { name: /^Findings/ })).toContainText('4 kinds · 18 occurrences')
 
     const groups = rail.getByRole('region', { name: 'Findings' }).locator('li > div > button')
     await expect(groups).toHaveCount(4)
@@ -48,11 +48,34 @@ test.describe('choosing a session', () => {
 
     await expect(page.getByTestId('session-scope')).toHaveText('1.1.1.1 ↔ 2.2.2.2')
     await expect.poll(() => shownCount(page)).toBe(17)
-    await expect(rail.getByRole('heading', { name: /^Findings/ })).toContainText('8 alerts')
+    // The session's own findings, with its route flaps counted on it alone.
+    await expect(rail.getByRole('heading', { name: /^Findings/ })).toContainText('4 kinds · 6 occurrences')
 
     await page.getByRole('button', { name: 'Show all sessions' }).click()
     await expect(page.getByTestId('session-scope')).toHaveCount(0)
     await expect.poll(() => shownCount(page)).toBe(50)
+  })
+
+  test('route findings are counted over the chosen session, not the capture', async ({ page }) => {
+    const rail = page.getByRole('complementary', { name: 'Sessions and findings' })
+    const routeFlaps = rail
+      .getByRole('region', { name: 'Findings' })
+      .locator('li > div > button')
+      .filter({ hasText: 'Route flapping' })
+    await expect(routeFlaps).toContainText('×6')
+    await expect(routeFlaps).toContainText('Across the capture')
+
+    // Every other finding narrowed to the session; this one used to stay at
+    // the whole capture's ×6.
+    await rail.getByRole('button', { name: /^10\.0\.13\.1 ↔ 10\.0\.13\.3/ }).click()
+    await expect(routeFlaps).toContainText('×2')
+    await expect(routeFlaps).toContainText('In this session')
+
+    // Its instances still open a packet of that session.
+    await routeFlaps.click()
+    await rail.getByRole('button', { name: /^1\.1\.1\.1\/32/ }).click()
+    // Frame 116: 10.0.13.3 withdrawing 1.1.1.1/32 from 10.0.13.1.
+    await expect(page.getByText(/^Packet #\d+$/)).toHaveText('Packet #116')
   })
 
   test('the scope follows the reader to another tab', async ({ page }) => {

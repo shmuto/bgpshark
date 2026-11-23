@@ -948,3 +948,36 @@ describe('prefix follows a route through its withdrawal', () => {
     expect(sql('withdrawn = 1.1.1.1/32')).not.toMatch(/FROM nlri/)
   })
 })
+
+describe('parse errors', () => {
+  test('characters the language has no use for are reported as typed', () => {
+    // They used to be skipped, and the error then talked about the query
+    // ending after `and` rather than about the `!!!`.
+    const { errors } = parseQuery('type = UPDATE and !!!')
+    expect(errors).toHaveLength(1)
+    expect(errors[0].detail).toEqual({ code: 'expected-field', got: '!!!' })
+    expect(errors[0].message).toBe('Expected a field name, got "!!!"')
+  })
+
+  test('`!=` still reads as an operator next to an invalid run', () => {
+    expect(parseQuery('type != KEEPALIVE').errors).toHaveLength(0)
+    expect(parseQuery('type = UPDATE and ! type = OPEN').errors[0].detail).toEqual({
+      code: 'expected-field',
+      got: '!',
+    })
+  })
+
+  test('a query that stops early says so instead of naming a token', () => {
+    const { errors } = parseQuery('type = UPDATE and')
+    expect(errors[0].detail).toEqual({ code: 'expected-field', got: null })
+    expect(errors[0].message).toBe('The filter ends where a field name was expected')
+  })
+
+  test('every error carries its detail, so the interface can translate it', () => {
+    for (const query of ['type', 'type =', 'asn > abc', 'type < 3', 'type = UPDATE )']) {
+      const { errors } = parseQuery(query)
+      expect(errors.length).toBeGreaterThan(0)
+      for (const error of errors) expect(error.detail.code).toBeTruthy()
+    }
+  })
+})
