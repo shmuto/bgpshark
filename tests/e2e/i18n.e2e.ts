@@ -60,8 +60,9 @@ test.describe('header language toggle across screens', () => {
     await expect(page.getByRole('button', { name: '表示する列を設定' })).toContainText('列設定')
 
     // Filter to NOTIFICATION and verify Japanese troubleshooting hint + RFC code name preserved
-    await page.getByRole('button', { name: /NOTIFICATION/ }).first().click()
-    await page.locator('tbody tr').first().click()
+    await page.getByLabel('フィルタ', { exact: true }).fill('type = NOTIFICATION')
+    await page.keyboard.press('Escape')
+    await page.getByRole('main').locator('tbody tr').first().click()
     await expect(page.getByText('トラブルシューティングのヒント')).toBeVisible()
     await expect(page.getByText('エラーコード')).toBeVisible()
 

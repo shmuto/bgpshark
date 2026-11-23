@@ -27,15 +27,6 @@ import { appendCondition, formatCondition } from '../lib/filter/compose'
 import { FilterActionsContext } from '../context/filter-actions'
 import { useI18n } from '../i18n'
 
-const MESSAGE_TYPE_BADGE_COLORS: Record<string, string> = {
-  OPEN: 'bg-bgp-open/15 text-bgp-open',
-  UPDATE: 'bg-bgp-update/15 text-bgp-update',
-  NOTIFICATION: 'bg-bgp-notification/15 text-bgp-notification',
-  KEEPALIVE: 'bg-bgp-keepalive/15 text-bgp-keepalive',
-  ROUTE_REFRESH: 'bg-bgp-route-refresh/15 text-bgp-route-refresh',
-}
-
-
 /**
  * Where Messages was left, so coming back to it through the header tab picks
  * up the investigation instead of starting over: the filter, All Packets, and
@@ -223,24 +214,6 @@ function MessagesView() {
     }
     setSearchParams(next, { replace: true })
   }, [query, searchParams, setSearchParams])
-
-  // Message counts for the type badges, over the whole capture (not the
-  // filtered view) so the badges keep saying what exists.
-  const messageTypeCounts = useMemo(() => {
-    const counts: Record<string, number> = {
-      OPEN: 0,
-      UPDATE: 0,
-      NOTIFICATION: 0,
-      KEEPALIVE: 0,
-      ROUTE_REFRESH: 0,
-    }
-    for (const packet of packets) {
-      for (const msg of packet.messages) {
-        counts[msg.type] = (counts[msg.type] ?? 0) + 1
-      }
-    }
-    return counts
-  }, [packets])
 
   /**
    * The rows the list shows.
@@ -619,141 +592,69 @@ function MessagesView() {
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-canvas">
-      {/* Filter Bar — one query box, always there, the way Wireshark's
-          display filter is. The menus that used to be a separate "Simple"
-          mode now write into it (+ Filter), so the filter on screen is
-          always the filter in effect. */}
-      <div className="px-4 py-2 border-b border-hair bg-surface-sunken space-y-2">
-        <div className="flex items-center gap-2 flex-wrap lg:flex-nowrap">
-          <div className="flex-1 min-w-[16rem]">
-            <QueryInput
-              value={query}
-              onChange={setQuery}
-              packets={packets}
-              hasError={showParseErrors}
-              inputRef={filterInputRef}
-              ariaLabel={t.messages.filterAria}
-              placeholder={t.messages.filterPlaceholder}
-            />
-          </div>
-          <AddFilterPopover valuesFor={valuesFor} onAdd={addCondition} />
-          {/* Clearing is the × inside the box; a second button did the same. */}
+      {/* One row: the query box — always there, the way Wireshark's display
+          filter is — and the few controls that change what the list holds.
+          The per-type count badges that sat under it are gone: the counts
+          belong to the findings and the time strip, and `type = X` is one
+          suggestion away in the box. */}
+      <div className="flex shrink-0 items-center gap-2 border-b border-hair bg-surface px-3 py-1.5">
+        <div className="min-w-0 flex-1">
+          <QueryInput
+            value={query}
+            onChange={setQuery}
+            packets={packets}
+            hasError={showParseErrors}
+            inputRef={filterInputRef}
+            ariaLabel={t.messages.filterAria}
+            placeholder={t.messages.filterPlaceholder}
+          />
+        </div>
+        <AddFilterPopover valuesFor={valuesFor} onAdd={addCondition} />
+        {/* Clearing is the × inside the box; a second button did the same. */}
 
-          <div className="h-4 w-px bg-hair-strong shrink-0" />
-
-          {/* Packet display toggle */}
-          <div className="flex items-center gap-1 shrink-0">
-            <span className="text-xs text-muted">{t.messages.showLabel}</span>
+        <div
+          role="group"
+          aria-label={t.messages.showLabel}
+          className="flex shrink-0 overflow-hidden rounded border border-hair text-xs"
+        >
+          {([false, true] as const).map((all) => (
             <button
-              onClick={() => { setShowAllPackets(false); selectPacket(null) }}
-              className={`px-2 py-1 text-xs rounded transition-colors ${
-                !showAllPackets
-                  ? 'bg-accent text-accent-fg'
-                  : 'bg-surface-sunken text-muted hover:bg-surface-raised'
+              key={String(all)}
+              type="button"
+              aria-pressed={showAllPackets === all}
+              onClick={() => { setShowAllPackets(all); selectPacket(null) }}
+              className={`px-2 py-1 transition-colors ${
+                showAllPackets === all ? 'bg-accent text-accent-fg' : 'text-muted hover:bg-surface-sunken'
               }`}
             >
-              {t.messages.bgpOnly}
+              {all ? t.messages.allPackets : t.messages.bgpOnly}
             </button>
-            <button
-              onClick={() => { setShowAllPackets(true); selectPacket(null) }}
-              className={`px-2 py-1 text-xs rounded transition-colors ${
-                showAllPackets
-                  ? 'bg-accent text-accent-fg'
-                  : 'bg-surface-sunken text-muted hover:bg-surface-raised'
-              }`}
-            >
-              {t.messages.allPackets}
-            </button>
-          </div>
+          ))}
         </div>
 
-        {/* Message counts up front, because the list is virtualized: 27 UPDATEs
-            that all sit below the fold are otherwise invisible to someone
-            scanning the Type column. Clicking a badge writes its filter into
-            the query box like any other filter. */}
-        {!showAllPackets && packets.length > 0 && (
-          <div className="flex items-center gap-1.5 text-xs flex-wrap">
-            {(Object.entries(messageTypeCounts) as [string, number][])
-              .filter(([, count]) => count > 0)
-              .map(([type, count]) => {
-                const active = query.trim() === `type = ${type}`
-                return (
-                  <button
-                    key={type}
-                    onClick={() => setQuery(active ? '' : `type = ${type}`)}
-                    title={active ? t.messages.clearFilterTitle : t.messages.filterToTypeTitle(type)}
-                    className={`px-1.5 py-0.5 rounded font-medium transition-colors ${
-                      MESSAGE_TYPE_BADGE_COLORS[type] ?? 'bg-surface-sunken text-muted'
-                    } ${active ? 'ring-1 ring-accent' : 'hover:opacity-75'}`}
-                  >
-                    {type} {count}
-                  </button>
-                )
-              })}
-          </div>
-        )}
-
-        {/* A capture with traffic but no BGP would otherwise present as an
-            empty list, which reads as "nothing captured". Point at the view
-            that actually has the evidence. */}
-        {!showAllPackets && packets.length === 0 && allPackets.length > 0 && (
-          <div className="text-xs text-warning flex items-center gap-2">
-            <span>{t.messages.noBgpBanner(allPackets.length)}</span>
-            <button
-              onClick={() => setShowAllPackets(true)}
-              className="text-accent hover:text-accent-hover underline"
-            >
-              {t.messages.showAllPackets}
-            </button>
-          </div>
-        )}
-
-        {/* Status bar. The gap keeps a parse error from running straight on
-            from the packet count ("…of 50 packetsExpected operator…"). */}
-        <div className="flex items-center justify-between gap-3 text-xs text-muted">
-          <span>
-            {t.messages.showingPackets(
-              displayPackets.length,
-              showAllPackets ? allPackets.length : packets.length
-            )}
-            {showAllPackets && !filterActive && t.messages.bgpSubcount(packets.length)}
-            {/* Say how the filter was applied to frames that carry no BGP, so
-                a short list is not mistaken for a short capture. */}
-            {showAllPackets && filterActive && (
-              <span title={t.messages.nonBgpMatchTooltip}>
-                {t.messages.nonBgpMatchCount(
-                  displayPackets.filter((p) => p.kind === 'bgp').length,
-                  displayPackets.filter((p) => p.kind === 'generic').length
-                )}
-              </span>
-            )}
-          </span>
-          {isFiltering && <span>{t.messages.filtering}</span>}
-          {showParseErrors && (
-            <span className="text-critical" title={parseErrors.map(e => e.message).join('; ')}>
-              {parseErrors[0]?.message}
-            </span>
-          )}
-          <div className="ml-auto flex items-center gap-3">
-            {displayPackets.length > 0 && linkType !== null && (
-              <button
-                onClick={exportPcap}
-                title={t.messages.exportTitle}
-                className="text-accent hover:text-accent-hover hover:underline"
-              >
-                {t.messages.exportButton(displayPackets.length)}
-              </button>
-            )}
-            {/* Out here rather than in the table's header row, which scrolled
-                it out of reach whenever the table was wider than its pane. */}
-            <ColumnPicker
-              visibleColumns={packetColumns.visibleColumns}
-              onToggle={packetColumns.toggleColumn}
-              onReset={packetColumns.resetColumns}
-            />
-          </div>
-        </div>
+        {/* Out here rather than in the table's header row, which scrolled
+            it out of reach whenever the table was wider than its pane. */}
+        <ColumnPicker
+          visibleColumns={packetColumns.visibleColumns}
+          onToggle={packetColumns.toggleColumn}
+          onReset={packetColumns.resetColumns}
+        />
       </div>
+
+      {/* A capture with traffic but no BGP would otherwise present as an
+          empty list, which reads as "nothing captured". Point at the view
+          that actually has the evidence. */}
+      {!showAllPackets && packets.length === 0 && allPackets.length > 0 && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-hair bg-warning-subtle px-3 py-1.5 text-xs text-warning">
+          <span>{t.messages.noBgpBanner(allPackets.length)}</span>
+          <button
+            onClick={() => setShowAllPackets(true)}
+            className="text-accent underline hover:text-accent-hover"
+          >
+            {t.messages.showAllPackets}
+          </button>
+        </div>
+      )}
 
       {/* Main content - split view, stacked when there is no room for two columns */}
       <div ref={split.containerRef} className="flex-1 flex flex-col lg:flex-row min-h-0">
@@ -763,6 +664,43 @@ function MessagesView() {
           className="w-full flex-1 lg:flex-none flex flex-col min-h-0"
           style={isCompact ? undefined : { width: `${split.percent}%` }}
         >
+          {/* What the list holds, under it like a status bar. The gap keeps a
+              parse error from running straight on from the packet count
+              ("…of 50 packetsExpected operator…"). */}
+          <div className="order-last flex shrink-0 items-center gap-3 border-t border-hair bg-surface-sunken px-3 py-1 text-[11px] text-muted">
+            <span className="truncate">
+              {t.messages.showingPackets(
+                displayPackets.length,
+                showAllPackets ? allPackets.length : packets.length
+              )}
+              {showAllPackets && !filterActive && t.messages.bgpSubcount(packets.length)}
+              {/* Say how the filter was applied to frames that carry no BGP, so
+                  a short list is not mistaken for a short capture. */}
+              {showAllPackets && filterActive && (
+                <span title={t.messages.nonBgpMatchTooltip}>
+                  {t.messages.nonBgpMatchCount(
+                    displayPackets.filter((p) => p.kind === 'bgp').length,
+                    displayPackets.filter((p) => p.kind === 'generic').length
+                  )}
+                </span>
+              )}
+            </span>
+            {isFiltering && <span>{t.messages.filtering}</span>}
+            {showParseErrors && (
+              <span className="truncate text-critical" title={parseErrors.map((e) => e.message).join('; ')}>
+                {parseErrors[0]?.message}
+              </span>
+            )}
+            {displayPackets.length > 0 && linkType !== null && (
+              <button
+                onClick={exportPcap}
+                title={t.messages.exportTitle}
+                className="ml-auto shrink-0 text-accent hover:text-accent-hover hover:underline"
+              >
+                {t.messages.exportButton(displayPackets.length)}
+              </button>
+            )}
+          </div>
           <div className="flex-1 overflow-auto">
             <PacketList
               packets={displayPackets}

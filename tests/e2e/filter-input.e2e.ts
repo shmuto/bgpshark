@@ -56,10 +56,15 @@ test.describe('the filter box', () => {
     await expect(page.getByRole('button', { name: 'Advanced' })).toHaveCount(0)
   })
 
-  test('a type badge writes its filter into the box, and nothing contradicts it', async ({ page }) => {
-    await page.getByRole('button', { name: /^UPDATE \d+/ }).click()
-    await expect(page.getByLabel('Filter', { exact: true })).toHaveValue('type = UPDATE')
-    await expect(page.getByText('No filters applied')).toHaveCount(0)
+  test('the filter, + Filter and the BGP / All toggle share one row', async ({ page }) => {
+    const top = async (name: string) =>
+      (await page.getByRole('button', { name, exact: true }).boundingBox())!.y
+    const input = (await page.getByLabel('Filter', { exact: true }).boundingBox())!
+    for (const name of ['+ Filter', 'BGP Only', 'All Packets']) {
+      expect(Math.abs((await top(name)) - input.y)).toBeLessThan(input.height)
+    }
+    // The per-type count badges are gone; `type = X` is a suggestion away.
+    await expect(page.getByRole('button', { name: /^UPDATE \d+$/ })).toHaveCount(0)
   })
 
   test('+ Filter appends a condition built from menus', async ({ page }) => {
