@@ -20,7 +20,7 @@ test.describe('EVPN in the message list', () => {
   test('the route is named by its MAC, and its extended communities decode', async ({ page }) => {
     // Finding the row by its MAC is half the assertion: an EVPN route has no
     // prefix, so this column would otherwise be blank or show a made-up one.
-    await page.getByText('[2] 00:0c:29:aa:bb:cc').last().click()
+    await page.getByRole('main').getByText('[2] 00:0c:29:aa:bb:cc').last().click()
     await expect(page.getByText('Path Attributes')).toBeVisible()
 
     const body = await page.locator('body').innerText()
