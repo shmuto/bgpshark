@@ -233,7 +233,9 @@ export const ja: Messages = {
             ? 'フィールド名が必要な位置でフィルタが終わっています'
             : `フィールド名が必要な位置に ${typed(detail.got)} があります`
         case 'expected-operator':
-          return `「${detail.field}」の後に演算子（= など）が必要です。${typed(detail.got)} があります`
+          return detail.got === null
+            ? `「${detail.field}」の後に演算子（= など）が必要です`
+            : `「${detail.field}」の後に演算子（= など）が必要です。${typed(detail.got)} があります`
         case 'expected-value':
           return `「${detail.field} ${detail.operator}」の後に値が必要です`
         case 'ordered-not-numeric':

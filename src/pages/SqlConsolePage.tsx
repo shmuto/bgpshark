@@ -47,7 +47,9 @@ LIMIT 20`,
     //
     // Grouped by prefix *and* length: 10.0.12.0/24 and 10.0.12.0/23 are two
     // routes. Returned as CIDR, so the cell links straight to the route. EVPN
-    // routes have no prefix and are left to the Routes screen.
+    // routes are left to the Routes screen: their rows do carry a prefix (the
+    // formatted route) and a length of 0, so they are excluded by route type —
+    // a NULL test let them through as "[2] …/0", a key no screen knows.
     key: 'prefixFlapping',
     query: `WITH events AS (
   SELECT n.prefix || '/' || n.prefix_length AS prefix, p.src_ip,
@@ -55,12 +57,14 @@ LIMIT 20`,
   FROM nlri n
   JOIN messages m ON m.id = n.message_id
   JOIN packets p ON p.frame_index = m.frame_index
+  WHERE n.evpn_route_type IS NULL
   UNION ALL
   SELECT w.prefix || '/' || w.prefix_length, p.src_ip,
          m.frame_index, m.message_index, 1, w.id, 'withdraw'
   FROM withdrawn w
   JOIN messages m ON m.id = w.message_id
   JOIN packets p ON p.frame_index = m.frame_index
+  WHERE w.evpn_route_type IS NULL
 ),
 ordered AS (
   SELECT prefix, action,
@@ -69,7 +73,6 @@ ordered AS (
            ORDER BY frame_index, message_index, step, id
          ) AS previous
   FROM events
-  WHERE prefix IS NOT NULL
 )
 SELECT
   prefix,

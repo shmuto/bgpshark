@@ -45,10 +45,10 @@ export function groupFindings(alerts: DashboardAlert[]): FindingGroup[] {
   }
 
   // Alerts arrive sorted worst first, so a stable sort on severity keeps the
-  // engine's own ordering within a tier; the instance count breaks ties so the
-  // widest problem leads.
+  // engine's own ordering within a tier; occurrences break ties, so the order
+  // follows the ×N the reader sees. Counting rows instead put two sessions
+  // that flapped once each (×2) above one route that flapped ten times (×10).
   return Array.from(groups.values()).sort(
-    (a, b) =>
-      SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || b.alerts.length - a.alerts.length
+    (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || b.occurrences - a.occurrences
   )
 }

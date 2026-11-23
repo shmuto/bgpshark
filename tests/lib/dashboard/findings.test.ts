@@ -3,6 +3,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { computeAlerts, scopeAlerts } from '../../../src/components/dashboard/alerts'
 import { groupFindings } from '../../../src/components/dashboard/findings'
+import type { DashboardAlert } from '../../../src/components/dashboard/types'
 import { parsePcapng } from '../../../src/lib/pcap'
 import { parseBgpFromPackets } from '../../../src/lib/bgp'
 
@@ -94,5 +95,30 @@ describe('scopeAlerts', () => {
   test('no scope is everything', () => {
     const { packets, alerts } = sample()
     expect(scopeAlerts(alerts, packets, null)).toBe(alerts)
+  })
+})
+
+describe('group order', () => {
+  test('within a severity, the group with more occurrences leads, not the one with more rows', () => {
+    const alert = (id: string, rule: DashboardAlert['rule'], count?: number, peering?: string): DashboardAlert => ({
+      id,
+      rule,
+      severity: 'warning',
+      title: id,
+      detail: '',
+      timestamp: null,
+      filter: '',
+      count,
+      peering,
+    })
+    const groups = groupFindings([
+      alert('flap-a', 'session-flap', undefined, 'a|b'),
+      alert('flap-c', 'session-flap', undefined, 'c|d'),
+      alert('route-flap-10.0.0.0/8', 'route-flap', 10),
+    ])
+    expect(groups.map((g) => [g.key, g.occurrences])).toEqual([
+      ['route-flap', 10],
+      ['session-flap', 2],
+    ])
   })
 })
