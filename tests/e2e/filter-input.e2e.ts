@@ -200,7 +200,7 @@ test.describe('the filter box gets out of the way', () => {
     await input.pressSequentially('ip = 10.0.13.1', { delay: 20 })
 
     // The lone suggestion would repeat what is already typed.
-    await expect(page.getByRole('button', { name: /^10\.0\.13\.1/ })).toHaveCount(0)
+    await expect(page.getByRole('main').getByRole('button', { name: /^10\.0\.13\.1/ })).toHaveCount(0)
     const status = page.getByText(/Showing \d+ of \d+ packets/)
     const box = (await status.boundingBox())!
     const hit = await page.evaluate(
