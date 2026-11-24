@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { BgpPacket } from '../../lib/bgp/types'
 import { getSuggestions, type Suggestion } from '../../lib/filter'
-import { suggestionsAreSettled } from '../../lib/filter/parser'
+import { filterValuesForAsync, hasFilterValues, suggestionsAreSettled } from '../../lib/filter/parser'
 import { useI18n } from '../../i18n'
 
 interface QueryInputProps {
@@ -17,6 +17,20 @@ interface QueryInputProps {
 
 /** Nothing in the suggestion list is selected. Enter applies the filter instead. */
 const NO_SELECTION = -1
+
+/**
+ * From how many packets the values the box suggests (addresses, prefixes, AS
+ * numbers…) are gathered in the background.
+ *
+ * Gathering them walks every route of every packet, and on a large capture
+ * that held the page frozen for seconds on the box's first focus — three at
+ * 200MB, the longest freeze left once a load had finished. Above this size it
+ * starts on that first focus and runs in slices, and the value suggestions
+ * join the list when it is done; fields, operators and fixed values are
+ * offered meanwhile. Below it, it takes milliseconds and happens at once, as
+ * it always did.
+ */
+const BACKGROUND_VALUES_MIN_PACKETS = 20_000
 
 export function QueryInput({ value, onChange, packets, placeholder, hasError, inputRef: externalRef, ariaLabel }: QueryInputProps) {
   const { locale, t } = useI18n()
@@ -36,12 +50,18 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError, in
   const inputRef = externalRef ?? ownRef
   const suggestionsRef = useRef<HTMLDivElement>(null)
 
+  // See BACKGROUND_VALUES_MIN_PACKETS. `wantValues` is set by the first focus,
+  // so a capture whose filter box is never used never pays for its values.
+  const [wantValues, setWantValues] = useState(false)
+  const [, setValuesVersion] = useState(0)
+  const valuesPending = packets.length > BACKGROUND_VALUES_MIN_PACKETS && !hasFilterValues(packets)
+
   // Derive suggestions at render time so switching UI language updates an open
   // dropdown immediately without waiting for another keystroke.
   const suggestions = useMemo<Suggestion[]>(() => {
     if (!showSuggestions || isComposing) return []
-    return getSuggestions(value, cursorPos, packets, locale)
-  }, [showSuggestions, isComposing, value, cursorPos, packets, locale])
+    return getSuggestions(value, cursorPos, packets, locale, { onlyGatheredValues: valuesPending })
+  }, [showSuggestions, isComposing, value, cursorPos, packets, locale, valuesPending])
 
   const updateSuggestions = useCallback(
     (query: string, pos: number) => {
@@ -50,14 +70,37 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError, in
         return
       }
       setCursorPos(pos)
-      const newSuggestions = getSuggestions(query, pos, packets, locale)
+      const newSuggestions = getSuggestions(query, pos, packets, locale, { onlyGatheredValues: valuesPending })
       setSelectedIndex(NO_SELECTION)
       setShowSuggestions(
         newSuggestions.length > 0 && !suggestionsAreSettled(query.slice(0, pos), newSuggestions)
       )
     },
-    [packets, isComposing, locale]
+    [packets, isComposing, locale, valuesPending]
   )
+
+  // Read by the gathering below when it finishes, which may be several
+  // renders after it started.
+  const latestUpdateSuggestions = useRef(updateSuggestions)
+  useEffect(() => {
+    latestUpdateSuggestions.current = updateSuggestions
+  }, [updateSuggestions])
+
+  useEffect(() => {
+    if (!wantValues || !valuesPending) return
+    const controller = new AbortController()
+    void filterValuesForAsync(packets, controller.signal).then((gathered) => {
+      if (!gathered) return
+      setValuesVersion((version) => version + 1)
+      // The reader may be sitting after `prefix = ` with nothing listed:
+      // offer the values now rather than at their next keystroke.
+      const input = inputRef.current
+      if (input && document.activeElement === input) {
+        latestUpdateSuggestions.current(input.value, input.selectionStart ?? input.value.length)
+      }
+    })
+    return () => controller.abort()
+  }, [wantValues, valuesPending, packets, inputRef])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value
@@ -166,6 +209,7 @@ export function QueryInput({ value, onChange, packets, placeholder, hasError, in
   }
 
   const handleFocus = () => {
+    setWantValues(true)
     if (inputRef.current && !isComposing) {
       updateSuggestions(value, inputRef.current.selectionStart ?? value.length)
     }

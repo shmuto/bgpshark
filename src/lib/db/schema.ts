@@ -12,6 +12,20 @@
  *
  * Fields that are narrower on the wire (ports, hold time, 2-byte community
  * halves, AFI/SAFI, the 24-bit VNI) stay INTEGER.
+ *
+ * No secondary indexes. There were 24, one per column a filter or a join
+ * might look up, and maintaining them was most of the insert: on a 50MB
+ * capture the load took 17.5 seconds with them and 12.3 without, while the
+ * filter's main queries ran within ±20ms either way. A capture is loaded once
+ * and queried as a whole, which DuckDB's columnar scans (with the min/max
+ * zone maps it keeps per row group) answer without help; an index pays off
+ * for point lookups into a table that outlives many of them, which these do
+ * not. The primary keys stay, as the constraint they state.
+ *
+ * Nor do packets carry their raw bytes. A Base64 copy of every frame was
+ * stored and read by nothing — the app reads frames from the parsed packets,
+ * and SQL results lead back to them through `frame_index` — at a tenth of
+ * the load's time.
  */
 
 export const SCHEMA_SQL = `
@@ -29,7 +43,6 @@ CREATE TABLE IF NOT EXISTS packets (
   dst_ip_bits     VARCHAR,
   src_port        INTEGER,
   dst_port        INTEGER,
-  raw_data_base64 VARCHAR,
   parse_warnings  VARCHAR[]
 );
 
@@ -59,11 +72,6 @@ CREATE TABLE IF NOT EXISTS messages (
   safi_name       VARCHAR
 );
 
-CREATE INDEX IF NOT EXISTS idx_messages_frame ON messages(frame_index);
-CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(type);
-CREATE INDEX IF NOT EXISTS idx_messages_router_id ON messages(router_id);
-CREATE INDEX IF NOT EXISTS idx_messages_my_as ON messages(my_as);
-
 -- Capabilities table (for OPEN messages)
 CREATE TABLE IF NOT EXISTS capabilities (
   id              INTEGER PRIMARY KEY,
@@ -79,9 +87,6 @@ CREATE TABLE IF NOT EXISTS capabilities (
   cap_safi_name   VARCHAR,
   cap_as_number   BIGINT
 );
-
-CREATE INDEX IF NOT EXISTS idx_capabilities_message ON capabilities(message_id);
-CREATE INDEX IF NOT EXISTS idx_capabilities_name ON capabilities(name);
 
 -- Path attributes table (for UPDATE messages)
 CREATE TABLE IF NOT EXISTS path_attributes (
@@ -103,9 +108,6 @@ CREATE TABLE IF NOT EXISTS path_attributes (
   aggregator_addr VARCHAR
 );
 
-CREATE INDEX IF NOT EXISTS idx_path_attrs_message ON path_attributes(message_id);
-CREATE INDEX IF NOT EXISTS idx_path_attrs_type ON path_attributes(type_name);
-
 -- AS_PATH expanded table
 CREATE TABLE IF NOT EXISTS as_path (
   id              INTEGER PRIMARY KEY,
@@ -115,9 +117,6 @@ CREATE TABLE IF NOT EXISTS as_path (
   as_index        INTEGER,
   asn             BIGINT
 );
-
-CREATE INDEX IF NOT EXISTS idx_as_path_message ON as_path(message_id);
-CREATE INDEX IF NOT EXISTS idx_as_path_asn ON as_path(asn);
 
 -- NLRI table (announced prefixes)
 CREATE TABLE IF NOT EXISTS nlri (
@@ -147,11 +146,6 @@ CREATE TABLE IF NOT EXISTS nlri (
   evpn_eth_tag    BIGINT
 );
 
-CREATE INDEX IF NOT EXISTS idx_nlri_message ON nlri(message_id);
-CREATE INDEX IF NOT EXISTS idx_nlri_prefix ON nlri(prefix);
-CREATE INDEX IF NOT EXISTS idx_nlri_prefix_bits ON nlri(prefix_bits);
-CREATE INDEX IF NOT EXISTS idx_nlri_evpn_mac ON nlri(evpn_mac);
-
 -- Withdrawn routes table
 CREATE TABLE IF NOT EXISTS withdrawn (
   id              INTEGER PRIMARY KEY,
@@ -176,11 +170,6 @@ CREATE TABLE IF NOT EXISTS withdrawn (
   evpn_eth_tag    BIGINT
 );
 
-CREATE INDEX IF NOT EXISTS idx_withdrawn_message ON withdrawn(message_id);
-CREATE INDEX IF NOT EXISTS idx_withdrawn_prefix ON withdrawn(prefix);
-CREATE INDEX IF NOT EXISTS idx_withdrawn_prefix_bits ON withdrawn(prefix_bits);
-CREATE INDEX IF NOT EXISTS idx_withdrawn_evpn_mac ON withdrawn(evpn_mac);
-
 -- Communities table
 CREATE TABLE IF NOT EXISTS communities (
   id              INTEGER PRIMARY KEY,
@@ -189,9 +178,6 @@ CREATE TABLE IF NOT EXISTS communities (
   value           INTEGER,
   formatted       VARCHAR
 );
-
-CREATE INDEX IF NOT EXISTS idx_communities_message ON communities(message_id);
-CREATE INDEX IF NOT EXISTS idx_communities_formatted ON communities(formatted);
 
 -- Extended communities table (RFC 4360). \`kind\` and \`value\` are the decoded
 -- halves — 'Route Target' and '65001:100' — and \`formatted\` is the two joined,
@@ -207,10 +193,6 @@ CREATE TABLE IF NOT EXISTS extended_communities (
   subtype         INTEGER
 );
 
-CREATE INDEX IF NOT EXISTS idx_ext_communities_message ON extended_communities(message_id);
-CREATE INDEX IF NOT EXISTS idx_ext_communities_value ON extended_communities(value);
-CREATE INDEX IF NOT EXISTS idx_ext_communities_formatted ON extended_communities(formatted);
-
 -- Large communities table
 CREATE TABLE IF NOT EXISTS large_communities (
   id              INTEGER PRIMARY KEY,
@@ -221,7 +203,6 @@ CREATE TABLE IF NOT EXISTS large_communities (
   formatted       VARCHAR
 );
 
-CREATE INDEX IF NOT EXISTS idx_large_communities_message ON large_communities(message_id);
 `
 
 export const DROP_TABLES_SQL = `

@@ -2,10 +2,17 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useLocation } from 'react-router-dom'
 import { useApp } from './AppContext'
 import { useI18n } from '../i18n'
-import { computeAlerts, computeTransportAlerts, scopeAlerts } from '../components/dashboard/alerts'
+import {
+  alertsFor,
+  alertsForAsync,
+  computeTransportAlerts,
+  hasAlerts,
+  hasScopedAlerts,
+  scopedAlertsFor,
+  scopedAlertsForAsync,
+} from '../components/dashboard/alerts'
 import type { AlertSeverity, DashboardAlert } from '../components/dashboard/types'
 import { peeringKey, peeringAddresses } from '../lib/bgp/peering'
-import { hasPrefixStats, prefixStatsForAsync } from '../lib/bgp/prefix-stats'
 import type { BgpOpenMessage, BgpPacket } from '../lib/bgp/types'
 import type { GenericPacket } from '../lib/pcap'
 
@@ -35,9 +42,9 @@ interface WorkspaceValue {
    */
   scopedAlerts: DashboardAlert[]
   /**
-   * True while a large capture's route statistics are still being worked out
-   * in the background; the findings are empty until they are, which is not
-   * the same as there being none.
+   * True while a large capture's findings are still being worked out in the
+   * background; they are empty until they are, which is not the same as
+   * there being none.
    */
   findingsPending: boolean
   sessions: SessionSummary[]
@@ -65,15 +72,14 @@ function inRange(timestamp: Date, [from, to]: [number, number]): boolean {
 const SEVERITY_RANK: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 }
 
 /**
- * From how many BGP packets the findings wait for route statistics worked out
- * in the background.
+ * From how many BGP packets the findings are worked out in the background.
  *
- * The route rules read statistics over every route in the capture, and
- * computing them in one go held the page frozen for seconds after a large
- * capture loaded — the packet list drawn but unusable. Above this size the
- * statistics are built in slices that leave the page responsive, and the
- * findings appear when they are done. Below it they take milliseconds, and
- * the findings are there with the list, as they always were.
+ * The rules read every packet, frame and route in the capture, and computing
+ * them in one go held the page frozen for seconds after a large capture
+ * loaded — the packet list drawn but unusable. Above this size the route
+ * statistics and then the rules run in slices that leave the page responsive,
+ * and the findings appear when they are done. Below it they take
+ * milliseconds, and the findings are there with the list, as they always were.
  */
 export const BACKGROUND_FINDINGS_MIN_PACKETS = 20_000
 
@@ -89,28 +95,56 @@ function latestAsByAddress(packets: BgpPacket[]): Map<string, number> {
   return asByIp
 }
 
+/** What the session list counts per peering, which does not change with the findings. */
+interface SessionCounts {
+  /** BGP messages per `peeringKey`, with TCP-only peerings on port 179 at 0. */
+  messages: Map<string, number>
+  asByIp: Map<string, number>
+}
+
+/**
+ * The per-packet half of the session list, worked out once per capture.
+ *
+ * It walks every packet and every frame, and it used to run again each time
+ * the findings changed — once with none while they were pending, once when
+ * they arrived — which on a sparse 200MB capture was two more freezes of over
+ * half a second. Consecutive packets nearly always belong to the peering
+ * before them, so the key is only rebuilt when the addresses change: it was
+ * one string concatenated per packet, most of the time spent here.
+ */
+function countSessions(packets: BgpPacket[], allPackets: GenericPacket[]): SessionCounts {
+  const messages = new Map<string, number>()
+  let lastSrc: string | null = null
+  let lastDst: string | null = null
+  let key = ''
+  for (const packet of packets) {
+    if (packet.srcIp !== lastSrc || packet.dstIp !== lastDst) {
+      lastSrc = packet.srcIp
+      lastDst = packet.dstIp
+      key = peeringKey(lastSrc, lastDst)
+    }
+    messages.set(key, (messages.get(key) ?? 0) + packet.messages.length)
+  }
+  lastSrc = lastDst = null
+  for (const frame of allPackets) {
+    if (frame.protocol !== 'TCP' || (frame.srcPort !== 179 && frame.dstPort !== 179)) continue
+    if (frame.srcIp !== lastSrc || frame.dstIp !== lastDst) {
+      lastSrc = frame.srcIp
+      lastDst = frame.dstIp
+      key = peeringKey(lastSrc, lastDst)
+    }
+    if (!messages.has(key)) messages.set(key, 0)
+  }
+  return { messages, asByIp: latestAsByAddress(packets) }
+}
+
 /**
  * Sessions are pairs of addresses, not routers: the unit a NOTIFICATION, a hold
  * timer or a capability mismatch belongs to. TCP-only peerings on port 179 are
  * listed too, because a session that never got as far as BGP is exactly the one
  * someone opened the capture to look at.
  */
-function summarizeSessions(
-  packets: BgpPacket[],
-  allPackets: GenericPacket[],
-  alerts: DashboardAlert[]
-): SessionSummary[] {
-  const messages = new Map<string, number>()
-  for (const packet of packets) {
-    const key = peeringKey(packet.srcIp, packet.dstIp)
-    messages.set(key, (messages.get(key) ?? 0) + packet.messages.length)
-  }
-  for (const frame of allPackets) {
-    if (frame.protocol !== 'TCP' || (frame.srcPort !== 179 && frame.dstPort !== 179)) continue
-    const key = peeringKey(frame.srcIp, frame.dstIp)
-    if (!messages.has(key)) messages.set(key, 0)
-  }
-
+function summarizeSessions({ messages, asByIp }: SessionCounts, alerts: DashboardAlert[]): SessionSummary[] {
   const worst = new Map<string, AlertSeverity>()
   for (const alert of alerts) {
     if (!alert.peering || alert.severity === 'info') continue
@@ -120,7 +154,6 @@ function summarizeSessions(
     }
   }
 
-  const asByIp = latestAsByAddress(packets)
   return Array.from(messages.entries())
     .map(([key, count]): SessionSummary => {
       const [ipA, ipB] = peeringAddresses(key)
@@ -167,42 +200,48 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [packets, scope]
   )
 
-  // On a large capture, work the route statistics out in the background —
-  // the whole capture's, and the chosen session's — and only then the
-  // findings, which read them from the cache at once.
+  // On a large capture, work the findings out in the background — the whole
+  // capture's, and the chosen session's — and only then read them, from the
+  // cache, at once.
   const background = packets.length > BACKGROUND_FINDINGS_MIN_PACKETS
-  const [, setStatsVersion] = useState(0)
-  const capturePending = background && !hasPrefixStats(packets)
-  const scopePending = background && scope !== null && !hasPrefixStats(sessionPackets)
-  useEffect(() => {
-    if (!capturePending && !scopePending) return
-    const controller = new AbortController()
-    void (async () => {
-      if (capturePending && !(await prefixStatsForAsync(packets, controller.signal))) return
-      if (scopePending && !(await prefixStatsForAsync(sessionPackets, controller.signal))) return
-      setStatsVersion((version) => version + 1)
-    })()
-    return () => controller.abort()
-  }, [capturePending, scopePending, packets, sessionPackets])
+  const [, setFindingsVersion] = useState(0)
+  const capturePending = background && !hasAlerts(packets, allPackets, locale)
 
   const alerts = useMemo(
     () =>
       capturePending
         ? []
         : packets.length > 0
-          ? computeAlerts(packets, allPackets, locale)
+          ? alertsFor(packets, allPackets, locale)
           : computeTransportAlerts(allPackets, locale),
     [capturePending, packets, allPackets, locale]
   )
-  const sessions = useMemo(
-    () => summarizeSessions(packets, allPackets, alerts),
-    [packets, allPackets, alerts]
-  )
+  const scopePending =
+    background &&
+    scope !== null &&
+    (capturePending || !hasScopedAlerts(alerts, packets, scope, locale, sessionPackets))
+
+  useEffect(() => {
+    if (!capturePending && !scopePending) return
+    const controller = new AbortController()
+    void (async () => {
+      const all = await alertsForAsync(packets, allPackets, locale, controller.signal)
+      if (!all) return
+      const scoped = await scopedAlertsForAsync(all, packets, scope, locale, sessionPackets, controller.signal)
+      if (!scoped) return
+      setFindingsVersion((version) => version + 1)
+    })()
+    return () => controller.abort()
+  }, [capturePending, scopePending, packets, allPackets, locale, scope, sessionPackets])
+
+  const sessionCounts = useMemo(() => countSessions(packets, allPackets), [packets, allPackets])
+  const sessions = useMemo(() => summarizeSessions(sessionCounts, alerts), [sessionCounts, alerts])
 
   const [range, setRange] = useState<[number, number] | null>(null)
 
   const scopedAlerts = useMemo(
-    () => (capturePending || scopePending ? [] : scopeAlerts(alerts, packets, scope, locale, sessionPackets)),
+    () =>
+      capturePending || scopePending ? [] : scopedAlertsFor(alerts, packets, scope, locale, sessionPackets),
     [capturePending, scopePending, alerts, packets, scope, locale, sessionPackets]
   )
   const findingsPending = capturePending || scopePending

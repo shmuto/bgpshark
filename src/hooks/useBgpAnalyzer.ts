@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import { parsePcap, isPcapng, parsePcapng, type GenericPacket } from '../lib/pcap'
+import { isPcapng, parsePcapngWork, parsePcapWork, type GenericPacket } from '../lib/pcap'
+import { runInSlices } from '../lib/sliced'
 import { parseBgpFromPacketsAsync, type BgpPacket } from '../lib/bgp'
 import { initDatabase, loadPackets, isInitialized, isDataLoaded } from '../lib/db'
 import { savePcapFile, loadPcapFile, clearPcapFile } from '../lib/storage'
@@ -184,8 +185,13 @@ export function useBgpAnalyzer() {
       try {
         // Detect format and parse
         await report(loadProgress('parsing', undefined, undefined, localeRef.current))
-        const pcapResult = isPcapng(buffer) ? parsePcapng(buffer) : parsePcap(buffer)
-        if (!current()) return false
+        // In slices: a sparse 200MB capture is 1.5 million records, and read
+        // in one go they held the page for well over a second.
+        const pcapResult = await runInSlices(
+          isPcapng(buffer) ? parsePcapngWork(buffer) : parsePcapWork(buffer),
+          () => !current()
+        )
+        if (!pcapResult || !current()) return false
 
         if (pcapResult.errors.length > 0) {
           setState((prev) => ({

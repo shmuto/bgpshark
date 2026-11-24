@@ -182,7 +182,7 @@ export function RoutesPage() {
   const peerFilteredPrefixes = useMemo(() => {
     if (peerFilter.length === 0) return prefixStats
     const peers = new Set(peerFilter)
-    return prefixStats.filter((stat) => stat.history.some((event) => peers.has(event.source)))
+    return prefixStats.filter((stat) => stat.history.hasSourceIn(peers))
   }, [prefixStats, peerFilter])
 
   const filteredPrefixes = useMemo(() => {
@@ -267,6 +267,9 @@ export function RoutesPage() {
     [prefixStats]
   )
   const selectedPrefixStats = selectedPrefix ? statsByPrefix.get(selectedPrefix) ?? null : null
+  // The route statistics keep their history as columns (see `RouteHistory`);
+  // the selected route's is put back together as events once, here.
+  const selectedHistory = useMemo(() => selectedPrefixStats?.history.events() ?? null, [selectedPrefixStats])
 
   /**
    * The distinct AS_PATHs this prefix was announced with, most seen first.
@@ -276,10 +279,10 @@ export function RoutesPage() {
    * judgement the numbers here support rather than make.
    */
   const asPathVariants = useMemo(() => {
-    if (!selectedPrefixStats) return []
+    if (!selectedHistory) return []
 
     const counts = new Map<string, { path: string[]; count: number; lastSeen: Date }>()
-    for (const event of selectedPrefixStats.history) {
+    for (const event of selectedHistory) {
       if (event.action !== 'announce') continue
       const asPath = event.asPath?.trim()
       if (!asPath) continue
@@ -294,7 +297,7 @@ export function RoutesPage() {
     }
 
     return Array.from(counts.values()).sort((a, b) => b.count - a.count)
-  }, [selectedPrefixStats])
+  }, [selectedHistory])
 
   /**
    * Opens the UPDATE behind a history row, with the list narrowed to this
@@ -316,7 +319,7 @@ export function RoutesPage() {
    * column only appears when the selected route has one. On a MAC move it is
    * the column that tells the story: the RD changes and the MAC does not.
    */
-  const showRdColumn = selectedPrefixStats?.history.some((event) => event.rd) ?? false
+  const showRdColumn = selectedHistory?.some((event) => event.rd) ?? false
 
   /**
    * The best-path attributes, each shown only when the selected route actually
@@ -329,9 +332,9 @@ export function RoutesPage() {
    * enough to read across.
    */
   const showMedColumn =
-    selectedPrefixStats?.history.some((event) => event.med !== undefined) ?? false
+    selectedHistory?.some((event) => event.med !== undefined) ?? false
   const showLocalPrefColumn =
-    selectedPrefixStats?.history.some((event) => event.localPref !== undefined) ?? false
+    selectedHistory?.some((event) => event.localPref !== undefined) ?? false
   /**
    * ORIGIN earns a column only when it *varies*. It is IGP on almost every route
    * in practice, and a column of identical values costs width that MED,
@@ -341,12 +344,12 @@ export function RoutesPage() {
    */
   const showOriginColumn =
     new Set(
-      selectedPrefixStats?.history
-        .filter((event) => event.origin !== undefined)
+      selectedHistory
+        ?.filter((event) => event.origin !== undefined)
         .map((event) => event.origin)
     ).size > 1
   const showCommunitiesColumn =
-    selectedPrefixStats?.history.some((event) => (event.communities?.length ?? 0) > 0) ?? false
+    selectedHistory?.some((event) => (event.communities?.length ?? 0) > 0) ?? false
   /**
    * The ADD-PATH Path Identifier, shown only on a route that has one — which is
    * to say only on a session that negotiated ADD-PATH for this family.
@@ -358,7 +361,7 @@ export function RoutesPage() {
    * unarguable-looking one.
    */
   const showPathIdColumn =
-    selectedPrefixStats?.history.some((event) => event.pathId !== undefined) ?? false
+    selectedHistory?.some((event) => event.pathId !== undefined) ?? false
 
   const matchModes: { value: MatchMode; label: string; hint: string }[] = [
     { value: 'exact', label: rt.matchExact, hint: rt.matchExactHint },
@@ -655,8 +658,8 @@ export function RoutesPage() {
                       back to the event before it in time — the wait that
                       produced it. */}
                   {(historyOrder === 'asc'
-                    ? selectedPrefixStats.history
-                    : selectedPrefixStats.history.slice().reverse()
+                    ? (selectedHistory ?? [])
+                    : (selectedHistory ?? []).slice().reverse()
                   ).map((event, idx, rows) => {
                     const earlier = historyOrder === 'asc' ? rows[idx - 1] : rows[idx + 1]
                     return (

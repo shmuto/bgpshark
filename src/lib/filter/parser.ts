@@ -1,5 +1,6 @@
 import type {
   BgpPacket,
+  BgpPathAttribute,
   BgpOpenMessage,
   BgpPrefix,
   BgpUpdateMessage,
@@ -19,6 +20,7 @@ import type { ExtendedCommunity } from '../bgp/extended-communities'
 import { formatExtendedCommunity } from '../bgp/extended-communities'
 import { compilePrefixQuery, contains, formatPrefix, parsePrefix } from '../net/prefix'
 import { getMessages, type Locale } from '../../i18n/locale'
+import { pauseAt, runInSlices, runToEnd, type Sliced } from '../sliced'
 
 // =============================================================================
 // Token Types
@@ -1461,7 +1463,15 @@ export function getSuggestions(
   query: string,
   cursorPosition: number,
   packets: BgpPacket[],
-  locale: Locale = 'en'
+  locale: Locale = 'en',
+  options: {
+    /**
+     * Offer no values until `filterValuesForAsync` has gathered them, rather
+     * than gathering them here and now. For callers that keep typing
+     * responsive on a large capture; see `dynamicValuesFor`.
+     */
+    onlyGatheredValues?: boolean
+  } = {}
 ): Suggestion[] {
   const s = getMessages(locale).filterSuggestions
   const beforeCursor = query.slice(0, cursorPosition)
@@ -1471,7 +1481,12 @@ export function getSuggestions(
   const thirdLastToken = tokens[tokens.length - 3]
 
   const endsWithSpace = beforeCursor.length > 0 && /\s$/.test(beforeCursor)
-  const dynamicValues = dynamicValuesFor(packets)
+  // Only the value branches below need the capture's values, so they are
+  // fetched there: focusing an empty box, or typing a field name, reads none.
+  const valuesOf = (field: FilterFieldName): string[] => {
+    if (options.onlyGatheredValues && !hasStaticValues(field) && !dynamicValuesCache.has(packets)) return []
+    return getFieldValues(field, () => dynamicValuesFor(packets))
+  }
 
   // After complete expression - suggest logical operators
   if (
@@ -1488,7 +1503,7 @@ export function getSuggestions(
   // After operator with space - suggest values
   if (endsWithSpace && lastToken?.type === 'operator' && secondLastToken?.type === 'field') {
     const field = normalizeFieldName(secondLastToken.value) as FilterFieldName
-    const values = getFieldValues(field, dynamicValues)
+    const values = valuesOf(field)
 
     return values.slice(0, 15).map((v) => ({
       text: v,
@@ -1500,7 +1515,7 @@ export function getSuggestions(
   // After operator (no space yet) - suggest values
   if (lastToken?.type === 'operator' && secondLastToken?.type === 'field') {
     const field = normalizeFieldName(secondLastToken.value) as FilterFieldName
-    const values = getFieldValues(field, dynamicValues)
+    const values = valuesOf(field)
 
     return values.slice(0, 15).map((v) => ({
       text: v,
@@ -1516,7 +1531,7 @@ export function getSuggestions(
     thirdLastToken?.type === 'field'
   ) {
     const field = normalizeFieldName(thirdLastToken.value) as FilterFieldName
-    const values = getFieldValues(field, dynamicValues)
+    const values = valuesOf(field)
     const currentValue = String(lastToken.type === 'string' ? lastToken.value : lastToken.value).toLowerCase()
 
     const filtered = values.filter((v) => v.toLowerCase().includes(currentValue))
@@ -1661,15 +1676,40 @@ function getFieldSuggestions(filter: string, locale: Locale = 'en'): Suggestion[
  * per character, the freeze that typing a filter suffered most. The values do
  * not depend on what is typed, only on the packets, and a capture's (or a
  * session's) packets are one array for as long as they are shown.
+ *
+ * Even once, on a large capture it is seconds — three at 200MB, the longest
+ * freeze left after a load, paid on the first focus of the filter box. So the
+ * box gathers them in slices (`filterValuesForAsync`) and leaves the value
+ * suggestions out until they are in (`getSuggestions`' `onlyGatheredValues`).
  */
 const dynamicValuesCache = new WeakMap<BgpPacket[], DynamicValues>()
 function dynamicValuesFor(packets: BgpPacket[]): DynamicValues {
   let values = dynamicValuesCache.get(packets)
   if (!values) {
-    values = { sets: extractDynamicValues(packets), sorted: new Map() }
+    values = { sets: runToEnd(extractDynamicValues(packets)), sorted: new Map() }
     dynamicValuesCache.set(packets, values)
   }
   return values
+}
+
+/** Whether the field values for these packets are already gathered. */
+export function hasFilterValues(packets: BgpPacket[]): boolean {
+  return dynamicValuesCache.has(packets)
+}
+
+/**
+ * Gather the field values for these packets in slices that hand the page back
+ * between them, into the same cache `getSuggestions` reads. Resolves to false
+ * if `signal` aborts first.
+ */
+export async function filterValuesForAsync(packets: BgpPacket[], signal?: AbortSignal): Promise<boolean> {
+  if (dynamicValuesCache.has(packets)) return true
+  const sets = await runInSlices(extractDynamicValues(packets), signal)
+  if (!sets) return false
+  // Gathered synchronously in the meantime, by a suggestion that could not
+  // wait: keep that one.
+  if (!dynamicValuesCache.has(packets)) dynamicValuesCache.set(packets, { sets, sorted: new Map() })
+  return true
 }
 
 /** A field's values as sets, plus each field's sorted list once it is asked for. */
@@ -1678,7 +1718,14 @@ interface DynamicValues {
   sorted: Map<FilterFieldName, string[]>
 }
 
-function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>> {
+/**
+ * How many already-read attribute lists and prefixes to remember before
+ * starting over; see `extractDynamicValues`. Forgetting only means reading one
+ * again, never a value missed.
+ */
+const MAX_REMEMBERED = 1 << 16
+
+function* extractDynamicValues(packets: BgpPacket[]): Sliced<Record<string, Set<string>>> {
   // Use canonical field names
   const values: Record<string, Set<string>> = {
     src_ip: new Set(),
@@ -1701,16 +1748,34 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
     withdrawn: new Set(),
   }
 
-  for (const packet of packets) {
+  // The decoder hands every UPDATE that repeats an earlier one's attributes
+  // the same attribute list, and every repeat of a prefix the same prefix
+  // object (see `shared-decode.ts`). What a list or a prefix contributes is
+  // the same each time, so each is read once: on a capture that repeats
+  // itself, most of the work this used to do.
+  const readAttributes = new Set<BgpPathAttribute[]>()
+  const readAnnounced = new Set<BgpPrefix>()
+  const readWithdrawn = new Set<BgpPrefix>()
+  const firstTime = <T>(seen: Set<T>, value: T): boolean => {
+    if (seen.has(value)) return false
+    if (seen.size >= MAX_REMEMBERED) seen.clear()
+    seen.add(value)
+    return true
+  }
+  const addEvpn = (prefix: BgpPrefix) => {
+    const route = prefix.evpn
+    if (!route) return
+    if (route.macAddress) values.mac.add(route.macAddress)
+    if (route.rd) values.rd.add(route.rd)
+    if (route.label !== undefined) values.vni.add(String(route.label))
+    values.evpn_type.add(String(route.routeType))
+  }
+
+  for (let index = 0; index < packets.length; index++) {
+    if (pauseAt(index)) yield
+    const packet = packets[index]
     values.src_ip.add(packet.srcIp)
     values.dst_ip.add(packet.dstIp)
-
-    for (const route of evpnRoutes(packet)) {
-      if (route.macAddress) values.mac.add(route.macAddress)
-      if (route.rd) values.rd.add(route.rd)
-      if (route.label !== undefined) values.vni.add(String(route.label))
-      values.evpn_type.add(String(route.routeType))
-    }
 
     for (const msg of packet.messages) {
       if (msg.type === 'OPEN') {
@@ -1724,31 +1789,41 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
 
       if (msg.type === 'UPDATE') {
         const updateMsg = msg as BgpUpdateMessage
-        const aspath = getAsPath(updateMsg)
-        for (const asNum of aspath) {
-          values.asn.add(String(asNum))
+        if (firstTime(readAttributes, updateMsg.pathAttributes)) {
+          const aspath = getAsPath(updateMsg)
+          for (const asNum of aspath) {
+            values.asn.add(String(asNum))
+          }
+          const origin = getOrigin(updateMsg)
+          if (origin) values.origin.add(origin)
+          const nexthop = getNextHop(updateMsg)
+          if (nexthop) values.next_hop.add(nexthop)
+          for (const c of getCommunities(updateMsg)) {
+            values.community.add(c)
+          }
+          for (const c of getLargeCommunities(updateMsg)) {
+            values.community.add(c) // Merge large communities into community
+          }
+          for (const c of getExtendedCommunities(updateMsg)) {
+            values.ext_community.add(formatExtendedCommunity(c))
+            if (c.kind === 'Route Target') values.rt.add(c.value)
+          }
         }
-        const origin = getOrigin(updateMsg)
-        if (origin) values.origin.add(origin)
-        const nexthop = getNextHop(updateMsg)
-        if (nexthop) values.next_hop.add(nexthop)
-        for (const c of getCommunities(updateMsg)) {
-          values.community.add(c)
-        }
-        for (const c of getLargeCommunities(updateMsg)) {
-          values.community.add(c) // Merge large communities into community
-        }
-        for (const c of getExtendedCommunities(updateMsg)) {
-          values.ext_community.add(formatExtendedCommunity(c))
-          if (c.kind === 'Route Target') values.rt.add(c.value)
-        }
+        // Announced and withdrawn are remembered apart: a prefix seen
+        // announced still has to land among the withdrawn when it goes.
         for (const p of getNlriPrefixes(updateMsg)) {
-          values.prefix.add(formatPrefix(p))
-          values.nlri.add(formatPrefix(p))
+          if (!firstTime(readAnnounced, p)) continue
+          const text = formatPrefix(p)
+          values.prefix.add(text)
+          values.nlri.add(text)
+          addEvpn(p)
         }
         for (const p of getWithdrawnPrefixes(updateMsg)) {
-          values.prefix.add(formatPrefix(p))
-          values.withdrawn.add(formatPrefix(p))
+          if (!firstTime(readWithdrawn, p)) continue
+          const text = formatPrefix(p)
+          values.prefix.add(text)
+          values.withdrawn.add(text)
+          addEvpn(p)
         }
       }
     }
@@ -1757,12 +1832,19 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
   return values
 }
 
-function getFieldValues(field: FilterFieldName, dynamicValues: DynamicValues): string[] {
+/** Whether a field's suggestions are a fixed list, needing nothing from the capture. */
+function hasStaticValues(field: FilterFieldName): boolean {
+  return !isBidirectionalField(field) && (!FILTER_FIELDS[field] || FILTER_FIELDS[field].values.length > 0)
+}
+
+/** `dynamicValuesOf` is only called for a field whose values come from the capture. */
+function getFieldValues(field: FilterFieldName, dynamicValuesOf: () => DynamicValues): string[] {
   const fieldDef = FILTER_FIELDS[field]
   if (!isBidirectionalField(field)) {
     if (!fieldDef) return []
     if (fieldDef.values.length > 0) return fieldDef.values as unknown as string[]
   }
+  const dynamicValues = dynamicValuesOf()
 
   // Sorted once per field: a prefix field can hold hundreds of thousands of
   // values, and sorting them was a per-keystroke cost of its own.
