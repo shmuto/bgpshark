@@ -21,7 +21,7 @@ import type {
 import { endOfRibMarker } from '../../lib/bgp/update'
 import { peeringKey } from '../../lib/bgp/peering'
 import type { GenericPacket } from '../../lib/pcap'
-import { aggregatePrefixStats, type PrefixStats } from '../../lib/bgp/prefix-stats'
+import { prefixStatsFor, type PrefixStats } from '../../lib/bgp/prefix-stats'
 import type { DashboardAlert } from './types'
 import { formatAsPath } from '../../lib/bgp/as-path-display'
 import { getMessages, type Locale } from '../../i18n/locale'
@@ -1003,8 +1003,9 @@ function computeCaptureWideAlerts(packets: BgpPacket[], locale: Locale): Dashboa
   }
 
   // Route-level findings. aggregatePrefixStats walks every packet, so it is
-  // called once here and both route rules read the same result.
-  alerts.push(...computeRouteAlerts(aggregatePrefixStats(packets), locale))
+  // called once here and both route rules read the same result — as does the
+  // Routes screen, through the same cache.
+  alerts.push(...computeRouteAlerts(prefixStatsFor(packets), locale))
 
   return alerts
 }
