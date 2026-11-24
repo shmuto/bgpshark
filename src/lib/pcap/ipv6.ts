@@ -7,6 +7,7 @@
  * packet is indistinguishable from a v4 one downstream.
  */
 import type { BinaryReader } from './reader'
+import { intern } from './shared-values'
 
 /** The part of the header that is always present, before any extension headers. */
 const IPV6_HEADER_LENGTH = 40
@@ -99,8 +100,8 @@ export function parseIpv6Header(
   let nextHeader = reader.readUint8()
   reader.skip(1) // Hop limit
 
-  const srcIp = formatIpv6(reader.readBytes(16))
-  const dstIp = formatIpv6(reader.readBytes(16))
+  const srcIp = intern(formatIpv6(reader.readBytes(16)))
+  const dstIp = intern(formatIpv6(reader.readBytes(16)))
 
   // Extension headers sit between the fixed header and the transport header and
   // each one announces the next, so the payload length has to shrink by every

@@ -294,18 +294,23 @@ function formatIpv4Prefix(octets: Uint8Array, _prefixLength: number): string {
  * governs, AS_PATH width and ADD-PATH identifiers, are not what a bad-attribute
  * error is usually about.
  */
+/** The sixteen combinations of the four flag bits, shared by every attribute. */
+const ATTRIBUTE_FLAGS: ReadonlyArray<BgpPathAttribute['flags']> = Array.from({ length: 16 }, (_, bits) =>
+  Object.freeze({
+    optional: (bits & 0x8) !== 0,
+    transitive: (bits & 0x4) !== 0,
+    partial: (bits & 0x2) !== 0,
+    extendedLength: (bits & 0x1) !== 0,
+  })
+)
+
 export function parsePathAttribute(
   reader: BinaryReader,
   warnings: string[],
   decoding: UpdateDecoding = DEFAULT_DECODING
 ): BgpPathAttribute {
   const flagsByte = reader.readUint8()
-  const flags = {
-    optional: (flagsByte & 0x80) !== 0,
-    transitive: (flagsByte & 0x40) !== 0,
-    partial: (flagsByte & 0x20) !== 0,
-    extendedLength: (flagsByte & 0x10) !== 0,
-  }
+  const flags = ATTRIBUTE_FLAGS[flagsByte >> 4]
 
   const typeCode = reader.readUint8()
   const typeName = PATH_ATTR_TYPES[typeCode] ?? `UNKNOWN(${typeCode})`
@@ -323,14 +328,10 @@ export function parsePathAttribute(
     warnings.push(`Failed to parse ${typeName}: ${e instanceof Error ? e.message : 'Unknown error'}`)
   }
 
-  return {
-    flags,
-    typeCode,
-    typeName,
-    length,
-    rawValue,
-    parsed,
-  }
+  // The bytes are kept only when they are all there is; see BgpPathAttribute.
+  return parsed && parsed.type !== 'UNKNOWN'
+    ? { flags, typeCode, typeName, length, parsed }
+    : { flags, typeCode, typeName, length, rawValue, parsed }
 }
 
 function parsePathAttributeValue(

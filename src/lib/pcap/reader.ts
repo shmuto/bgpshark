@@ -2,6 +2,8 @@
  * Binary reader utility for parsing pcap and protocol data.
  * Wraps DataView with convenient methods and position tracking.
  */
+import { ipv4Text } from './shared-values'
+
 export class BinaryReader {
   private view: DataView
   private _offset: number
@@ -112,7 +114,7 @@ export class BinaryReader {
   /** Read IPv4 address as dotted-decimal string */
   readIpv4Address(): string {
     const bytes = this.readBytes(4)
-    return `${bytes[0]}.${bytes[1]}.${bytes[2]}.${bytes[3]}`
+    return ipv4Text(bytes[0], bytes[1], bytes[2], bytes[3])
   }
 
   /** Read IPv6 address as hex string */

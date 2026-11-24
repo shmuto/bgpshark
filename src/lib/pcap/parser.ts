@@ -1,4 +1,5 @@
 import { BinaryReader } from './reader'
+import { tcpFlagsFor } from './shared-values'
 import { BgpFlowDetector } from './bgp-detect'
 import { parseIpv6Header } from './ipv6'
 import {
@@ -447,14 +448,7 @@ function parseTcpHeader(
   const dataOffset = ((dataOffsetFlags >> 12) & 0x0f) * 4
   const flagsByte = dataOffsetFlags & 0x3f
 
-  const flags: TcpFlags = {
-    fin: (flagsByte & 0x01) !== 0,
-    syn: (flagsByte & 0x02) !== 0,
-    rst: (flagsByte & 0x04) !== 0,
-    psh: (flagsByte & 0x08) !== 0,
-    ack: (flagsByte & 0x10) !== 0,
-    urg: (flagsByte & 0x20) !== 0,
-  }
+  const flags: TcpFlags = tcpFlagsFor(flagsByte)
 
   reader.skip(2) // Window Size
   reader.skip(2) // Checksum
