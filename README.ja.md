@@ -130,6 +130,8 @@ flowchart LR
 
 Pull Request では `.github/workflows/ci.yml` により lint・ユニットテスト・ビルド・E2E テストが実行されます。`main` へのプッシュでは同じ検証ののち、`.github/workflows/deploy.yml` によって GitHub Pages（`/bgpshark/`）へデプロイされます。
 
+リリースはバージョンタグの push で行います。[`CHANGELOG.md`](CHANGELOG.md) に新しい版の節を追加し、`package.json` に同じ版を設定して `main` にマージします。そのコミットに `v<版>` のタグを push すると、`.github/workflows/release.yml` が検証を再実行し、タグと `package.json` の一致を確かめたうえで、その節をノートにした GitHub Release を作成します。
+
 ## プライバシー
 
 BGPShark はサードパーティへのネットワーク通信を一切行いません。キャプチャはブラウザ内で解析され IndexedDB にのみ保存されます。DuckDB WASM ランタイムはセルフホストされており、本番ビルドではすべての通信を同一オリジンに制限する厳格な Content Security Policy が適用されます。

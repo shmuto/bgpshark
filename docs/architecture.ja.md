@@ -505,6 +505,7 @@ flowchart LR
 flowchart TB
     pr["プルリクエスト<br/>ci.yml"] --> checks
     push["main への push<br/>deploy.yml"] --> checks
+    tag["v* タグの push<br/>release.yml"] --> checks
 
     subgraph checks["checks.yml（両ワークフローで共通）"]
         direction LR
@@ -520,7 +521,10 @@ flowchart TB
 
     checks -- "main のみ、両ジョブ成功時" --> deploy["actions/deploy-pages<br/>check ジョブの dist/ を公開"]
     deploy --> gp["GitHub Pages<br/>/bgpshark/"]
+    checks -- "タグのみ、両ジョブ成功、<br/>タグ = package.json の版" --> rel["GitHub Release<br/>ノート: CHANGELOG.md の該当節<br/>+ マージ済み PR の一覧"]
 ```
+
+**リリース手順。** [`CHANGELOG.md`](../CHANGELOG.md) に新しい版の節を追加し、`package.json` に同じ版を設定します。main にマージしたら、そのコミットに `v<版>` のタグを push します。リリースは何もデプロイしません。サイトはすでに main の内容で公開されています。
 
 `vite build` では `vite.config.ts` にある 4 つの独自プラグインが動きます。
 

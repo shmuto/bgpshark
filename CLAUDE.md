@@ -52,3 +52,5 @@ CHROMIUM_PATH=/path/to/chromium bun run test:e2e
 ## Git
 
 Branch, commit, and push as instructed for the session. Do not open a pull request unless asked.
+
+Releases: add the version's section to `CHANGELOG.md` and bump `package.json` in a pull request; after it merges, push the tag `v<version>` on that `main` commit. `.github/workflows/release.yml` refuses a tag that does not match `package.json`.

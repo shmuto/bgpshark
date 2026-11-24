@@ -130,6 +130,8 @@ Everything runs in the browser tab. The packet list appears as soon as decoding 
 
 Pull requests run lint, unit tests, build, and end-to-end tests via `.github/workflows/ci.yml`. Pushes to `main` run the same checks and deploy to GitHub Pages under `/bgpshark/` via `.github/workflows/deploy.yml`.
 
+Releases are cut by pushing a version tag: add the version's section to [`CHANGELOG.md`](CHANGELOG.md), set the same version in `package.json`, merge to `main`, then push `v<version>`. `.github/workflows/release.yml` re-runs the checks, confirms the tag matches `package.json`, and publishes a GitHub Release with that section as its notes.
+
 ## Privacy
 
 BGPShark makes no third-party network requests. Captures are parsed in the browser and persisted only in IndexedDB, the DuckDB WASM runtime is self-hosted, and the production build enforces a strict Content Security Policy restricting all fetches to the app's own origin.

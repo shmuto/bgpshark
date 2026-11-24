@@ -505,6 +505,7 @@ Round-trip tests (`tests/lib/build/round-trip.test.ts`) encode with the builder 
 flowchart TB
     pr["Pull request<br/>ci.yml"] --> checks
     push["Push to main<br/>deploy.yml"] --> checks
+    tag["Push tag v*<br/>release.yml"] --> checks
 
     subgraph checks["checks.yml (shared by both workflows)"]
         direction LR
@@ -520,7 +521,10 @@ flowchart TB
 
     checks -- "main only, both jobs green" --> deploy["actions/deploy-pages<br/>uploads dist/ from the check job"]
     deploy --> gp["GitHub Pages<br/>/bgpshark/"]
+    checks -- "tag only, both jobs green,<br/>tag = package.json version" --> rel["GitHub Release<br/>notes: CHANGELOG.md section<br/>+ merged PR list"]
 ```
+
+**Releasing.** Add a section for the new version to [`CHANGELOG.md`](../CHANGELOG.md), set the same version in `package.json`, merge to `main`, and push the tag `v<version>` on that commit. A release does not deploy anything; the site already follows `main`.
 
 `vite build` runs four project plugins from `vite.config.ts`:
 
