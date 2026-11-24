@@ -1,4 +1,4 @@
-export { parseBgpFromPackets } from './parser'
+export { parseBgpFromPackets, parseBgpFromPacketsAsync } from './parser'
 export { parseOpenMessage } from './open'
 export { parseNotificationMessage } from './notification'
 export { decodeNotificationData, type NotificationData } from './notification-data'

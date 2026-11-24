@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { parsePcap, isPcapng, parsePcapng, type GenericPacket } from '../lib/pcap'
-import { parseBgpFromPackets, type BgpPacket } from '../lib/bgp'
+import { parseBgpFromPacketsAsync, type BgpPacket } from '../lib/bgp'
 import { initDatabase, loadPackets, isInitialized, isDataLoaded } from '../lib/db'
 import { savePcapFile, loadPcapFile, clearPcapFile } from '../lib/storage'
 import { formatLoadProgressLabel, loadProgress, type LoadProgress } from '../lib/load-progress'
@@ -167,6 +167,15 @@ export function useBgpAnalyzer() {
       fileName: string,
       options?: { saveToStorage?: Blob }
     ): Promise<boolean> => {
+      // Taken now rather than once the list is ready: decoding yields to the
+      // page, so another file can be dropped, or the capture reset, while
+      // this one is still decoding. Whichever load started last owns the
+      // screen; an earlier one that notices it has been overtaken stops. The
+      // capture being replaced no longer wants backfilling into a database
+      // that finishes starting while this one decodes, hence the cleared ref.
+      const generation = ++generationRef.current
+      packetsRef.current = []
+      const current = () => generation === generationRef.current
       const report = async (progress: LoadProgress): Promise<void> => {
         setState((prev) => ({ ...prev, progress }))
         await nextPaint()
@@ -176,6 +185,7 @@ export function useBgpAnalyzer() {
         // Detect format and parse
         await report(loadProgress('parsing', undefined, undefined, localeRef.current))
         const pcapResult = isPcapng(buffer) ? parsePcapng(buffer) : parsePcap(buffer)
+        if (!current()) return false
 
         if (pcapResult.errors.length > 0) {
           setState((prev) => ({
@@ -189,7 +199,18 @@ export function useBgpAnalyzer() {
 
         // Parse BGP messages from BGP-specific packets
         await report(loadProgress('decoding', undefined, undefined, localeRef.current))
-        const bgpResult = parseBgpFromPackets(pcapResult.packets)
+        if (!current()) return false
+        const bgpResult = await parseBgpFromPacketsAsync(pcapResult.packets, {
+          onProgress: (done, total) => {
+            if (!current()) return
+            setState((prev) => ({
+              ...prev,
+              progress: loadProgress('decoding', done, total, localeRef.current),
+            }))
+          },
+          shouldStop: () => !current(),
+        })
+        if (!bgpResult || !current()) return false
 
         // If no packets at all, show error
         if (pcapResult.allPackets.length === 0) {
@@ -202,7 +223,6 @@ export function useBgpAnalyzer() {
           return false
         }
 
-        const generation = ++generationRef.current
         packetsRef.current = bgpResult.packets
         const hasRows = bgpResult.packets.length > 0
         const dbStatus: DbStatus = !hasRows
@@ -245,6 +265,7 @@ export function useBgpAnalyzer() {
         }
         return true
       } catch (e) {
+        if (!current()) return false
         setState((prev) => ({
           ...prev,
           status: 'error',

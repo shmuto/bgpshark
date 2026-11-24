@@ -87,13 +87,18 @@ test('loading a capture shows gauges that only move forwards', async ({ page }) 
     }
   }
 
-  // Moving *within* the database stage is the part a spinner could not do:
-  // at least one reading strictly between none and all of the packets.
-  const partway = database.filter((entry) => {
-    const counted = entry.text.match(/([\d,]+) of ([\d,]+) packets/)
-    if (!counted) return false
-    const [done, total] = [counted[1], counted[2]].map((n) => Number(n.replace(/,/g, '')))
-    return done > 0 && done < total
-  })
-  expect(partway.length, database.map((entry) => entry.text).join('\n')).toBeGreaterThan(0)
+  // Moving *within* a stage is the part a spinner could not do: at least one
+  // reading strictly between none and all of the packets. Decoding runs in
+  // slices so that its bar moves too, rather than sitting at the start of the
+  // stage until the list appears.
+  const partway = (gauge: typeof seen) =>
+    gauge.filter((entry) => {
+      const counted = entry.text.match(/([\d,]+) of ([\d,]+) packets/)
+      if (!counted) return false
+      const [done, total] = [counted[1], counted[2]].map((n) => Number(n.replace(/,/g, '')))
+      return done > 0 && done < total
+    })
+  const decoding = load.filter((entry) => entry.stage === 'decoding')
+  expect(partway(decoding).length, decoding.map((entry) => entry.text).join('\n')).toBeGreaterThan(0)
+  expect(partway(database).length, database.map((entry) => entry.text).join('\n')).toBeGreaterThan(0)
 })
