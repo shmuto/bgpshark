@@ -36,6 +36,12 @@ export default defineConfig({
   testMatch: '**/*.e2e.ts',
   // Every spec loads a capture and drives one screen; they share nothing.
   fullyParallel: true,
+  // One worker per core in CI, rather than Playwright's default of half. A
+  // spec used to start DuckDB on every capture it loaded, which kept a core
+  // busy each and made more workers slower; DuckDB now starts only on the SQL
+  // console, and on a 4-core machine the suite took 182s with two workers and
+  // 101s with four. Locally the default stays, leaving room for the dev server.
+  workers: process.env.CI ? '100%' : undefined,
   // A test that only passes sometimes is worse than no test, so a retry in CI
   // is a report of flakiness rather than a way to hide it.
   retries: process.env.CI ? 2 : 0,

@@ -91,8 +91,6 @@ test.describe('a withdrawal opened from elsewhere', () => {
     await page.getByRole('row').filter({ hasText: /Withdraw(?!n)/ }).first().click()
 
     await page.waitForURL('**/messages**')
-    // Past the DuckDB debounce, so the answer is the database's.
-    await page.waitForTimeout(1200)
     await expect(page.getByText(/^Packet #\d+$/)).toBeVisible()
     await expect(page.getByText('Withdrawn').first()).toBeVisible()
   })
@@ -102,7 +100,6 @@ test.describe('a withdrawal opened from elsewhere', () => {
     await rail.getByRole('button', { name: /^1\.1\.1\.1\/32/ }).click()
 
     await page.waitForURL('**/messages**')
-    await page.waitForTimeout(1200)
     await expect(page.getByText(/^Packet #\d+$/)).toBeVisible()
   })
 
