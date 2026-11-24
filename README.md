@@ -106,6 +106,9 @@ Filter expressions parse once into an AST and run either against DuckDB WASM or 
 | `src/lib/net/` | Prefix parsing and CIDR containment arithmetic |
 | `src/pages/` | Page components and the in-app manual (`manual/manual.md`, `manual/manual.ja.md`) |
 | `src/components/` | UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `workspace/`) |
+| `src/context/` | App-wide state: the loaded capture, and the workspace's sessions, findings and selection |
+| `src/hooks/` | React hooks for analysis, filtering, theme, split panes, and column settings |
+| `src/i18n/` | UI strings and Japanese NOTIFICATION hints |
 | `testlab/` | ContainerLab topology, fault scenario generator (`scenarios.ts`), screenshot script |
 | `docs/` | Technical design and troubleshooting scenario assessment |
 

@@ -39,3 +39,6 @@ clab-*
 
 # Captures written by testlab/scenarios.ts — regenerate, don't commit
 testlab/scenarios/
+
+# Output of testlab/capture.sh — a lab artefact, not a fixture
+testlab/bgp-capture.pcap
