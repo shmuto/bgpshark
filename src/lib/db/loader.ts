@@ -33,18 +33,6 @@ import {
   type TableBatch,
 } from './arrow-columns'
 
-// Helper function to convert Uint8Array to Base64
-// Built a few kilobytes at a time: `fromCharCode` over a whole chunk is far
-// cheaper than appending one character per byte, and the chunk stays well
-// under the engine's limit on call arguments.
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i += 0x2000) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x2000) as unknown as number[])
-  }
-  return btoa(binary)
-}
-
 // ID counters for auto-increment
 let messageIdCounter = 0
 let capabilityIdCounter = 0
@@ -167,7 +155,6 @@ function createBatches() {
       dst_ip_bits: t(),
       src_port: n(),
       dst_port: n(),
-      raw_data_base64: t(),
       parse_warnings: new TextListColumn(),
     })),
     messages: tableBatch('messages', () => ({
@@ -347,7 +334,6 @@ function flattenPacket(batches: Batches, packet: BgpPacket): void {
   c.dst_ip_bits.set(row, addressBitKey(packet.dstIp))
   c.src_port.set(row, packet.srcPort)
   c.dst_port.set(row, packet.dstPort)
-  c.raw_data_base64.set(row, uint8ArrayToBase64(packet.rawData))
   c.parse_warnings.set(row, packet.parseWarnings)
 
   for (let msgIdx = 0; msgIdx < packet.messages.length; msgIdx++) {

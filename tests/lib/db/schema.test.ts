@@ -93,6 +93,19 @@ describe('the schema survives being split', () => {
   })
 })
 
+describe('what the schema leaves out', () => {
+  // Both were measured out rather than forgotten; see the comment on SCHEMA_SQL.
+  test('creates no secondary indexes', () => {
+    expect(SCHEMA_SQL).not.toMatch(/CREATE\s+(UNIQUE\s+)?INDEX/i)
+  })
+
+  test('stores no copy of the raw frame bytes', () => {
+    expect(describeSchema().find((t) => t.name === 'packets')?.columns.map((c) => c.name)).not.toContain(
+      'raw_data_base64'
+    )
+  })
+})
+
 describe('describeSchema', () => {
   const tables = describeSchema()
   const table = (name: string) => tables.find((t) => t.name === name)
@@ -103,7 +116,7 @@ describe('describeSchema', () => {
   })
 
   test('lists every column with its type, comments and all', () => {
-    expect(table('packets')?.columns.map((c) => c.name)).toContain('raw_data_base64')
+    expect(table('packets')?.columns.map((c) => c.name)).toContain('dst_ip_bits')
     expect(table('packets')?.columns.find((c) => c.name === 'parse_warnings')?.type).toBe('VARCHAR[]')
     expect(table('messages')?.columns.find((c) => c.name === 'hold_time')?.type).toBe('INTEGER')
     // Columns that follow a comment block inside the table are not lost.

@@ -87,7 +87,7 @@ Three details to keep in mind when writing SQL:
 
 - `nlri.prefix` does not include the mask length. Combine it with `prefix || '/' || prefix_length`.
 - `nlri`, `as_path`, and `path_attributes` all join on `message_id`. Joining all three directly multiplies rows; use correlated subqueries instead.
-- Tables are flattened projections of the parsed messages. Follow `frame_index` back to **Messages** when you need the full decoded detail.
+- Tables are flattened projections of the parsed messages and hold no raw frame bytes. Follow `frame_index` back to **Messages** when you need the full decoded detail or the bytes themselves.
 
 Example—compare paths for the same prefix:
 
