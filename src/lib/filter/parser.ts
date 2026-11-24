@@ -17,7 +17,7 @@ import type {
 import type { EvpnRoute } from '../bgp/evpn'
 import type { ExtendedCommunity } from '../bgp/extended-communities'
 import { formatExtendedCommunity } from '../bgp/extended-communities'
-import { contains, formatPrefix, parseBgpPrefix, parsePrefix } from '../net/prefix'
+import { compilePrefixQuery, contains, formatPrefix, parsePrefix } from '../net/prefix'
 import { getMessages, type Locale } from '../../i18n/locale'
 
 // =============================================================================
@@ -1217,17 +1217,27 @@ function matchIpAddress(fieldValue: string, operator: MatchOperator, queryValue:
  * is not an address at all stays a substring search over `prefix/length`.
  */
 function matchPrefixes(prefixes: BgpPrefix[], operator: MatchOperator, queryValue: FilterValue): boolean {
-  const query = parsePrefix(String(queryValue))
-  if (!query) {
+  const matches = prefixMatcher(String(queryValue))
+  if (!matches) {
     return matchStringArray(prefixes.map(formatPrefix), operator, queryValue)
   }
 
-  const hit = prefixes.some((prefix) => {
-    const route = parseBgpPrefix(prefix)
-    if (!route) return false
-    return query.hasMask ? contains(query, route) : contains(route, query)
-  })
+  const hit = prefixes.some(matches)
   return operator === '=' || operator === 'contains' ? hit : !hit
+}
+
+/**
+ * The prepared search for a query's prefix text, or null when the text is not
+ * an address. Remembered across calls because one filter pass asks it of every
+ * packet with the same text; one entry is enough, since a pass uses one query.
+ */
+let lastPrefixQuery: { text: string; matches: ((route: BgpPrefix) => boolean) | null } | null = null
+function prefixMatcher(text: string): ((route: BgpPrefix) => boolean) | null {
+  if (lastPrefixQuery?.text !== text) {
+    const query = parsePrefix(text)
+    lastPrefixQuery = { text, matches: query ? compilePrefixQuery(query) : null }
+  }
+  return lastPrefixQuery.matches
 }
 
 function matchString(fieldValue: string, operator: MatchOperator, queryValue: FilterValue): boolean {

@@ -138,6 +138,77 @@ export function contains(outer: ParsedPrefix, inner: ParsedPrefix): boolean {
   return outer.bits >> shift === inner.bits >> shift
 }
 
+/**
+ * A prefix search prepared once, for testing it against many routes.
+ *
+ * Same answer as `contains`: a query with a mask selects the routes inside it,
+ * a bare address the routes that cover it. The in-memory filter asks this for
+ * every route of every packet on each keystroke, and parsing both sides into
+ * BigInts each time made one pass over a 50MB capture take about a second. An
+ * IPv4 query — the common case — is compared on 32-bit integers instead, with
+ * the route's dotted quad read straight off its characters; anything else
+ * takes the general path.
+ */
+export function compilePrefixQuery(query: ParsedPrefix): (route: BgpPrefix) => boolean {
+  if (query.family !== 4) {
+    return (route) => {
+      const parsed = parseBgpPrefix(route)
+      if (!parsed) return false
+      return query.hasMask ? contains(query, parsed) : contains(parsed, query)
+    }
+  }
+
+  const queryBits = Number(query.bits)
+  const queryLength = query.length
+  if (query.hasMask) {
+    const mask = ipv4Mask(queryLength)
+    const network = (queryBits & mask) >>> 0
+    return (route) => {
+      if (route.length < queryLength || route.length > 32) return false
+      const bits = ipv4Bits(route.prefix)
+      return bits >= 0 && ((bits & mask) >>> 0) === network
+    }
+  }
+  return (route) => {
+    if (route.length > queryLength) return false
+    const bits = ipv4Bits(route.prefix)
+    if (bits < 0) return false
+    const mask = ipv4Mask(route.length)
+    return ((bits & mask) >>> 0) === ((queryBits & mask) >>> 0)
+  }
+}
+
+function ipv4Mask(length: number): number {
+  return length === 0 ? 0 : (0xffffffff << (32 - length)) >>> 0
+}
+
+/**
+ * A dotted-quad address as an unsigned 32-bit number, or -1 when the text is
+ * not one — an IPv6 address, an EVPN route's description. Accepts exactly what
+ * `parseIpv4` does: four parts of one to three digits, each at most 255.
+ */
+function ipv4Bits(text: string): number {
+  let bits = 0
+  let octet = 0
+  let digits = 0
+  let parts = 0
+  for (let i = 0; i <= text.length; i++) {
+    const code = i < text.length ? text.charCodeAt(i) : 46 // '.' closes the last part
+    if (code >= 48 && code <= 57) {
+      if (++digits > 3) return -1
+      octet = octet * 10 + (code - 48)
+    } else if (code === 46) {
+      if (digits === 0 || octet > 255 || ++parts > 4) return -1
+      bits = bits * 256 + octet
+      octet = 0
+      digits = 0
+    } else {
+      return -1
+    }
+  }
+  return parts === 4 ? bits : -1
+}
+
 /** True for the same network address *and* the same mask length. */
 export function equals(a: ParsedPrefix, b: ParsedPrefix): boolean {
   return a.family === b.family && a.length === b.length && a.bits === b.bits
