@@ -14,6 +14,7 @@ bun run lint         # ESLint
 bun run build        # Type-check (src, tests, testlab) + production build to dist/
 bun run preview      # Serve production build (with real CSP) at http://localhost:4173/bgpshark/
 bun run screenshots  # Regenerate manual screenshots in public/manual/
+bun run og-image     # Regenerate the link-preview card public/og-image.png (uses public/manual/workspace.png)
 ```
 
 In environments where Playwright cannot download its pinned browser or a system Chromium/Chrome binary is preinstalled, pass `CHROMIUM_PATH` to skip the revision lookup:
