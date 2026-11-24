@@ -95,28 +95,56 @@ function latestAsByAddress(packets: BgpPacket[]): Map<string, number> {
   return asByIp
 }
 
+/** What the session list counts per peering, which does not change with the findings. */
+interface SessionCounts {
+  /** BGP messages per `peeringKey`, with TCP-only peerings on port 179 at 0. */
+  messages: Map<string, number>
+  asByIp: Map<string, number>
+}
+
+/**
+ * The per-packet half of the session list, worked out once per capture.
+ *
+ * It walks every packet and every frame, and it used to run again each time
+ * the findings changed — once with none while they were pending, once when
+ * they arrived — which on a sparse 200MB capture was two more freezes of over
+ * half a second. Consecutive packets nearly always belong to the peering
+ * before them, so the key is only rebuilt when the addresses change: it was
+ * one string concatenated per packet, most of the time spent here.
+ */
+function countSessions(packets: BgpPacket[], allPackets: GenericPacket[]): SessionCounts {
+  const messages = new Map<string, number>()
+  let lastSrc: string | null = null
+  let lastDst: string | null = null
+  let key = ''
+  for (const packet of packets) {
+    if (packet.srcIp !== lastSrc || packet.dstIp !== lastDst) {
+      lastSrc = packet.srcIp
+      lastDst = packet.dstIp
+      key = peeringKey(lastSrc, lastDst)
+    }
+    messages.set(key, (messages.get(key) ?? 0) + packet.messages.length)
+  }
+  lastSrc = lastDst = null
+  for (const frame of allPackets) {
+    if (frame.protocol !== 'TCP' || (frame.srcPort !== 179 && frame.dstPort !== 179)) continue
+    if (frame.srcIp !== lastSrc || frame.dstIp !== lastDst) {
+      lastSrc = frame.srcIp
+      lastDst = frame.dstIp
+      key = peeringKey(lastSrc, lastDst)
+    }
+    if (!messages.has(key)) messages.set(key, 0)
+  }
+  return { messages, asByIp: latestAsByAddress(packets) }
+}
+
 /**
  * Sessions are pairs of addresses, not routers: the unit a NOTIFICATION, a hold
  * timer or a capability mismatch belongs to. TCP-only peerings on port 179 are
  * listed too, because a session that never got as far as BGP is exactly the one
  * someone opened the capture to look at.
  */
-function summarizeSessions(
-  packets: BgpPacket[],
-  allPackets: GenericPacket[],
-  alerts: DashboardAlert[]
-): SessionSummary[] {
-  const messages = new Map<string, number>()
-  for (const packet of packets) {
-    const key = peeringKey(packet.srcIp, packet.dstIp)
-    messages.set(key, (messages.get(key) ?? 0) + packet.messages.length)
-  }
-  for (const frame of allPackets) {
-    if (frame.protocol !== 'TCP' || (frame.srcPort !== 179 && frame.dstPort !== 179)) continue
-    const key = peeringKey(frame.srcIp, frame.dstIp)
-    if (!messages.has(key)) messages.set(key, 0)
-  }
-
+function summarizeSessions({ messages, asByIp }: SessionCounts, alerts: DashboardAlert[]): SessionSummary[] {
   const worst = new Map<string, AlertSeverity>()
   for (const alert of alerts) {
     if (!alert.peering || alert.severity === 'info') continue
@@ -126,7 +154,6 @@ function summarizeSessions(
     }
   }
 
-  const asByIp = latestAsByAddress(packets)
   return Array.from(messages.entries())
     .map(([key, count]): SessionSummary => {
       const [ipA, ipB] = peeringAddresses(key)
@@ -207,10 +234,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => controller.abort()
   }, [capturePending, scopePending, packets, allPackets, locale, scope, sessionPackets])
 
-  const sessions = useMemo(
-    () => summarizeSessions(packets, allPackets, alerts),
-    [packets, allPackets, alerts]
-  )
+  const sessionCounts = useMemo(() => countSessions(packets, allPackets), [packets, allPackets])
+  const sessions = useMemo(() => summarizeSessions(sessionCounts, alerts), [sessionCounts, alerts])
 
   const [range, setRange] = useState<[number, number] | null>(null)
 
