@@ -9,9 +9,10 @@
  * can be tested without a browser.
  */
 import { yieldToPage } from '../yield-to-page'
-import type { BgpPacket, BgpPrefix, BgpUpdateMessage } from './types'
+import type { AsPathAttribute, BgpPacket, BgpPrefix, BgpUpdateMessage } from './types'
 import { formatEvpnIdentity } from './evpn'
 import { formatPrefix, parseBgpPrefix, type ParsedPrefix } from '../net/prefix'
+import { SharedTable } from './shared-decode'
 
 export interface PrefixEvent {
   timestamp: Date
@@ -63,8 +64,14 @@ export interface PrefixStats {
    */
   key: string
   parsed: ParsedPrefix | null
-  /** Every AS seen in an AS_PATH announcing this prefix, for AS number searches. */
-  asns: Set<string>
+  /**
+   * Every AS number seen on a path to this route, each once, in the order
+   * first seen. An array rather than a Set: a Set is around 150 bytes even for
+   * three entries, and there is one of these per route — on a full table,
+   * hundreds of thousands. Routes announced with the same path share one array;
+   * it is replaced, never modified, when a new AS turns up.
+   */
+  asns: readonly string[]
   announced: number
   withdrawn: number
   lastSeen: Date
@@ -149,10 +156,25 @@ export async function prefixStatsForAsync(
   return stats
 }
 
+const NO_ASNS: readonly string[] = []
+
+/** `current` with any of `added` it lacks appended — the same array when it lacks none. */
+function withAsns(current: readonly string[], added: readonly string[]): readonly string[] {
+  if (current === added || current.length === 0) return added
+  let grown: string[] | null = null
+  for (const asn of added) {
+    if (current.includes(asn) || grown?.includes(asn)) continue
+    grown ??= [...current]
+    grown.push(asn)
+  }
+  return grown ?? current
+}
+
 /** What an UPDATE says about every route it announces, gathered once per UPDATE. */
 interface Announcement {
   asPath: string
-  asns: string[]
+  /** The path's AS numbers, each once, in path order. */
+  asns: readonly string[]
   nextHop: string
   med: number | undefined
   localPref: number | undefined
@@ -182,6 +204,33 @@ function createAggregator() {
    */
   const routeUpByPeer = new Map<string, Map<string, boolean>>()
   const asnText = new Map<number, string>()
+  /**
+   * Each AS_PATH's text and AS numbers, worked out once per decoded path. The
+   * decoder shares one AS_PATH between every UPDATE that repeats it, so on a
+   * capture that repeats paths this is one string and one array per path
+   * rather than per UPDATE — and the route history's `asPath` strings are
+   * shared with it. Rests, like the decoder's tables, when paths do not repeat.
+   */
+  const pathTexts = new SharedTable<AsPathAttribute, { text: string; asns: readonly string[] }>()
+  const asPathText = (path: AsPathAttribute): { text: string; asns: readonly string[] } => {
+    const consult = pathTexts.active()
+    const known = consult ? pathTexts.get(path) : undefined
+    if (known) return known
+    const all: string[] = []
+    for (const segment of path.segments) {
+      for (const asn of segment.asNumbers) {
+        let text = asnText.get(asn)
+        if (text === undefined) {
+          text = String(asn)
+          asnText.set(asn, text)
+        }
+        all.push(text)
+      }
+    }
+    const unique = new Set(all).size === all.length ? all : [...new Set(all)]
+    const result = { text: all.join(' '), asns: unique }
+    return consult ? pathTexts.set(path, result) : result
+  }
 
   /**
    * Records one announce or withdraw against `prefix/length`. Every caller goes
@@ -205,7 +254,7 @@ function createAggregator() {
       stat = {
         key,
         parsed: parseBgpPrefix(prefix),
-        asns: new Set(),
+        asns: NO_ASNS,
         announced: 0,
         withdrawn: 0,
         lastSeen: timestamp,
@@ -220,7 +269,7 @@ function createAggregator() {
     if (announcement) {
       stat.announced++
       routeUp.set(key, true)
-      for (const asn of announcement.asns) stat.asns.add(asn)
+      stat.asns = withAsns(stat.asns, announcement.asns)
     } else {
       stat.withdrawn++
       if (routeUp.get(key) !== false) stat.flap++
@@ -265,7 +314,7 @@ function createAggregator() {
       const attributes = update.pathAttributes || []
 
       // Get AS_PATH and NEXT_HOP from path attributes
-      let asns: string[] = []
+      let asns: readonly string[] = NO_ASNS
       let asPath = ''
       let nextHop = ''
       // Undefined rather than 0: an UPDATE with no MED and one with MED 0 are
@@ -280,18 +329,9 @@ function createAggregator() {
         if (!parsed) continue
         switch (parsed.type) {
           case 'AS_PATH': {
-            asns = []
-            for (const segment of parsed.segments) {
-              for (const asn of segment.asNumbers) {
-                let text = asnText.get(asn)
-                if (text === undefined) {
-                  text = String(asn)
-                  asnText.set(asn, text)
-                }
-                asns.push(text)
-              }
-            }
-            asPath = asns.join(' ')
+            const path = asPathText(parsed)
+            asns = path.asns
+            asPath = path.text
             break
           }
           case 'NEXT_HOP':
