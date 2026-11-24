@@ -129,6 +129,23 @@ export class BinaryReader {
   }
 
   /** Read raw bytes */
+  /**
+   * The next `length` bytes, at most four, as the top bytes of a 32-bit
+   * integer with zeros below: an IPv4 prefix's network address as the NLRI
+   * encodes it, cut at its mask. Read in place rather than through
+   * `readBytes`, whose view per call was an allocation per route.
+   */
+  readAddressBits(length: number): number {
+    if (length > 4 || !this.hasBytes(length)) {
+      throw new RangeError(`Buffer underflow: cannot read ${length} address bytes`)
+    }
+    const at = this.base + this._offset
+    let bits = 0
+    for (let i = 0; i < 4; i++) bits = (bits << 8) | (i < length ? this.view.getUint8(at + i) : 0)
+    this._offset += length
+    return bits
+  }
+
   readBytes(length: number): Uint8Array {
     if (!this.hasBytes(length)) {
       throw new RangeError(`Buffer underflow: cannot read ${length} bytes`)

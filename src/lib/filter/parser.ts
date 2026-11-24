@@ -21,6 +21,7 @@ import { formatExtendedCommunity } from '../bgp/extended-communities'
 import { compilePrefixQuery, contains, formatPrefix, parsePrefix } from '../net/prefix'
 import { getMessages, type Locale } from '../../i18n/locale'
 import { pauseAt, runInSlices, runToEnd, type Sliced } from '../sliced'
+import { Ipv4PrefixIndex, ipv4PrefixAddress } from '../net/ipv4-index'
 
 // =============================================================================
 // Token Types
@@ -1762,6 +1763,19 @@ function* extractDynamicValues(packets: BgpPacket[]): Sliced<Record<string, Set<
     seen.add(value)
     return true
   }
+  // IPv4 prefixes, nearly all of them, are recognised by address instead:
+  // remembered without limit and without building their text, which on a
+  // table transfer of a million routes the sets above could not hold — each
+  // repeat was formatted and added again.
+  const listedAnnounced = new Ipv4PrefixIndex()
+  const listedWithdrawn = new Ipv4PrefixIndex()
+  const firstListing = (listed: Ipv4PrefixIndex, seen: Set<BgpPrefix>, prefix: BgpPrefix): boolean => {
+    const address = ipv4PrefixAddress(prefix)
+    if (address < 0) return firstTime(seen, prefix)
+    if (listed.get(address | 0, prefix.length) >= 0) return false
+    listed.add(address | 0, prefix.length, 0)
+    return true
+  }
   const addEvpn = (prefix: BgpPrefix) => {
     const route = prefix.evpn
     if (!route) return
@@ -1812,14 +1826,14 @@ function* extractDynamicValues(packets: BgpPacket[]): Sliced<Record<string, Set<
         // Announced and withdrawn are remembered apart: a prefix seen
         // announced still has to land among the withdrawn when it goes.
         for (const p of getNlriPrefixes(updateMsg)) {
-          if (!firstTime(readAnnounced, p)) continue
+          if (!firstListing(listedAnnounced, readAnnounced, p)) continue
           const text = formatPrefix(p)
           values.prefix.add(text)
           values.nlri.add(text)
           addEvpn(p)
         }
         for (const p of getWithdrawnPrefixes(updateMsg)) {
-          if (!firstTime(readWithdrawn, p)) continue
+          if (!firstListing(listedWithdrawn, readWithdrawn, p)) continue
           const text = formatPrefix(p)
           values.prefix.add(text)
           values.withdrawn.add(text)
