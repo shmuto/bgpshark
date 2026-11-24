@@ -1027,17 +1027,24 @@ export function scopeAlerts(
   alerts: DashboardAlert[],
   packets: BgpPacket[],
   scope: string | null,
-  locale: Locale = 'en'
+  locale: Locale = 'en',
+  /**
+   * The scope's packets, in capture order, when the caller already holds them.
+   * Route statistics are cached per packet array, so passing the array the
+   * workspace keeps lets them be worked out once — and ahead of time.
+   */
+  scopePackets?: BgpPacket[]
 ): DashboardAlert[] {
   if (!scope) return alerts
 
   const indices: number[] = []
-  const sessionPackets: BgpPacket[] = []
+  const collected: BgpPacket[] = []
   packets.forEach((packet, index) => {
     if (peeringKey(packet.srcIp, packet.dstIp) !== scope) return
     indices.push(index)
-    sessionPackets.push(packet)
+    collected.push(packet)
   })
+  const sessionPackets = scopePackets && scopePackets.length === collected.length ? scopePackets : collected
 
   const own = alerts.filter((alert) =>
     alert.peering ? alert.peering === scope : !CAPTURE_WIDE_RULES.has(alert.rule)

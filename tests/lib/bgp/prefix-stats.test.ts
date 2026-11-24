@@ -1,5 +1,11 @@
 import { describe, test, expect } from 'bun:test'
-import { aggregatePrefixStats, type PrefixStats } from '../../../src/lib/bgp/prefix-stats'
+import {
+  aggregatePrefixStats,
+  hasPrefixStats,
+  prefixStatsFor,
+  prefixStatsForAsync,
+  type PrefixStats,
+} from '../../../src/lib/bgp/prefix-stats'
 import type {
   BgpPacket,
   BgpPathAttribute,
@@ -484,5 +490,37 @@ describe('best-path attributes on the route history', () => {
     ])
 
     expect(only(stats).history[1].med).toBeUndefined()
+  })
+})
+
+describe('prefixStatsForAsync', () => {
+  // Enough packets that the slicing actually yields at least once.
+  const many = (): BgpPacket[] => {
+    const packets: BgpPacket[] = []
+    for (let i = 0; i < 20_000; i++) {
+      const text = `10.${(i >> 8) & 255}.${i & 255}.0/24`
+      packets.push(i % 3 === 2 ? withdraw('10.0.0.2', i, text) : announce('10.0.0.2', i, text, [65001, 100 + (i % 7)]))
+    }
+    return packets
+  }
+
+  test('gives the same statistics as computing them in one go', async () => {
+    const packets = many()
+    expect(await prefixStatsForAsync(packets)).toEqual(aggregatePrefixStats(packets))
+  })
+
+  test('fills the cache prefixStatsFor reads', async () => {
+    const packets = many()
+    expect(hasPrefixStats(packets)).toBe(false)
+    const stats = await prefixStatsForAsync(packets)
+    expect(hasPrefixStats(packets)).toBe(true)
+    expect(prefixStatsFor(packets)).toBe(stats!)
+  })
+
+  test('uses a result computed synchronously while it was running', async () => {
+    const packets = many()
+    const pending = prefixStatsForAsync(packets)
+    const sync = prefixStatsFor(packets)
+    expect(await pending).toBe(sync)
   })
 })

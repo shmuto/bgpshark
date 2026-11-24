@@ -80,20 +80,6 @@ export interface PrefixStats {
 }
 
 /**
- * Rolls every UPDATE in the capture up into one row per route.
- *
- * Announced and withdrawn are raw event counts — how many times the route was
- * spoken about. Flap is a different question: how many times the route actually
- * went away, counted per (route, announcing peer) pair so that ten peers each
- * announcing a prefix once reads as a stable route rather than as ten flaps.
- * One flap is counted on each up→down transition of a pair; the re-announce
- * that follows is not itself a flap, the next withdraw is. A withdraw for a
- * pair that was never seen announced still counts: the capture started
- * mid-session, the route was up before it began, and it going away is exactly
- * what the column is there to show. A repeat withdraw of an already-down pair
- * is not a second flap.
- */
-/**
  * `aggregatePrefixStats`, computed once per packet array.
  *
  * The findings and the Routes screen both need the whole capture's statistics,
@@ -114,6 +100,54 @@ export function prefixStatsFor(packets: BgpPacket[]): PrefixStats[] {
   return stats
 }
 
+/** Whether `prefixStatsFor` already has these packets' statistics. */
+export function hasPrefixStats(packets: BgpPacket[]): boolean {
+  return statsByPackets.has(packets)
+}
+
+/**
+ * How long one slice of `prefixStatsForAsync` may run before it hands the
+ * page back. Short enough that scrolling and typing stay smooth around it.
+ */
+const SLICE_MS = 12
+
+/**
+ * `prefixStatsFor`, computed in slices that return to the event loop between
+ * them, so a large capture's packet list is usable while its route statistics
+ * — and the findings that wait on them — are worked out. Same rules, same
+ * result, same cache: once it resolves, `prefixStatsFor` answers at once.
+ * Resolves to null if `signal` aborts first.
+ */
+export async function prefixStatsForAsync(
+  packets: BgpPacket[],
+  signal?: AbortSignal
+): Promise<PrefixStats[] | null> {
+  const cached = statsByPackets.get(packets)
+  if (cached) return cached
+
+  const aggregator = createAggregator()
+  let sliceStart = performance.now()
+  for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+    aggregator.addPacket(packets[packetIndex], packetIndex)
+    // The clock is read every so often rather than per packet: a packet is a
+    // few microseconds of work, the clock a noticeable fraction of that.
+    if ((packetIndex & 0xff) === 0xff && performance.now() - sliceStart > SLICE_MS) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      // Nobody is waiting any more — another capture, another scope — so stop
+      // rather than finish statistics nothing will read.
+      if (signal?.aborted) return null
+      // Worked out synchronously in the meantime, by a screen that could not
+      // wait: use that, rather than finishing a second copy.
+      const done = statsByPackets.get(packets)
+      if (done) return done
+      sliceStart = performance.now()
+    }
+  }
+  const stats = aggregator.finish()
+  statsByPackets.set(packets, stats)
+  return stats
+}
+
 /** What an UPDATE says about every route it announces, gathered once per UPDATE. */
 interface Announcement {
   asPath: string
@@ -125,7 +159,11 @@ interface Announcement {
   communities: string[] | undefined
 }
 
-/*
+/**
+ * Builds route statistics one packet at a time, so the same rules can run in
+ * one go (`aggregatePrefixStats`) or in slices that leave the page responsive
+ * between them (`prefixStatsForAsync`).
+ *
  * Written for speed, because it is: it runs over every route of every packet
  * before the findings can show, and on a 50MB capture it was most of the
  * several seconds the page sat frozen after a load. So nothing is allocated
@@ -135,7 +173,7 @@ interface Announcement {
  * once each. The rules are unchanged; tests/lib/bgp/prefix-stats.test.ts holds
  * them.
  */
-export function aggregatePrefixStats(packets: BgpPacket[]): PrefixStats[] {
+function createAggregator() {
   const stats = new Map<string, PrefixStats>()
   /**
    * Per announcing peer, whether each route is currently announced; absent
@@ -210,8 +248,7 @@ export function aggregatePrefixStats(packets: BgpPacket[]): PrefixStats[] {
     })
   }
 
-  for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
-    const packet = packets[packetIndex]
+  const addPacket = (packet: BgpPacket, packetIndex: number) => {
     // The peer that spoke, which is what makes route state per-session.
     const source = packet.srcIp
     let routeUp = routeUpByPeer.get(source)
@@ -323,17 +360,43 @@ export function aggregatePrefixStats(packets: BgpPacket[]): PrefixStats[] {
     }
   }
 
-  // Sort history by timestamp. Packets come in capture order, so a history is
-  // almost always in order already; checking is far cheaper than sorting.
-  for (const stat of stats.values()) {
-    const history = stat.history
-    for (let i = 1; i < history.length; i++) {
-      if (history[i].timestamp.getTime() < history[i - 1].timestamp.getTime()) {
-        history.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
-        break
+  const finish = (): PrefixStats[] => {
+    // Sort history by timestamp. Packets come in capture order, so a history is
+    // almost always in order already; checking is far cheaper than sorting.
+    for (const stat of stats.values()) {
+      const history = stat.history
+      for (let i = 1; i < history.length; i++) {
+        if (history[i].timestamp.getTime() < history[i - 1].timestamp.getTime()) {
+          history.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+          break
+        }
       }
     }
+
+    return Array.from(stats.values())
   }
 
-  return Array.from(stats.values())
+  return { addPacket, finish }
+}
+
+/**
+ * Rolls every UPDATE in the capture up into one row per route.
+ *
+ * Announced and withdrawn are raw event counts — how many times the route was
+ * spoken about. Flap is a different question: how many times the route actually
+ * went away, counted per (route, announcing peer) pair so that ten peers each
+ * announcing a prefix once reads as a stable route rather than as ten flaps.
+ * One flap is counted on each up→down transition of a pair; the re-announce
+ * that follows is not itself a flap, the next withdraw is. A withdraw for a
+ * pair that was never seen announced still counts: the capture started
+ * mid-session, the route was up before it began, and it going away is exactly
+ * what the column is there to show. A repeat withdraw of an already-down pair
+ * is not a second flap.
+ */
+export function aggregatePrefixStats(packets: BgpPacket[]): PrefixStats[] {
+  const aggregator = createAggregator()
+  for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+    aggregator.addPacket(packets[packetIndex], packetIndex)
+  }
+  return aggregator.finish()
 }

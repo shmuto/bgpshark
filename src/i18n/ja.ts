@@ -133,6 +133,7 @@ export const ja: Messages = {
     findingsHeading: '検出事項',
     findingsCount: (groups: number, occurrences: number) => `${groups} 種類 · 計 ${occurrences} 回`,
     noFindings: '問題は検出されませんでした。すべてのセッションは正常です。',
+    findingsPending: '経路を分析して検出事項を調べています…',
     // "件" left open whether it counted packets or messages; the header counts packets.
     messageCount: (n: number) => `${n} メッセージ`,
     clearScope: 'すべてのセッションを表示',

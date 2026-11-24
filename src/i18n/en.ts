@@ -128,6 +128,7 @@ export const en = {
     findingsCount: (groups: number, occurrences: number) =>
       `${groups} kind${groups === 1 ? '' : 's'} · ${occurrences} occurrence${occurrences === 1 ? '' : 's'}`,
     noFindings: 'No issues detected — every session looks healthy.',
+    findingsPending: 'Analyzing routes for findings…',
     messageCount: (n: number) => `${n} msg${n === 1 ? '' : 's'}`,
     clearScope: 'Show all sessions',
     wholeCapture: 'Whole capture',

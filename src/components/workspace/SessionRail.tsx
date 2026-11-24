@@ -29,7 +29,7 @@ const STRIPE: Record<AlertSeverity, string> = {
  * wrong here" next to "where am I looking".
  */
 export function SessionRail({ onNavigate }: { onNavigate?: () => void }) {
-  const { sessions, scopedAlerts, scope, setScope } = useWorkspace()
+  const { sessions, scopedAlerts, findingsPending, scope, setScope } = useWorkspace()
   const { t } = useI18n()
   const total = sessions.reduce((sum, s) => sum + s.messages, 0)
 
@@ -80,7 +80,11 @@ export function SessionRail({ onNavigate }: { onNavigate?: () => void }) {
           }
         />
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {groups.length === 0 ? (
+          {findingsPending ? (
+            <p role="status" data-testid="findings-pending" className="px-3 py-4 text-xs text-muted">
+              {t.workspace.findingsPending}
+            </p>
+          ) : groups.length === 0 ? (
             <p className="px-3 py-4 text-xs text-ok">{t.workspace.noFindings}</p>
           ) : (
             <ul>

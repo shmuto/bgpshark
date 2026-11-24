@@ -5,6 +5,7 @@ import { useI18n } from '../i18n'
 import { computeAlerts, computeTransportAlerts, scopeAlerts } from '../components/dashboard/alerts'
 import type { AlertSeverity, DashboardAlert } from '../components/dashboard/types'
 import { peeringKey, peeringAddresses } from '../lib/bgp/peering'
+import { hasPrefixStats, prefixStatsForAsync } from '../lib/bgp/prefix-stats'
 import type { BgpOpenMessage, BgpPacket } from '../lib/bgp/types'
 import type { GenericPacket } from '../lib/pcap'
 
@@ -33,6 +34,12 @@ interface WorkspaceValue {
    * over its packets alone. The whole capture's when nothing is chosen.
    */
   scopedAlerts: DashboardAlert[]
+  /**
+   * True while a large capture's route statistics are still being worked out
+   * in the background; the findings are empty until they are, which is not
+   * the same as there being none.
+   */
+  findingsPending: boolean
   sessions: SessionSummary[]
   /**
    * The time window every view is narrowed to, as epoch milliseconds
@@ -56,6 +63,19 @@ function inRange(timestamp: Date, [from, to]: [number, number]): boolean {
 }
 
 const SEVERITY_RANK: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2 }
+
+/**
+ * From how many BGP packets the findings wait for route statistics worked out
+ * in the background.
+ *
+ * The route rules read statistics over every route in the capture, and
+ * computing them in one go held the page frozen for seconds after a large
+ * capture loaded — the packet list drawn but unusable. Above this size the
+ * statistics are built in slices that leave the page responsive, and the
+ * findings appear when they are done. Below it they take milliseconds, and
+ * the findings are there with the list, as they always were.
+ */
+export const BACKGROUND_FINDINGS_MIN_PACKETS = 20_000
 
 function latestAsByAddress(packets: BgpPacket[]): Map<string, number> {
   const asByIp = new Map<string, number>()
@@ -142,12 +162,37 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (requestedScope) setScope(requestedScope)
   }, [requestedScope])
 
+  const sessionPackets = useMemo(
+    () => (scope ? packets.filter((p) => peeringKey(p.srcIp, p.dstIp) === scope) : packets),
+    [packets, scope]
+  )
+
+  // On a large capture, work the route statistics out in the background —
+  // the whole capture's, and the chosen session's — and only then the
+  // findings, which read them from the cache at once.
+  const background = packets.length > BACKGROUND_FINDINGS_MIN_PACKETS
+  const [, setStatsVersion] = useState(0)
+  const capturePending = background && !hasPrefixStats(packets)
+  const scopePending = background && scope !== null && !hasPrefixStats(sessionPackets)
+  useEffect(() => {
+    if (!capturePending && !scopePending) return
+    const controller = new AbortController()
+    void (async () => {
+      if (capturePending && !(await prefixStatsForAsync(packets, controller.signal))) return
+      if (scopePending && !(await prefixStatsForAsync(sessionPackets, controller.signal))) return
+      setStatsVersion((version) => version + 1)
+    })()
+    return () => controller.abort()
+  }, [capturePending, scopePending, packets, sessionPackets])
+
   const alerts = useMemo(
     () =>
-      packets.length > 0
-        ? computeAlerts(packets, allPackets, locale)
-        : computeTransportAlerts(allPackets, locale),
-    [packets, allPackets, locale]
+      capturePending
+        ? []
+        : packets.length > 0
+          ? computeAlerts(packets, allPackets, locale)
+          : computeTransportAlerts(allPackets, locale),
+    [capturePending, packets, allPackets, locale]
   )
   const sessions = useMemo(
     () => summarizeSessions(packets, allPackets, alerts),
@@ -156,14 +201,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const [range, setRange] = useState<[number, number] | null>(null)
 
-  const sessionPackets = useMemo(
-    () => (scope ? packets.filter((p) => peeringKey(p.srcIp, p.dstIp) === scope) : packets),
-    [packets, scope]
-  )
   const scopedAlerts = useMemo(
-    () => scopeAlerts(alerts, packets, scope, locale),
-    [alerts, packets, scope, locale]
+    () => (capturePending || scopePending ? [] : scopeAlerts(alerts, packets, scope, locale, sessionPackets)),
+    [capturePending, scopePending, alerts, packets, scope, locale, sessionPackets]
   )
+  const findingsPending = capturePending || scopePending
   const scopedPackets = useMemo(
     () => (range ? sessionPackets.filter((p) => inRange(p.timestamp, range)) : sessionPackets),
     [sessionPackets, range]
@@ -184,6 +226,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setScope,
       alerts,
       scopedAlerts,
+      findingsPending,
       sessions,
       range,
       setRange,
@@ -191,7 +234,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       scopedAllPackets,
       sessionPackets,
     }),
-    [scope, alerts, scopedAlerts, sessions, range, scopedPackets, scopedAllPackets, sessionPackets]
+    [scope, alerts, scopedAlerts, findingsPending, sessions, range, scopedPackets, scopedAllPackets, sessionPackets]
   )
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>
 }
