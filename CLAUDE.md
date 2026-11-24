@@ -1,6 +1,6 @@
 # Working on BGPShark
 
-Quick orientation and invariants for contributors and AI agents working in this repository. For product overview and architecture, see [`README.md`](README.md); for specifications, see [`docs/design.md`](docs/design.md) and [`docs/troubleshooting-scenarios.md`](docs/troubleshooting-scenarios.md).
+Quick orientation and invariants for contributors and AI agents working in this repository. For product overview, see [`README.md`](README.md); for architecture diagrams (load pipeline, filter backends, findings, CI), see [`docs/architecture.md`](docs/architecture.md); for specifications, see [`docs/design.md`](docs/design.md) and [`docs/troubleshooting-scenarios.md`](docs/troubleshooting-scenarios.md).
 
 ## Commands
 
