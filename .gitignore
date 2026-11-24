@@ -40,5 +40,8 @@ clab-*
 # Captures written by testlab/scenarios.ts — regenerate, don't commit
 testlab/scenarios/
 
+# Captures written by testlab/pcap.ts (bun run pcap) — same reasoning
+testlab/out/
+
 # Output of testlab/capture.sh — a lab artefact, not a fixture
 testlab/bgp-capture.pcap

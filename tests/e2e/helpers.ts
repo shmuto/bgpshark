@@ -1,6 +1,17 @@
 import { expect, type Page } from '@playwright/test'
-import { announce, buildScenario, END_OF_RIB } from '../../src/lib/build'
-import { writePcap } from '../../src/lib/pcap/writer'
+import {
+  ROUTER_A,
+  ROUTER_B,
+  announce,
+  buildScenario,
+  establish,
+  keepSide,
+  mergeCaptures,
+  patchRecord,
+  END_OF_RIB,
+  type BgpMessageSpec,
+  type CapabilitySpec,
+} from '../../src/lib/build'
 
 /**
  * Loads the bundled sample capture through the button a user would press, and
@@ -142,20 +153,11 @@ export async function runSql(page: Page, sql: string): Promise<string> {
  * EVPN stopped reaching the database.
  */
 export function evpnCapture(): Buffer {
-  const bgp = (type: number, body: number[]) => {
-    const length = 19 + body.length
-    return Buffer.from([...Array(16).fill(0xff), length >> 8, length & 0xff, type, ...body])
-  }
-  const attribute = (flags: number, type: number, value: number[]) => [flags, type, value.length, ...value]
+  // The builder has no spec for EVPN NLRI, so the routes are written as bytes
+  // and carried in RAW path attributes; everything around them — the session,
+  // its OPENs and the TCP underneath — is the builder's.
   const ip4 = (address: string) => address.split('.').map(Number)
   const u32 = (n: number) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]
-
-  // OPEN advertising 4-byte AS and MP-BGP for L2VPN/EVPN (AFI 25 / SAFI 70).
-  const open = (as: number, routerId: string) => {
-    const caps = [2, 6, 65, 4, ...u32(as), 2, 6, 1, 4, 0, 25, 0, 70]
-    return bgp(1, [4, as >> 8, as & 0xff, 0, 90, ...ip4(routerId), caps.length, ...caps])
-  }
-
   const rd = (address: string, n: number) => [0, 1, ...ip4(address), n >> 8, n & 0xff]
   const vni = (v: number) => [(v << 4) >> 16, ((v << 4) >> 8) & 0xff, (v << 4) & 0xff]
   const mac = (text: string) => text.split(':').map((byte) => parseInt(byte, 16))
@@ -166,100 +168,59 @@ export function evpnCapture(): Buffer {
   const imet = (leaf: string, id: number) => nlri(3, [...rd(leaf, id), ...u32(0), 32, ...ip4(leaf)])
 
   // Route Target 65002:100 and the VXLAN encapsulation community, on every route.
-  const routeTarget = [0x00, 0x02, 0xfd, 0xea, ...u32(100)]
-  const vxlan = [0x03, 0x0c, 0, 0, 0, 0, 0, 8]
-  const withAttributes = (attrs: number[]) => bgp(2, [0, 0, attrs.length >> 8, attrs.length & 0xff, ...attrs])
+  const extendedCommunities = [0x00, 0x02, 0xfd, 0xea, ...u32(100), 0x03, 0x0c, 0, 0, 0, 0, 0, 8]
 
-  const announce = (nextHop: string, routes: number[], as: number) =>
-    withAttributes([
-      ...attribute(0x40, 1, [0]),
-      ...attribute(0x40, 2, [2, 1, ...u32(as)]),
-      ...attribute(0x80, 14, [0, 25, 70, 4, ...ip4(nextHop), 0, ...routes]),
-      ...attribute(0xc0, 16, [...routeTarget, ...vxlan]),
-    ])
-  const withdraw = (routes: number[]) =>
-    withAttributes(attribute(0x80, 15, [0, 25, 70, ...routes]))
+  const announce = (nextHop: string, routes: number[], as: number): BgpMessageSpec => ({
+    type: 'UPDATE',
+    pathAttributes: [
+      { type: 'ORIGIN', value: 'IGP' },
+      { type: 'AS_PATH', segments: [{ asNumbers: [as] }] },
+      // MP_REACH_NLRI for L2VPN/EVPN (AFI 25 / SAFI 70), and the communities.
+      { type: 'RAW', flags: 0x80, typeCode: 14, value: Uint8Array.from([0, 25, 70, 4, ...ip4(nextHop), 0, ...routes]) },
+      { type: 'RAW', flags: 0xc0, typeCode: 16, value: Uint8Array.from(extendedCommunities) },
+    ],
+  })
+  const withdraw = (routes: number[]): BgpMessageSpec => ({
+    type: 'UPDATE',
+    pathAttributes: [{ type: 'RAW', flags: 0x80, typeCode: 15, value: Uint8Array.from([0, 25, 70, ...routes]) }],
+  })
 
-  const LEAF1 = '10.0.0.1'
-  const LEAF2 = '10.0.0.2'
-  const events = [
-    { t: 0, from: LEAF1, message: open(65001, LEAF1) },
-    { t: 0.05, from: LEAF2, message: open(65002, LEAF2) },
-    { t: 1, from: LEAF2, message: announce(LEAF2, [...imet(LEAF2, 100), ...imet(LEAF2, 200)], 65002) },
-    { t: 3, from: LEAF2, message: announce(LEAF2, macRoute(LEAF2, 100, '00:0c:29:aa:bb:cc', 10100), 65002) },
-    { t: 60, from: LEAF2, message: withdraw(macRoute(LEAF2, 100, '00:0c:29:aa:bb:cc', 10100)) },
-    { t: 62, from: LEAF1, message: announce(LEAF1, macRoute(LEAF1, 100, '00:0c:29:aa:bb:cc', 10100), 65001) },
+  // 4-byte AS and MP-BGP for L2VPN/EVPN only. Stated in full because the
+  // default would offer IPv4 unicast, which a pure EVPN fabric peering does not.
+  const evpn = (asNumber: number): CapabilitySpec[] => [
+    { type: 'FOUR_OCTET_AS', asNumber },
+    { type: 'MULTIPROTOCOL', afi: 25, safi: 70 },
   ]
+  const leaf1 = { ip: '10.0.0.1', as: 65001, routerId: '10.0.0.1', holdTime: 90, capabilities: evpn(65001) }
+  const leaf2 = { ip: '10.0.0.2', as: 65002, routerId: '10.0.0.2', holdTime: 90, capabilities: evpn(65002) }
+  const host = '00:0c:29:aa:bb:cc'
 
-  const header = Buffer.alloc(24)
-  header.writeUInt32LE(0xa1b2c3d4, 0)
-  header.writeUInt16LE(2, 4)
-  header.writeUInt16LE(4, 6)
-  header.writeUInt32LE(65535, 16)
-  header.writeUInt32LE(1, 20)
-
-  const chunks: Buffer[] = [header]
-  for (const event of events) {
-    const outbound = event.from === LEAF1
-    const tcp = Buffer.alloc(20)
-    tcp.writeUInt16BE(outbound ? 54001 : 179, 0)
-    tcp.writeUInt16BE(outbound ? 179 : 54001, 2)
-    tcp.writeUInt32BE(1, 4)
-    tcp[12] = 0x50
-    tcp[13] = 0x18
-    tcp.writeUInt16BE(65535, 14)
-
-    const payload = Buffer.concat([tcp, event.message])
-    const ip = Buffer.alloc(20)
-    ip[0] = 0x45
-    ip.writeUInt16BE(20 + payload.length, 2)
-    ip[8] = 64
-    ip[9] = 6
-    Buffer.from(ip4(event.from)).copy(ip, 12)
-    Buffer.from(ip4(outbound ? LEAF2 : LEAF1)).copy(ip, 16)
-
-    const frame = Buffer.concat([
-      Buffer.from('aabbccddeeff112233445566', 'hex'),
-      Buffer.from([0x08, 0x00]),
-      ip,
-      payload,
-    ])
-    const record = Buffer.alloc(16)
-    const seconds = 1764547200 + event.t
-    record.writeUInt32LE(Math.floor(seconds), 0)
-    record.writeUInt32LE(Math.round((seconds % 1) * 1e6), 4)
-    record.writeUInt32LE(frame.length, 8)
-    record.writeUInt32LE(frame.length, 12)
-    chunks.push(record, frame)
-  }
-
-  return Buffer.concat(chunks)
+  const built = buildScenario({
+    a: leaf1,
+    b: leaf2,
+    startTime: new Date('2025-12-01T00:00:00Z'),
+    gap: 10,
+    steps: [
+      ...establish(),
+      { kind: 'send', from: 'b', messages: [announce(leaf2.ip, [...imet(leaf2.ip, 100), ...imet(leaf2.ip, 200)], 65002)], gap: 1000 },
+      { kind: 'send', from: 'b', messages: [announce(leaf2.ip, macRoute(leaf2.ip, 100, host, 10100), 65002)], gap: 2000 },
+      // The host moves: leaf2 withdraws it a minute later, leaf1 picks it up.
+      { kind: 'send', from: 'b', messages: [withdraw(macRoute(leaf2.ip, 100, host, 10100))], gap: 57_000 },
+      { kind: 'send', from: 'a', messages: [announce(leaf1.ip, macRoute(leaf1.ip, 100, host, 10100), 65001)], gap: 2000 },
+    ],
+  })
+  return Buffer.from(built.bytes)
 }
 
 /**
  * A pcapng whose first packets claim more captured bytes than they carry, so
  * the parser produces warnings. Built from the sample rather than committed as
- * a second fixture, so it cannot drift away from it.
+ * a second fixture, so it cannot drift away from it. A pcapng rather than a
+ * pcap on purpose: its blocks state their own length, so the parser can skip
+ * each damaged packet and carry on — which is the warning these tests read.
  */
 export function corruptCapture(sample: Buffer): Buffer {
-  const bytes = Buffer.from(sample)
-  let offset = 0
-  let patched = 0
-
-  while (offset + 8 <= bytes.length) {
-    const type = bytes.readUInt32LE(offset)
-    const length = bytes.readUInt32LE(offset + 4)
-    if (length < 12 || offset + length > bytes.length) break
-
-    // Enhanced Packet Block: bump its captured length past the block's own end.
-    if (type === 6 && patched < 3) {
-      bytes.writeUInt32LE(bytes.readUInt32LE(offset + 20) + 40, offset + 20)
-      patched++
-    }
-    offset += length
-  }
-
-  return bytes
+  return Buffer.from(patchRecord(sample, [1, 2, 3], { capturedLength: (n) => n + 40 }))
 }
 
 /**
@@ -273,8 +234,8 @@ export function corruptCapture(sample: Buffer): Buffer {
  */
 export function unansweredOpenCapture(): Buffer {
   const built = buildScenario({
-    a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 },
-    b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 },
+    a: ROUTER_A,
+    b: ROUTER_B,
     gap: 200,
     steps: [
       { kind: 'handshake' },
@@ -296,30 +257,23 @@ export function unansweredOpenCapture(): Buffer {
  * writes into `s11-silent-teardown`, which this is the test-sized copy of.
  */
 export function silentTeardownCapture(): Buffer {
-  const a = { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 }
-  const b = { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 }
-  const establish = [
-    { kind: 'handshake' as const },
-    { kind: 'open' as const, from: 'a' as const },
-    { kind: 'open' as const, from: 'b' as const },
-    { kind: 'keepalive' as const, from: 'a' as const },
-    { kind: 'keepalive' as const, from: 'b' as const },
-  ]
+  const a = ROUTER_A
+  const b = ROUTER_B
 
   const built = buildScenario({
     a,
     b,
     gap: 200,
     steps: [
-      ...establish,
+      ...establish(),
       { kind: 'delay', gap: 20_000 },
       { kind: 'reset', from: 'b' },
       { kind: 'delay', gap: 60_000 },
-      ...establish,
+      ...establish(),
       { kind: 'delay', gap: 20_000 },
       { kind: 'close', from: 'b' },
       { kind: 'delay', gap: 60_000 },
-      ...establish,
+      ...establish(),
     ],
   })
   return Buffer.from(built.bytes)
@@ -335,8 +289,8 @@ export function silentTeardownCapture(): Buffer {
  * re-advertisement, and nothing in the capture withdraws it.
  */
 export function routeRefreshCapture(outcome: 'gained' | 'lost' = 'gained'): Buffer {
-  const a = { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 }
-  const b = { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 }
+  const a = ROUTER_A
+  const b = ROUTER_B
 
   const route = (prefix: string, communities?: string[]) => ({
     type: 'UPDATE' as const,
@@ -361,11 +315,7 @@ export function routeRefreshCapture(outcome: 'gained' | 'lost' = 'gained'): Buff
     b,
     gap: 200,
     steps: [
-      { kind: 'handshake' },
-      { kind: 'open', from: 'a' },
-      { kind: 'open', from: 'b' },
-      { kind: 'keepalive', from: 'a' },
-      { kind: 'keepalive', from: 'b' },
+      ...establish(),
       { kind: 'send', from: 'a', messages: [...before, END_OF_RIB] },
       { kind: 'delay', gap: 10_000 },
       // B asks A to re-advertise, which is what a soft clear looks like on the
@@ -387,13 +337,6 @@ export function routeRefreshCapture(outcome: 'gained' | 'lost' = 'gained'): Buff
  */
 export function bestPathCapture(): Buffer {
   const local = { as: 65000, routerId: '100.100.100.100', holdTime: 90 }
-  const establish = [
-    { kind: 'handshake' as const },
-    { kind: 'open' as const, from: 'a' as const },
-    { kind: 'open' as const, from: 'b' as const },
-    { kind: 'keepalive' as const, from: 'a' as const },
-    { kind: 'keepalive' as const, from: 'b' as const },
-  ]
 
   const short = buildScenario({
     a: { ip: '192.0.2.1', as: 65010, routerId: '10.10.10.10', holdTime: 90 },
@@ -401,7 +344,7 @@ export function bestPathCapture(): Buffer {
     gap: 200,
     startTime: new Date('2026-01-01T00:00:00Z'),
     steps: [
-      ...establish,
+      ...establish(),
       {
         kind: 'send',
         from: 'a',
@@ -428,7 +371,7 @@ export function bestPathCapture(): Buffer {
     gap: 200,
     startTime: new Date('2026-01-01T00:00:05Z'),
     steps: [
-      ...establish,
+      ...establish(),
       {
         kind: 'send',
         from: 'a',
@@ -455,7 +398,7 @@ export function bestPathCapture(): Buffer {
 
   // Two separate sessions in one file, which is what a capture on the router
   // receiving both upstreams actually looks like.
-  return Buffer.from(writePcap([...short.frames, ...long.frames], short.linkType))
+  return Buffer.from(mergeCaptures([short, long]).bytes)
 }
 
 /**
@@ -498,25 +441,18 @@ export function gracefulRestartCapture(options: { forwarding?: boolean } = {}): 
     holdTime: 90,
     capabilities: capabilities(65002, 300, false),
   }
-  const establish = [
-    { kind: 'handshake' as const },
-    { kind: 'open' as const, from: 'a' as const },
-    { kind: 'open' as const, from: 'b' as const },
-    { kind: 'keepalive' as const, from: 'a' as const },
-    { kind: 'keepalive' as const, from: 'b' as const },
-  ]
 
   const built = buildScenario({
     a,
     b,
     gap: 200,
     steps: [
-      ...establish,
+      ...establish(),
       { kind: 'send', from: 'a', messages: [END_OF_RIB] },
       { kind: 'delay', gap: 20_000 },
       { kind: 'reset', from: 'a' },
       { kind: 'delay', gap: 25_000 },
-      ...establish,
+      ...establish(),
       { kind: 'delay', gap: 3000 },
       { kind: 'send', from: 'a', messages: [END_OF_RIB] },
     ],
@@ -532,15 +468,8 @@ export function gracefulRestartCapture(options: { forwarding?: boolean } = {}): 
  * be a worse explanation of packets that already have one.
  */
 export function explainedTeardownCapture(): Buffer {
-  const a = { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 }
-  const b = { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 }
-  const establish = [
-    { kind: 'handshake' as const },
-    { kind: 'open' as const, from: 'a' as const },
-    { kind: 'open' as const, from: 'b' as const },
-    { kind: 'keepalive' as const, from: 'a' as const },
-    { kind: 'keepalive' as const, from: 'b' as const },
-  ]
+  const a = ROUTER_A
+  const b = ROUTER_B
   // Cease / Administrative Shutdown, which is how a speaker that meant to go
   // away says so.
   const cease = {
@@ -554,12 +483,12 @@ export function explainedTeardownCapture(): Buffer {
     b,
     gap: 200,
     steps: [
-      ...establish,
+      ...establish(),
       { kind: 'delay', gap: 20_000 },
       cease,
       { kind: 'reset', from: 'b' },
       { kind: 'delay', gap: 60_000 },
-      ...establish,
+      ...establish(),
       { kind: 'delay', gap: 20_000 },
       cease,
       { kind: 'reset', from: 'b' },
@@ -574,23 +503,15 @@ export function explainedTeardownCapture(): Buffer {
  */
 export function oneDirectionCapture(): Buffer {
   const full = buildScenario({
-    a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 },
-    b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 },
+    a: ROUTER_A,
+    b: ROUTER_B,
     gap: 200,
     steps: [
-      { kind: 'handshake' },
-      { kind: 'open', from: 'a' },
-      { kind: 'open', from: 'b' },
-      { kind: 'keepalive', from: 'a' },
-      { kind: 'keepalive', from: 'b' },
+      ...establish(),
       { kind: 'send', from: 'b', messages: [{ type: 'NOTIFICATION', errorCode: 6, errorSubcode: 2 }] },
     ],
   })
-  // IPv4 source address: 14 bytes of Ethernet, then 12 into the IPv4 header.
-  const fromA = full.frames.filter((frame) =>
-    [10, 0, 0, 1].every((octet, i) => frame.frameBytes[26 + i] === octet)
-  )
-  return Buffer.from(writePcap(fromA, full.linkType))
+  return Buffer.from(keepSide(full, 'a').bytes)
 }
 
 /**
@@ -605,15 +526,11 @@ export function oneDirectionCapture(): Buffer {
 export function malformedUpdateCapture(): Buffer {
   const offending = new Uint8Array([0x40, 0xc7, 0x04, 0xde, 0xad, 0xbe, 0xef])
   const built = buildScenario({
-    a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 },
-    b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 },
+    a: ROUTER_A,
+    b: ROUTER_B,
     gap: 200,
     steps: [
-      { kind: 'handshake' },
-      { kind: 'open', from: 'a' },
-      { kind: 'open', from: 'b' },
-      { kind: 'keepalive', from: 'a' },
-      { kind: 'keepalive', from: 'b' },
+      ...establish(),
       {
         kind: 'send',
         from: 'a',
@@ -651,8 +568,8 @@ export function malformedUpdateCapture(): Buffer {
  */
 export function holdTimerExpiryCapture(): Buffer {
   const built = buildScenario({
-    a: { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 },
-    b: { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 180 },
+    a: ROUTER_A,
+    b: { ...ROUTER_B, holdTime: 180 },
     gap: 200,
     steps: [
       { kind: 'handshake' },
@@ -708,11 +625,7 @@ export function addPathCapture(sendReceive: 'both' | 'send' = 'both'): Buffer {
     },
     gap: 200,
     steps: [
-      { kind: 'handshake' },
-      { kind: 'open', from: 'a' },
-      { kind: 'open', from: 'b' },
-      { kind: 'keepalive', from: 'a' },
-      { kind: 'keepalive', from: 'b' },
+      ...establish(),
       {
         kind: 'send',
         from: 'a',

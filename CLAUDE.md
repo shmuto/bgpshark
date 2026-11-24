@@ -13,6 +13,7 @@ E2E_PREVIEW=1 bun run test:e2e  # Same suite against the production build, with 
 bun run lint         # ESLint
 bun run build        # Type-check (src, tests, testlab) + production build to dist/
 bun run preview      # Serve production build (with real CSP) at http://localhost:4173/bgpshark/
+bun run pcap <preset|file.ts> --dump  # Build a one-off capture into testlab/out/ and list how the app decodes it
 bun run screenshots  # Regenerate manual screenshots in public/manual/
 bun run og-image     # Regenerate the link-preview card public/og-image.png (uses public/manual/workspace.png)
 ```
@@ -43,6 +44,7 @@ CHROMIUM_PATH=/path/to/chromium bun run test:e2e
 
 - **Tests mirror source:** Unit tests live in `tests/lib/**` (`bun test`). Browser specs live in `tests/e2e/*.e2e.ts` (named `.e2e.ts` so `bun test` does not execute them). See `tests/e2e/helpers.ts` for shared capture-loading helpers.
 - **Build test fixtures in code:** Generate captures using `src/lib/build` or `bun run testlab/scenarios.ts` rather than committing opaque binary pcaps.
+  - For a one-off capture (checking a fix by hand, reproducing a report), write a capture file and run `bun run pcap <file> --dump` instead of a script that imports the builder and writes bytes itself. `bun run pcap --new <file>` writes a starter; see `testlab/README.md` for what a capture file may export. Raw bytes, non-BGP packets and edits to existing captures (dropped frames, time jumps, damaged bytes, lying record headers) are covered there too — reach for those before hand-assembling frames.
 - **Type-checking covers scripts:** `tsconfig.json` includes `src`, `tests`, and `testlab`, so `bun run build` validates test and lab scripts too.
 - **Comments explain *why*:** Preserve and match the codebase's existing docblocks explaining module rationale and prevented failure modes.
 - **UI navigation notes for debugging:**

@@ -138,12 +138,28 @@ export interface RouteRefreshSpec {
   safi: number
 }
 
+/**
+ * Bytes put on the stream exactly as given, with no BGP header added and no
+ * checks made.
+ *
+ * This is how a capture gets what the specs above cannot describe: a message
+ * type or NLRI encoding the encoder has no spec for (EVPN routes, say, built
+ * with `bgpMessage`), or something deliberately broken — a bad marker, a
+ * length that disagrees with the bytes, half a message, or data that is not BGP
+ * at all.
+ */
+export interface RawMessageSpec {
+  type: 'RAW'
+  bytes: Uint8Array
+}
+
 export type BgpMessageSpec =
   | OpenSpec
   | UpdateSpec
   | NotificationSpec
   | KeepaliveSpec
   | RouteRefreshSpec
+  | RawMessageSpec
 
 // ---------------------------------------------------------------------------
 // Message framing
@@ -170,6 +186,21 @@ function frameMessage(type: number, body: Uint8Array): Uint8Array {
   return writer.toBytes()
 }
 
+/**
+ * A message of any type with the header filled in from `body`.
+ *
+ * Unlike the specs, this does not refuse a message over 4096 bytes: a raw
+ * message is for building what a well-behaved speaker would not send.
+ */
+export function bgpMessage(type: number, body: Uint8Array | ArrayLike<number>): Uint8Array {
+  const writer = new ByteWriter()
+  for (let i = 0; i < 16; i++) writer.u8(0xff)
+  writer.u16(BGP_HEADER_LENGTH + body.length)
+  writer.u8(type)
+  writer.bytes(Uint8Array.from(body))
+  return writer.toBytes()
+}
+
 /** One BGP message, header and all, ready to go into a TCP payload. */
 export function encodeMessage(spec: BgpMessageSpec, options?: EncodeOptions): Uint8Array {
   const resolved = resolve(options)
@@ -185,6 +216,8 @@ export function encodeMessage(spec: BgpMessageSpec, options?: EncodeOptions): Ui
       return frameMessage(BgpMessageType.KEEPALIVE, new Uint8Array(0))
     case 'ROUTE_REFRESH':
       return frameMessage(BgpMessageType.ROUTE_REFRESH, encodeRouteRefreshBody(spec))
+    case 'RAW':
+      return spec.bytes
   }
 }
 

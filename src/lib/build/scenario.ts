@@ -79,6 +79,16 @@ export interface BuiltCapture {
   /** A complete classic pcap file. */
   bytes: Uint8Array
   frames: ExportableFrame[]
+  /**
+   * Which peer put each frame on the wire, index for index with `frames`.
+   * Undefined for a frame that belongs to no session: one read from an
+   * existing file, or built by `buildPackets` without a `from`.
+   *
+   * Kept beside the frames rather than read back out of their headers so that
+   * deleting one direction does not depend on where the source address sits —
+   * which moves with the link type, VLAN tags and IP version.
+   */
+  senders: Array<Side | undefined>
   linkType: number
   /** Anything the scenario asked for that could not be honoured exactly. */
   warnings: string[]
@@ -192,6 +202,7 @@ interface SideState {
 
 class ScenarioCompiler {
   private readonly frames: ExportableFrame[] = []
+  private readonly senders: Side[] = []
   readonly warnings: string[] = []
 
   private readonly state: Record<Side, SideState>
@@ -242,6 +253,7 @@ class ScenarioCompiler {
     return {
       bytes: writePcap(this.frames, this.linkType),
       frames: this.frames,
+      senders: this.senders,
       linkType: this.linkType,
       warnings: this.warnings,
     }
@@ -315,6 +327,7 @@ class ScenarioCompiler {
       frameBytes,
       originalLength: frameBytes.length,
     })
+    this.senders.push(side)
 
     const consumed = (payload?.length ?? 0) + (flags.syn ? 1 : 0) + (flags.fin ? 1 : 0)
     from.seq += consumed
