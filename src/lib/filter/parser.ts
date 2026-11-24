@@ -1471,7 +1471,7 @@ export function getSuggestions(
   const thirdLastToken = tokens[tokens.length - 3]
 
   const endsWithSpace = beforeCursor.length > 0 && /\s$/.test(beforeCursor)
-  const dynamicValues = extractDynamicValues(packets)
+  const dynamicValues = dynamicValuesFor(packets)
 
   // After complete expression - suggest logical operators
   if (
@@ -1651,6 +1651,33 @@ function getFieldSuggestions(filter: string, locale: Locale = 'en'): Suggestion[
   return suggestions
 }
 
+/**
+ * The values each field takes in these packets, worked out once per packet
+ * array.
+ *
+ * Suggestions are recomputed on every keystroke — twice, once to decide
+ * whether to open the list and once to render it — and gathering the values
+ * walks every route of every packet. On a 50MB capture that was four seconds
+ * per character, the freeze that typing a filter suffered most. The values do
+ * not depend on what is typed, only on the packets, and a capture's (or a
+ * session's) packets are one array for as long as they are shown.
+ */
+const dynamicValuesCache = new WeakMap<BgpPacket[], DynamicValues>()
+function dynamicValuesFor(packets: BgpPacket[]): DynamicValues {
+  let values = dynamicValuesCache.get(packets)
+  if (!values) {
+    values = { sets: extractDynamicValues(packets), sorted: new Map() }
+    dynamicValuesCache.set(packets, values)
+  }
+  return values
+}
+
+/** A field's values as sets, plus each field's sorted list once it is asked for. */
+interface DynamicValues {
+  sets: Record<string, Set<string>>
+  sorted: Map<FilterFieldName, string[]>
+}
+
 function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>> {
   // Use canonical field names
   const values: Record<string, Set<string>> = {
@@ -1730,16 +1757,22 @@ function extractDynamicValues(packets: BgpPacket[]): Record<string, Set<string>>
   return values
 }
 
-function getFieldValues(field: FilterFieldName, dynamicValues: Record<string, Set<string>>): string[] {
-  if (isBidirectionalField(field)) {
-    return Array.from(new Set([...(dynamicValues.src_ip ?? []), ...(dynamicValues.dst_ip ?? [])])).sort()
-  }
+function getFieldValues(field: FilterFieldName, dynamicValues: DynamicValues): string[] {
   const fieldDef = FILTER_FIELDS[field]
-  if (!fieldDef) return []
-  if (fieldDef.values.length > 0) {
-    return fieldDef.values as unknown as string[]
+  if (!isBidirectionalField(field)) {
+    if (!fieldDef) return []
+    if (fieldDef.values.length > 0) return fieldDef.values as unknown as string[]
   }
 
-  const values = dynamicValues[field]
-  return values ? Array.from(values).sort() : []
+  // Sorted once per field: a prefix field can hold hundreds of thousands of
+  // values, and sorting them was a per-keystroke cost of its own.
+  let sorted = dynamicValues.sorted.get(field)
+  if (!sorted) {
+    const { sets } = dynamicValues
+    sorted = isBidirectionalField(field)
+      ? Array.from(new Set([...(sets.src_ip ?? []), ...(sets.dst_ip ?? [])])).sort()
+      : Array.from(sets[field] ?? []).sort()
+    dynamicValues.sorted.set(field, sorted)
+  }
+  return sorted
 }
