@@ -76,6 +76,21 @@ test.describe('the filter box', () => {
     await expect(page.getByLabel('Filter', { exact: true })).toHaveValue('type = UPDATE and ip = 10.0.13.1')
   })
 
+  test('+ Filter offers the values the capture has for a field, in order', async ({ page }) => {
+    // Gathered when the popover opens rather than when the list first renders,
+    // which on a capture of unique prefixes held the list back for seconds.
+    await page.getByRole('button', { name: '+ Filter' }).click()
+    await page.getByLabel('Field').selectOption('prefix')
+    const offered = await page.locator('#add-filter-values option').evaluateAll((options) =>
+      options.map((option) => (option as HTMLOptionElement).value)
+    )
+    expect(offered.length).toBeGreaterThan(1)
+    expect(offered.every((value) => /\/\d+$/.test(value))).toBe(true)
+    const v6 = (value: string) => value.includes(':')
+    const ordered = [...offered].sort((a, b) => (v6(a) !== v6(b) ? (v6(a) ? 1 : -1) : a.localeCompare(b)))
+    expect(offered).toEqual(ordered)
+  })
+
   test('/ and Ctrl+K jump to the filter box', async ({ page }) => {
     await page.locator('tbody [role="row"]').first().click()
     await page.keyboard.press('/')
