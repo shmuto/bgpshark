@@ -6,7 +6,7 @@ All processing runs locally in your browser. Captures are never uploaded, no ext
 
 ## Loading a capture
 
-Drop a file anywhere in the window, or select one from the start screen. `.pcap`, `.pcapng`, and `.cap` files up to 50 MB are supported, and the format is detected automatically.
+Drop a file anywhere in the window, or select one from the start screen. `.pcap`, `.pcapng`, and `.cap` files up to 100 MB are supported, and the format is detected automatically.
 
 Large captures take a few seconds to load while a progress bar tracks each stage. The packet list opens as soon as the capture is decoded; the capture is then imported into DuckDB in the background, with a small **DuckDB** gauge in the header until it finishes. Until then, filters run in memory and the SQL console waits for the import, which for a large table transfer can take a while longer than the list.
 
