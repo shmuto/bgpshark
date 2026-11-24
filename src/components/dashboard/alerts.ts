@@ -165,18 +165,22 @@ interface PathChange {
  */
 function* asPathChange(stat: PrefixStats): Sliced<PathChange | null> {
   const bySource = new Map<string, PathChange>()
+  // Read off the history's columns rather than its events: this runs over
+  // every announcement in the capture.
   const history = stat.history
   for (let index = 0; index < history.length; index++) {
     if (pauseAt(index)) yield
-    const event = history[index]
-    if (event.action !== 'announce' || event.asPath === undefined) continue
-    const key = `${event.source}|${event.pathId ?? ''}`
+    const asPath = history.asPath(index)
+    if (asPath === undefined) continue
+    const source = history.source(index)
+    const pathId = history.pathId(index)
+    const key = `${source}|${pathId ?? ''}`
     let entry = bySource.get(key)
     if (!entry) {
-      entry = { source: event.source, pathId: event.pathId, paths: [] }
+      entry = { source, pathId, paths: [] }
       bySource.set(key, entry)
     }
-    if (!entry.paths.includes(event.asPath)) entry.paths.push(event.asPath)
+    if (!entry.paths.includes(asPath)) entry.paths.push(asPath)
   }
 
   let worst: PathChange | null = null
@@ -210,9 +214,10 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
     .sort((a, b) => b.flap - a.flap || b.lastSeenMs - a.lastSeenMs)
 
   for (const stat of flapping.slice(0, ROUTE_ALERT_LIMIT)) {
-    const withdraws = stat.history.filter((event) => event.action === 'withdraw')
+    const history = stat.history.events()
+    const withdraws = history.filter((event) => event.action === 'withdraw')
     // flap >= 1 guarantees a withdraw; the fallback only keeps the types honest.
-    const first = withdraws[0] ?? stat.history[0]
+    const first = withdraws[0] ?? history[0]
     const last = withdraws[withdraws.length - 1] ?? first
     alerts.push({
       id: `route-flap-${stat.key}`,
@@ -263,15 +268,16 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
   for (const { stat, change: { source, pathId, paths } } of repathed.slice(0, ROUTE_ALERT_LIMIT)) {
     // The packet worth opening is the one where that peer's path first
     // differed, not the original announcement.
+    const history = stat.history.events()
     const change =
-      stat.history.find(
+      history.find(
         (event) =>
           event.action === 'announce' &&
           event.source === source &&
           event.pathId === pathId &&
           event.asPath !== undefined &&
           event.asPath !== paths[0]
-      ) ?? stat.history[0]
+      ) ?? history[0]
     const from = pathId !== undefined ? t.asPathFromPath(source, pathId) : source
     alerts.push({
       id: `route-aspath-${stat.key}`,
@@ -299,7 +305,7 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
     if (pauseAt(index)) yield
     const stat = stats[index]
     if (!stat.key.startsWith('[2] ')) continue
-    const announcements = stat.history.filter((event) => event.action === 'announce')
+    const announcements = stat.history.events().filter((event) => event.action === 'announce')
     const moves = announcements.filter((event, i) => i > 0 && event.source !== announcements[i - 1].source)
     if (moves.length > 0) moved.push({ stat, announcements, moves })
   }

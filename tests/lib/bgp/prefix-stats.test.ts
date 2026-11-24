@@ -232,10 +232,52 @@ describe('the rest of the row', () => {
     ])
 
     const stat = only(stats)
-    expect(stat.history.map(e => e.action)).toEqual(['announce', 'withdraw'])
-    expect(stat.history.map(e => e.packetIndex)).toEqual([0, 1])
-    expect(stat.history[0].asPath).toBe('65001')
-    expect(stat.history[0].nextHop).toBe('192.0.2.1')
+    expect(stat.history.events().map(e => e.action)).toEqual(['announce', 'withdraw'])
+    expect(stat.history.events().map(e => e.packetIndex)).toEqual([0, 1])
+    expect(stat.history.events()[0].asPath).toBe('65001')
+    expect(stat.history.events()[0].nextHop).toBe('192.0.2.1')
+  })
+
+  test('sorts a history whose packets are out of time order, keeping ties in capture order', () => {
+    // A merged capture: the second file's packets come after the first's
+    // even where they are older.
+    const stats = aggregatePrefixStats([
+      announce('192.0.2.1', 5, '10.0.12.0/24', [65001]),
+      announce('192.0.2.2', 9, '10.0.13.0/24'),
+      withdraw('192.0.2.1', 2, '10.0.12.0/24'),
+      announce('192.0.2.3', 5, '10.0.12.0/24', [65003]),
+      announce('192.0.2.1', 1, '10.0.12.0/24', [65002]),
+    ])
+
+    const history = stats.find((stat) => stat.key === '10.0.12.0/24')!.history.events()
+    expect(history.map((e) => e.packetIndex)).toEqual([4, 2, 0, 3])
+    expect(history.map((e) => e.asPath)).toEqual(['65002', undefined, '65001', '65003'])
+    // The other route's history is untouched by the sort beside it.
+    expect(stats.find((stat) => stat.key === '10.0.13.0/24')!.history.events().map((e) => e.packetIndex)).toEqual([1])
+  })
+
+  test("a history's columns read what its events say", () => {
+    const stats = aggregatePrefixStats([
+      announce('192.0.2.1', 1, '10.0.12.0/24', [65001, 65002]),
+      withdraw('192.0.2.2', 2, '10.0.12.0/24'),
+      announce('192.0.2.2', 3, '10.0.12.0/24', []),
+    ])
+
+    const { history } = only(stats)
+    const events = history.events()
+    expect(history.length).toBe(3)
+    events.forEach((event, index) => {
+      expect(history.event(index)).toEqual(event)
+      expect(history.isAnnounce(index)).toBe(event.action === 'announce')
+      expect(history.asPath(index)).toBe(event.asPath)
+      expect(history.source(index)).toBe(event.source)
+      expect(history.pathId(index)).toBe(event.pathId)
+      expect(history.packetIndex(index)).toBe(event.packetIndex)
+      expect(history.timestamp(index)).toBe(event.timestamp)
+    })
+    expect(history.hasSourceIn(new Set(['192.0.2.2']))).toBe(true)
+    expect(history.hasSourceIn(new Set(['198.51.100.1']))).toBe(false)
+    expect(JSON.parse(JSON.stringify(history))).toEqual(JSON.parse(JSON.stringify(events)))
   })
 
   test('last seen is the most recent event, whichever kind it was', () => {
@@ -334,7 +376,7 @@ describe('EVPN routes on the route history', () => {
     expect(stat.key).toBe('[2] 00:0c:29:aa:bb:cc VNI 10100')
     expect(stat.announced).toBe(2)
     expect(stat.withdrawn).toBe(1)
-    expect(stat.history).toHaveLength(3)
+    expect(stat.history.events()).toHaveLength(3)
   })
 
   test('the RD is kept on each event, so the move is still readable', () => {
@@ -345,7 +387,7 @@ describe('EVPN routes on the route history', () => {
       ])
     )
 
-    expect(stat.history.map((event) => event.rd)).toEqual(['10.0.0.2:100', '10.0.0.1:100'])
+    expect(stat.history.events().map((event) => event.rd)).toEqual(['10.0.0.2:100', '10.0.0.1:100'])
   })
 
   test('the same MAC in a different VNI is a different route', () => {
@@ -418,7 +460,7 @@ describe('best-path attributes on the route history', () => {
       ]),
     ])
 
-    const event = only(stats).history[0]
+    const event = only(stats).history.events()[0]
     expect(event.med).toBe(300)
     expect(event.localPref).toBe(200)
     expect(event.origin).toBe('IGP')
@@ -431,7 +473,7 @@ describe('best-path attributes on the route history', () => {
     // table showing `0` for both would be lying about one of them.
     const stats = aggregatePrefixStats([announceWith('192.0.2.1', 0, '172.20.0.0/16', [])])
 
-    const event = only(stats).history[0]
+    const event = only(stats).history.events()[0]
     expect(event.med).toBeUndefined()
     expect(event.localPref).toBeUndefined()
     expect(event.communities).toBeUndefined()
@@ -442,7 +484,7 @@ describe('best-path attributes on the route history', () => {
       announceWith('192.0.2.1', 0, '172.20.0.0/16', [{ type: 'MULTI_EXIT_DISC', value: 0 }]),
     ])
 
-    expect(only(stats).history[0].med).toBe(0)
+    expect(only(stats).history.events()[0].med).toBe(0)
   })
 
   test('large communities join the standard ones in one list', () => {
@@ -457,7 +499,7 @@ describe('best-path attributes on the route history', () => {
       ]),
     ])
 
-    expect(only(stats).history[0].communities).toEqual(['65000:80', '65000:1:2'])
+    expect(only(stats).history.events()[0].communities).toEqual(['65000:80', '65000:1:2'])
   })
 
   test('two peers announcing one prefix keep their own attributes', () => {
@@ -473,7 +515,7 @@ describe('best-path attributes on the route history', () => {
       ]),
     ])
 
-    const history = only(stats).history
+    const history = only(stats).history.events()
     expect(history).toHaveLength(2)
     expect(history[0].source).toBe('192.0.2.1')
     expect(history[0].med).toBe(300)
@@ -489,7 +531,7 @@ describe('best-path attributes on the route history', () => {
       withdraw('192.0.2.1', 5, '172.20.0.0/16'),
     ])
 
-    expect(only(stats).history[1].med).toBeUndefined()
+    expect(only(stats).history.events()[1].med).toBeUndefined()
   })
 })
 
@@ -504,9 +546,13 @@ describe('prefixStatsForAsync', () => {
     return packets
   }
 
+  // With each history as its events: compared as they are, every history
+  // would compare the columns all routes share, packets included.
+  const readable = (stats: PrefixStats[]) => stats.map((stat) => ({ ...stat, history: stat.history.events() }))
+
   test('gives the same statistics as computing them in one go', async () => {
     const packets = many()
-    expect(await prefixStatsForAsync(packets)).toEqual(aggregatePrefixStats(packets))
+    expect(readable((await prefixStatsForAsync(packets))!)).toEqual(readable(aggregatePrefixStats(packets)))
   })
 
   test('fills the cache prefixStatsFor reads', async () => {

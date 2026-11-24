@@ -9,7 +9,7 @@
  * can be tested without a browser.
  */
 import { yieldToPage } from '../yield-to-page'
-import type { AsPathAttribute, BgpPacket, BgpPrefix, BgpUpdateMessage } from './types'
+import type { AsPathAttribute, BgpPacket, BgpPathAttribute, BgpPrefix, BgpUpdateMessage } from './types'
 import { formatEvpnIdentity } from './evpn'
 import { formatPrefix, parseBgpPrefix, type ParsedPrefix } from '../net/prefix'
 import { SharedTable } from './shared-decode'
@@ -84,7 +84,153 @@ export interface PrefixStats {
   lastSeenMs: number
   /** `announced + withdrawn`: how busy the route is, used as the sort tiebreak. */
   eventCount: number
-  history: PrefixEvent[]
+  /** Every announce and withdraw of the route, oldest first; see `RouteHistory`. */
+  history: RouteHistory
+}
+
+/**
+ * What an UPDATE says about every route it announces, gathered once per UPDATE
+ * and shared by the history of every route it carries — and by every UPDATE
+ * with the same attributes, see `createAggregator`.
+ */
+interface Announcement {
+  asPath: string
+  /** The path's AS numbers, each once, in path order. */
+  asns: readonly string[]
+  /** The UPDATE's NEXT_HOP, or MP_REACH_NLRI's for the routes it carries. */
+  nextHop: string
+  med: number | undefined
+  localPref: number | undefined
+  origin: 'IGP' | 'EGP' | 'INCOMPLETE' | undefined
+  communities: string[] | undefined
+}
+
+/**
+ * Every route's history in one set of columns, each route's events side by
+ * side and oldest first.
+ *
+ * The history used to be one `PrefixEvent` object per announce or withdraw —
+ * about 65 bytes each in Chromium, and most of the route statistics: on a
+ * dense 200MB capture 3.4 million of them, 240MB of a 1GB heap. Nearly all of
+ * an event is something the capture already holds: the packet (its time and
+ * sender), the decoded prefix (its RD and Path Identifier) and the UPDATE's
+ * attributes, which repeat across UPDATEs. So an event is three references to
+ * those, twelve bytes, and the `PrefixEvent` the Routes screen shows is put
+ * back together from them when it asks (`RouteHistory.events`). The rules
+ * that walk every event read the columns directly.
+ */
+interface HistoryStore {
+  packets: BgpPacket[]
+  packetIndex: Int32Array
+  /** Index into `announcements`; -1 for a withdraw. */
+  announcement: Int32Array
+  prefix: BgpPrefix[]
+  announcements: Announcement[]
+}
+
+/**
+ * One route's events, oldest first. Indexes run from 0 to `length - 1`.
+ *
+ * Read-only, and its events are built afresh on each call; callers that read
+ * them more than once should keep the array `events` returns.
+ */
+export class RouteHistory {
+  private readonly store: HistoryStore
+  private readonly start: number
+  readonly length: number
+
+  constructor(store: HistoryStore, start: number, length: number) {
+    this.store = store
+    this.start = start
+    this.length = length
+  }
+
+  isAnnounce(index: number): boolean {
+    return this.store.announcement[this.start + index] >= 0
+  }
+
+  packetIndex(index: number): number {
+    return this.store.packetIndex[this.start + index]
+  }
+
+  timestamp(index: number): Date {
+    return this.store.packets[this.packetIndex(index)].timestamp
+  }
+
+  /** The peer the event came from. */
+  source(index: number): string {
+    return this.store.packets[this.packetIndex(index)].srcIp
+  }
+
+  /** The announced AS_PATH as text; undefined for a withdraw. */
+  asPath(index: number): string | undefined {
+    const announcement = this.store.announcement[this.start + index]
+    return announcement >= 0 ? this.store.announcements[announcement].asPath : undefined
+  }
+
+  pathId(index: number): number | undefined {
+    return this.store.prefix[this.start + index].pathId
+  }
+
+  /** Whether any event came from one of `sources`. */
+  hasSourceIn(sources: ReadonlySet<string>): boolean {
+    for (let index = 0; index < this.length; index++) {
+      if (sources.has(this.source(index))) return true
+    }
+    return false
+  }
+
+  event(index: number): PrefixEvent {
+    const { store } = this
+    const at = this.start + index
+    const packetIndex = store.packetIndex[at]
+    const packet = store.packets[packetIndex]
+    const announcement = store.announcement[at] >= 0 ? store.announcements[store.announcement[at]] : undefined
+    const prefix = store.prefix[at]
+    return {
+      timestamp: packet.timestamp,
+      action: announcement ? 'announce' : 'withdraw',
+      asPath: announcement?.asPath,
+      nextHop: announcement?.nextHop,
+      med: announcement?.med,
+      localPref: announcement?.localPref,
+      origin: announcement?.origin,
+      communities: announcement?.communities,
+      rd: prefix.evpn?.rd,
+      // Off the prefix rather than the UPDATE, like `rd`: it is part of the
+      // NLRI entry, not of the attributes shared by every prefix in the
+      // UPDATE, so each route in a block keeps its own.
+      pathId: prefix.pathId,
+      source: packet.srcIp,
+      packetIndex,
+    }
+  }
+
+  events(): PrefixEvent[] {
+    const events: PrefixEvent[] = new Array(this.length)
+    for (let index = 0; index < this.length; index++) events[index] = this.event(index)
+    return events
+  }
+
+  /** The events, so a route's statistics serialise as they read. */
+  toJSON(): PrefixEvent[] {
+    return this.events()
+  }
+}
+
+/** An `Int32Array` that grows as it is appended to. */
+class Int32Column {
+  data = new Int32Array(1024)
+  length = 0
+
+  push(value: number): void {
+    if (this.length === this.data.length) {
+      const grown = new Int32Array(this.data.length * 2)
+      grown.set(this.data)
+      this.data = grown
+    }
+    this.data[this.length++] = value
+  }
 }
 
 /**
@@ -133,7 +279,7 @@ export async function prefixStatsForAsync(
   const cached = statsByPackets.get(packets)
   if (cached) return cached
 
-  const aggregator = createAggregator()
+  const aggregator = createAggregator(packets)
   let sliceStart = performance.now()
   for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
     aggregator.addPacket(packets[packetIndex], packetIndex)
@@ -170,16 +316,21 @@ function withAsns(current: readonly string[], added: readonly string[]): readonl
   return grown ?? current
 }
 
-/** What an UPDATE says about every route it announces, gathered once per UPDATE. */
-interface Announcement {
-  asPath: string
-  /** The path's AS numbers, each once, in path order. */
-  asns: readonly string[]
-  nextHop: string
-  med: number | undefined
-  localPref: number | undefined
-  origin: 'IGP' | 'EGP' | 'INCOMPLETE' | undefined
-  communities: string[] | undefined
+/** What a route's statistics hold until `finish` fills in its history. */
+const NO_HISTORY = new RouteHistory(
+  { packets: [], packetIndex: new Int32Array(0), announcement: new Int32Array(0), prefix: [], announcements: [] },
+  0,
+  0
+)
+
+/** An UPDATE's attributes as the history needs them; see `createAggregator`. */
+interface Gathered {
+  announcement: Announcement
+  hasMp: boolean
+  /** Its index in the history's announcements, once a route has used it. */
+  id: number
+  /** The same, per MP_REACH_NLRI: those routes carry its NEXT_HOP instead. */
+  mpIds: Map<BgpPathAttribute, number> | null
 }
 
 /**
@@ -190,14 +341,22 @@ interface Announcement {
  * Written for speed, because it is: it runs over every route of every packet
  * before the findings can show, and on a 50MB capture it was most of the
  * several seconds the page sat frozen after a load. So nothing is allocated
- * per route beyond the history entry itself — the UPDATE's attributes are
- * gathered once and passed by reference, route state is kept per peer rather
- * than under a key concatenated for every route, and AS numbers are formatted
- * once each. The rules are unchanged; tests/lib/bgp/prefix-stats.test.ts holds
- * them.
+ * per route — an event is appended to typed columns (see `HistoryStore`), the
+ * UPDATE's attributes are gathered once and passed by reference, route state
+ * is kept per peer rather than under a key concatenated for every route, and
+ * AS numbers are formatted once each. The rules are unchanged;
+ * tests/lib/bgp/prefix-stats.test.ts holds them.
+ *
+ * The attributes are gathered once per attribute *list*, not per UPDATE: the
+ * decoder hands every UPDATE whose attributes repeat an earlier one's the same
+ * array, so a capture of a million UPDATEs over a few hundred attribute sets
+ * keeps a few hundred `Announcement`s, which is what lets an event be twelve
+ * bytes rather than a copy of its attributes. Like the decoder's tables, this
+ * rests when lists do not repeat.
  */
-function createAggregator() {
-  const stats = new Map<string, PrefixStats>()
+function createAggregator(packets: BgpPacket[]) {
+  const stats: PrefixStats[] = []
+  const statIds = new Map<string, number>()
   /**
    * Per announcing peer, whether each route is currently announced; absent
    * means never announced.
@@ -232,6 +391,100 @@ function createAggregator() {
     return consult ? pathTexts.set(path, result) : result
   }
 
+  const gatheredLists = new SharedTable<BgpPathAttribute[], Gathered>()
+  const announcements: Announcement[] = []
+  const eventStat = new Int32Column()
+  const eventPacket = new Int32Column()
+  const eventAnnouncement = new Int32Column()
+  const eventPrefix: BgpPrefix[] = []
+
+  const gather = (attributes: BgpPathAttribute[]): Gathered => {
+    const consult = gatheredLists.active()
+    const known = consult ? gatheredLists.get(attributes) : undefined
+    if (known) return known
+
+    let asns: readonly string[] = NO_ASNS
+    let asPath = ''
+    let nextHop = ''
+    // Undefined rather than 0: an UPDATE with no MED and one with MED 0 are
+    // different routes to the same prefix, and the column has to say which.
+    let med: number | undefined
+    let localPref: number | undefined
+    let origin: 'IGP' | 'EGP' | 'INCOMPLETE' | undefined
+    let communities: string[] | undefined
+    let hasMp = false
+    for (const attr of attributes) {
+      const parsed = attr.parsed
+      if (!parsed) continue
+      switch (parsed.type) {
+        case 'AS_PATH': {
+          const path = asPathText(parsed)
+          asns = path.asns
+          asPath = path.text
+          break
+        }
+        case 'NEXT_HOP':
+          nextHop = parsed.address
+          break
+        case 'MULTI_EXIT_DISC':
+          med = parsed.value
+          break
+        case 'LOCAL_PREF':
+          localPref = parsed.value
+          break
+        case 'ORIGIN':
+          origin = parsed.value
+          break
+        // Standard and large communities land in one list, the way a reader
+        // thinks of them: tags on the route, whatever their encoding.
+        case 'COMMUNITIES':
+          communities = (communities ?? []).concat(parsed.communities)
+          break
+        case 'LARGE_COMMUNITIES':
+          communities = (communities ?? []).concat(
+            parsed.communities.map(
+              (community) => `${community.globalAdmin}:${community.localData1}:${community.localData2}`
+            )
+          )
+          break
+        case 'MP_REACH_NLRI':
+        case 'MP_UNREACH_NLRI':
+          hasMp = true
+          break
+      }
+    }
+    const gathered: Gathered = {
+      announcement: {
+        asPath,
+        asns,
+        nextHop,
+        med,
+        localPref,
+        origin,
+        communities: communities && communities.length > 0 ? communities : undefined,
+      },
+      hasMp,
+      id: -1,
+      mpIds: null,
+    }
+    return consult ? gatheredLists.set(attributes, gathered) : gathered
+  }
+
+  /** `gathered`'s announcement index, for the routes of `mpReach` if given. */
+  const announcementId = (gathered: Gathered, mpReach?: BgpPathAttribute, mpNextHop = ''): number => {
+    if (!mpReach) {
+      if (gathered.id < 0) gathered.id = announcements.push(gathered.announcement) - 1
+      return gathered.id
+    }
+    gathered.mpIds ??= new Map()
+    let id = gathered.mpIds.get(mpReach)
+    if (id === undefined) {
+      id = announcements.push({ ...gathered.announcement, nextHop: mpNextHop }) - 1
+      gathered.mpIds.set(mpReach, id)
+    }
+    return id
+  }
+
   /**
    * Records one announce or withdraw against `prefix/length`. Every caller goes
    * through here so the four NLRI sources cannot drift apart on how a route is
@@ -240,17 +493,19 @@ function createAggregator() {
   const record = (
     prefix: BgpPrefix,
     routeUp: Map<string, boolean>,
-    source: string,
     timestamp: Date,
     packetIndex: number,
     announcement: Announcement | null,
-    nextHop: string | undefined
+    /** Index into `announcements`; -1 for a withdraw. */
+    announcementIndex: number
   ) => {
     // EVPN routes are keyed by what identifies them across the fabric, not by
     // the leaf that happened to advertise them — see `formatEvpnIdentity`.
     const key = prefix.evpn ? formatEvpnIdentity(prefix.evpn) : formatPrefix(prefix)
-    let stat = stats.get(key)
-    if (!stat) {
+    let statId = statIds.get(key)
+    let stat: PrefixStats
+    if (statId === undefined) {
+      statId = stats.length
       stat = {
         key,
         parsed: parseBgpPrefix(prefix),
@@ -261,9 +516,12 @@ function createAggregator() {
         flap: 0,
         lastSeenMs: timestamp.getTime(),
         eventCount: 0,
-        history: [],
+        history: NO_HISTORY,
       }
-      stats.set(key, stat)
+      stats.push(stat)
+      statIds.set(key, statId)
+    } else {
+      stat = stats[statId]
     }
 
     if (announcement) {
@@ -279,23 +537,10 @@ function createAggregator() {
     stat.eventCount++
     stat.lastSeen = timestamp
     stat.lastSeenMs = timestamp.getTime()
-    stat.history.push({
-      timestamp,
-      action: announcement ? 'announce' : 'withdraw',
-      asPath: announcement?.asPath,
-      nextHop,
-      med: announcement?.med,
-      localPref: announcement?.localPref,
-      origin: announcement?.origin,
-      communities: announcement?.communities,
-      rd: prefix.evpn?.rd,
-      // Off the prefix rather than the UPDATE, like `rd`: it is part of the
-      // NLRI entry, not of the attributes shared by every prefix in the
-      // UPDATE, so each route in a block keeps its own.
-      pathId: prefix.pathId,
-      source,
-      packetIndex,
-    })
+    eventStat.push(statId)
+    eventPacket.push(packetIndex)
+    eventAnnouncement.push(announcementIndex)
+    eventPrefix.push(prefix)
   }
 
   const addPacket = (packet: BgpPacket, packetIndex: number) => {
@@ -312,89 +557,33 @@ function createAggregator() {
       if (msg.type !== 'UPDATE') continue
       const update = msg as BgpUpdateMessage
       const attributes = update.pathAttributes || []
-
-      // Get AS_PATH and NEXT_HOP from path attributes
-      let asns: readonly string[] = NO_ASNS
-      let asPath = ''
-      let nextHop = ''
-      // Undefined rather than 0: an UPDATE with no MED and one with MED 0 are
-      // different routes to the same prefix, and the column has to say which.
-      let med: number | undefined
-      let localPref: number | undefined
-      let origin: 'IGP' | 'EGP' | 'INCOMPLETE' | undefined
-      let communities: string[] | undefined
-      let hasMp = false
-      for (const attr of attributes) {
-        const parsed = attr.parsed
-        if (!parsed) continue
-        switch (parsed.type) {
-          case 'AS_PATH': {
-            const path = asPathText(parsed)
-            asns = path.asns
-            asPath = path.text
-            break
-          }
-          case 'NEXT_HOP':
-            nextHop = parsed.address
-            break
-          case 'MULTI_EXIT_DISC':
-            med = parsed.value
-            break
-          case 'LOCAL_PREF':
-            localPref = parsed.value
-            break
-          case 'ORIGIN':
-            origin = parsed.value
-            break
-          // Standard and large communities land in one list, the way a reader
-          // thinks of them: tags on the route, whatever their encoding.
-          case 'COMMUNITIES':
-            communities = (communities ?? []).concat(parsed.communities)
-            break
-          case 'LARGE_COMMUNITIES':
-            communities = (communities ?? []).concat(
-              parsed.communities.map(
-                (community) => `${community.globalAdmin}:${community.localData1}:${community.localData2}`
-              )
-            )
-            break
-          case 'MP_REACH_NLRI':
-          case 'MP_UNREACH_NLRI':
-            hasMp = true
-            break
-        }
-      }
-      const announcement: Announcement = {
-        asPath,
-        asns,
-        nextHop,
-        med,
-        localPref,
-        origin,
-        communities: communities && communities.length > 0 ? communities : undefined,
-      }
+      const gathered = gather(attributes)
+      const { announcement } = gathered
 
       // Process NLRI (announced prefixes)
-      for (const nlri of update.nlri || []) {
-        record(nlri, routeUp, source, timestamp, packetIndex, announcement, nextHop)
+      const nlri = update.nlri || []
+      if (nlri.length > 0) {
+        const id = announcementId(gathered)
+        for (const entry of nlri) record(entry, routeUp, timestamp, packetIndex, announcement, id)
       }
 
       // Process withdrawn routes
       for (const wr of update.withdrawnRoutes || []) {
-        record(wr, routeUp, source, timestamp, packetIndex, null, undefined)
+        record(wr, routeUp, timestamp, packetIndex, null, -1)
       }
 
       // Process MP_REACH_NLRI / MP_UNREACH_NLRI (IPv6 and other families)
-      if (!hasMp) continue
+      if (!gathered.hasMp) continue
       for (const attr of attributes) {
         if (attr.parsed?.type === 'MP_REACH_NLRI') {
-          for (const nlri of attr.parsed.nlri || []) {
-            record(nlri, routeUp, source, timestamp, packetIndex, announcement, attr.parsed.nextHop)
-          }
+          const reached = attr.parsed.nlri || []
+          if (reached.length === 0) continue
+          const id = announcementId(gathered, attr, attr.parsed.nextHop)
+          for (const entry of reached) record(entry, routeUp, timestamp, packetIndex, announcement, id)
         }
         if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
-          for (const nlri of attr.parsed.withdrawnRoutes || []) {
-            record(nlri, routeUp, source, timestamp, packetIndex, null, undefined)
+          for (const entry of attr.parsed.withdrawnRoutes || []) {
+            record(entry, routeUp, timestamp, packetIndex, null, -1)
           }
         }
       }
@@ -402,22 +591,61 @@ function createAggregator() {
   }
 
   const finish = (): PrefixStats[] => {
+    // Lay each route's events side by side, in the order they were recorded:
+    // a counting sort on the route, which keeps that order within each one.
+    const total = eventStat.length
+    const offsets = new Int32Array(stats.length + 1)
+    for (let event = 0; event < total; event++) offsets[eventStat.data[event] + 1]++
+    for (let statId = 0; statId < stats.length; statId++) offsets[statId + 1] += offsets[statId]
+    const cursor = offsets.slice(0, stats.length)
+    const store: HistoryStore = {
+      packets,
+      packetIndex: new Int32Array(total),
+      announcement: new Int32Array(total),
+      prefix: new Array<BgpPrefix>(total),
+      announcements,
+    }
+    for (let event = 0; event < total; event++) {
+      const at = cursor[eventStat.data[event]]++
+      store.packetIndex[at] = eventPacket.data[event]
+      store.announcement[at] = eventAnnouncement.data[event]
+      store.prefix[at] = eventPrefix[event]
+    }
+
     // Sort history by timestamp. Packets come in capture order, so a history is
     // almost always in order already; checking is far cheaper than sorting.
-    for (const stat of stats.values()) {
-      const history = stat.history
-      for (let i = 1; i < history.length; i++) {
-        if (history[i].timestamp.getTime() < history[i - 1].timestamp.getTime()) {
-          history.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+    const timeOf = (at: number) => packets[store.packetIndex[at]].timestamp.getTime()
+    for (let statId = 0; statId < stats.length; statId++) {
+      const start = offsets[statId]
+      const end = offsets[statId + 1]
+      for (let at = start + 1; at < end; at++) {
+        if (timeOf(at) < timeOf(at - 1)) {
+          sortRange(store, start, end, timeOf)
           break
         }
       }
+      stats[statId].history = new RouteHistory(store, start, end - start)
     }
 
-    return Array.from(stats.values())
+    return stats
   }
 
   return { addPacket, finish }
+}
+
+/** Sort one route's events by time, keeping the recorded order among equal times. */
+function sortRange(store: HistoryStore, start: number, end: number, timeOf: (at: number) => number): void {
+  const order: number[] = []
+  for (let at = start; at < end; at++) order.push(at)
+  order.sort((a, b) => timeOf(a) - timeOf(b))
+  const packetIndex = order.map((at) => store.packetIndex[at])
+  const announcement = order.map((at) => store.announcement[at])
+  const prefix = order.map((at) => store.prefix[at])
+  for (let i = 0; i < order.length; i++) {
+    store.packetIndex[start + i] = packetIndex[i]
+    store.announcement[start + i] = announcement[i]
+    store.prefix[start + i] = prefix[i]
+  }
 }
 
 /**
@@ -435,7 +663,7 @@ function createAggregator() {
  * is not a second flap.
  */
 export function aggregatePrefixStats(packets: BgpPacket[]): PrefixStats[] {
-  const aggregator = createAggregator()
+  const aggregator = createAggregator(packets)
   for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
     aggregator.addPacket(packets[packetIndex], packetIndex)
   }
