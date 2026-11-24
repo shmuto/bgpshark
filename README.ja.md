@@ -80,7 +80,7 @@ bun run test:e2e   # `playwright install` は不要
 
 ## Capture Builder
 
-**Build** 画面（`/build`）では、ラボ環境を用意せずに有効な BGP キャプチャを生成できます。8 種類のプリセット（正常確立、Hold Timer 満了、AS 不一致、TCP 接続拒否、IPv6 トランスポート、経路フラップ、4 バイト AS、TCP セグメント分割された UPDATE）から選び、ピア情報・経路・メッセージ手順を編集してプレビュー確認や `.pcap` のダウンロードが可能です。
+**Build** 画面（`/builder`）では、ラボ環境を用意せずに有効な BGP キャプチャを生成できます。8 種類のプリセット（正常確立、Hold Timer 満了、AS 不一致、TCP 接続拒否、IPv6 トランスポート、経路フラップ、4 バイト AS、TCP セグメント分割された UPDATE）から選び、ピア情報・経路・メッセージ手順を編集してプレビュー確認や `.pcap` のダウンロードが可能です。
 
 ![Capture Builder：左でセッション構成を編集し、右でパース結果のプレビューを確認](docs/images/builder.png)
 
@@ -88,13 +88,19 @@ UPDATE のエンコーディング（4 バイト AS 幅や ADD-PATH Path Identif
 
 ## アーキテクチャ
 
-```
-pcap/pcapng → BGP パーサー → ┬→ React state (AppContext)
-                            ├→ DuckDB WASM (SQL コンソール、SQL による高速フィルタリング)
-                            └→ IndexedDB (リロード時の復元用キャッシュ)
+```mermaid
+flowchart LR
+    file[".pcap / .pcapng"] --> pcap["lib/pcap<br/>フレーム"] --> bgp["lib/bgp<br/>BGP メッセージ"]
+    bgp --> state["AppContext<br/>BgpPacket[]"]
+    state --> views["ワークスペース<br/>Messages · Sessions · Routes<br/>Findings"]
+    state -. "裏で投入" .-> duck["DuckDB WASM<br/>SQL Console · 高速フィルタ"]
+    duck -- "一致したフレーム番号" --> views
+    file -. "再読み込み用に保存" .-> idb[("IndexedDB")]
 ```
 
-フィルタ式は一度 AST にパースされた後、DuckDB WASM 上の SQL で実行されます（DuckDB が利用できない環境ではメモリ上の評価にフォールバックします）。
+処理はすべてブラウザのタブ内で行います。デコードが終わるとすぐにパケット一覧を表示し、DuckDB への投入はその後に行います。DuckDB は「どのフレームが一致するか」だけを返すため、DuckDB がなくても SQL Console 以外の画面はすべて使えます。フィルタ式は一度だけ構文木に変換し、DuckDB WASM 上の SQL かメモリ上の評価のどちらかで実行します。
+
+読み込みの流れ、デコードの階層、状態遷移、フィルタの 2 方式、DuckDB のテーブル、Findings の算出、画面構成、Capture Builder、CI の図は **[docs/architecture.ja.md](docs/architecture.ja.md)** にまとめています。
 
 | パス | 役割 |
 |------|------|
@@ -110,10 +116,11 @@ pcap/pcapng → BGP パーサー → ┬→ React state (AppContext)
 | `src/hooks/` | 解析・フィルタ・テーマ・分割ペイン・列設定などの React フック |
 | `src/i18n/` | UI 文言と NOTIFICATION の日本語ヒント |
 | `testlab/` | ContainerLab トポロジ、障害シナリオ生成スクリプト（`scenarios.ts`）、スクリーンショット生成 |
-| `docs/` | 技術設計書およびトラブルシューティングシナリオ評価 |
+| `docs/` | アーキテクチャ図、技術設計書、DuckDB の設計判断記録、トラブルシューティングシナリオ評価 |
 
 ## ドキュメントとテストラボ
 
+- [docs/architecture.ja.md](docs/architecture.ja.md) — アーキテクチャ図: モジュール構成、読み込みの流れ、フィルタ、Findings、CI
 - [docs/design.md](docs/design.md) — 要件定義、アラート仕様、技術設計書（英語）
 - [docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md) — 14 の BGP 障害シナリオと対応状況マップ（英語）
 - [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — DuckDB WASM 採用の経緯と設計判断（英語）
@@ -122,6 +129,8 @@ pcap/pcapng → BGP パーサー → ┬→ React state (AppContext)
 ## デプロイ
 
 Pull Request では `.github/workflows/ci.yml` により lint・ユニットテスト・ビルド・E2E テストが実行されます。`main` へのプッシュでは同じ検証ののち、`.github/workflows/deploy.yml` によって GitHub Pages（`/bgpshark/`）へデプロイされます。
+
+リリースはバージョンタグの push で行います。[`CHANGELOG.md`](CHANGELOG.md) に新しい版の節を追加し、`package.json` に同じ版を設定して `main` にマージします。そのコミットに `v<版>` のタグを push すると、`.github/workflows/release.yml` が検証を再実行し、タグと `package.json` の一致を確かめたうえで、その節をノートにした GitHub Release を作成します。
 
 ## プライバシー
 

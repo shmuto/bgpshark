@@ -1,0 +1,60 @@
+name: Release
+
+# Pushing a version tag (v0.1.0, v1.2.3, ...) publishes a GitHub Release for
+# it. The site itself is deployed by deploy.yml on every push to main; a
+# release only marks a point in that history and says what changed.
+#
+# The tag is taken at its word only after two checks: it has to name the
+# version package.json declares, so a release can never say one version while
+# the code says another, and the commit has to pass the same checks a pull
+# request does. A failure leaves the tag in place with no release attached;
+# fix the cause, delete the tag and push it again.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
+
+  release:
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check the tag against package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${version} (expected v${version})."
+            exit 1
+          fi
+
+      # The tag's section of CHANGELOG.md leads the notes; GitHub's list of
+      # merged pull requests since the previous tag follows it. A tag with no
+      # section gets the generated list alone.
+      - name: Take the tag's notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            /^\[[^]]+\]: / { if (found) exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "--- notes for ${GITHUB_REF_NAME} ---"
+          cat release-notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(--verify-tag --title "BGPShark ${GITHUB_REF_NAME}" --generate-notes)
+          if [ -s release-notes.md ]; then args+=(--notes-file release-notes.md); fi
+          gh release create "${GITHUB_REF_NAME}" "${args[@]}"

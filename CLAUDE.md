@@ -1,6 +1,6 @@
 # Working on BGPShark
 
-Quick orientation and invariants for contributors and AI agents working in this repository. For product overview and architecture, see [`README.md`](README.md); for specifications, see [`docs/design.md`](docs/design.md) and [`docs/troubleshooting-scenarios.md`](docs/troubleshooting-scenarios.md).
+Quick orientation and invariants for contributors and AI agents working in this repository. For product overview, see [`README.md`](README.md); for architecture diagrams (load pipeline, filter backends, findings, CI), see [`docs/architecture.md`](docs/architecture.md); for specifications, see [`docs/design.md`](docs/design.md) and [`docs/troubleshooting-scenarios.md`](docs/troubleshooting-scenarios.md).
 
 ## Commands
 
@@ -52,3 +52,5 @@ CHROMIUM_PATH=/path/to/chromium bun run test:e2e
 ## Git
 
 Branch, commit, and push as instructed for the session. Do not open a pull request unless asked.
+
+Releases: add the version's section to `CHANGELOG.md` and bump `package.json` in a pull request; after it merges, push the tag `v<version>` on that `main` commit. `.github/workflows/release.yml` refuses a tag that does not match `package.json`.

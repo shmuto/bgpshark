@@ -80,7 +80,7 @@ When upgrading `@playwright/test` in `package.json`, keep the nixpkgs revision i
 
 ## Capture builder
 
-The **Build** screen (`/build`) lets you synthesize valid BGP captures without a lab. Choose one of the eight presets (established session, hold timer expiry, bad peer AS, refused TCP connection, IPv6 transport, route flap, 4-byte AS, segmented UPDATEs), adjust peers, routes, and message steps, and preview or download the resulting `.pcap` file.
+The **Build** screen (`/builder`) lets you synthesize valid BGP captures without a lab. Choose one of the eight presets (established session, hold timer expiry, bad peer AS, refused TCP connection, IPv6 transport, route flap, 4-byte AS, segmented UPDATEs), adjust peers, routes, and message steps, and preview or download the resulting `.pcap` file.
 
 ![Capture builder: session configuration on the left and parsed preview on the right](docs/images/builder.png)
 
@@ -88,13 +88,19 @@ UPDATE encoding (4-byte AS width, ADD-PATH Path Identifiers) is derived automati
 
 ## Architecture
 
-```
-pcap/pcapng → BGP parser → ┬→ React state (AppContext)
-                           ├→ DuckDB WASM (SQL console, SQL-accelerated filtering)
-                           └→ IndexedDB (reload persistence)
+```mermaid
+flowchart LR
+    file[".pcap / .pcapng"] --> pcap["lib/pcap<br/>frames"] --> bgp["lib/bgp<br/>BGP messages"]
+    bgp --> state["AppContext<br/>BgpPacket[]"]
+    state --> views["Workspace<br/>Messages · Sessions · Routes<br/>Findings"]
+    state -. "background insert" .-> duck["DuckDB WASM<br/>SQL Console · fast filter"]
+    duck -- "matching frame indexes" --> views
+    file -. "kept for reload" .-> idb[("IndexedDB")]
 ```
 
-Filter expressions parse once into an AST and run either against DuckDB WASM or in memory if DuckDB is unavailable.
+Everything runs in the browser tab. The packet list appears as soon as decoding finishes; DuckDB is filled afterwards and only ever answers *which frames* match, so every screen except the SQL Console keeps working without it. Filter expressions parse once into an AST and run either against DuckDB WASM or in memory.
+
+**See [docs/architecture.md](docs/architecture.md)** for diagrams of the load pipeline, decoding layers, state machines, filter backends, DuckDB tables, findings pipeline, routes, Capture Builder and CI.
 
 | Path | Contents |
 |------|----------|
@@ -110,10 +116,11 @@ Filter expressions parse once into an AST and run either against DuckDB WASM or 
 | `src/hooks/` | React hooks for analysis, filtering, theme, split panes, and column settings |
 | `src/i18n/` | UI strings and Japanese NOTIFICATION hints |
 | `testlab/` | ContainerLab topology, fault scenario generator (`scenarios.ts`), screenshot script |
-| `docs/` | Technical design and troubleshooting scenario assessment |
+| `docs/` | Architecture diagrams, technical design, DuckDB decision record, troubleshooting scenario assessment |
 
 ## Documentation & test lab
 
+- [docs/architecture.md](docs/architecture.md) — Architecture diagrams: module layers, load pipeline, filtering, findings, CI ([日本語](docs/architecture.ja.md))
 - [docs/design.md](docs/design.md) — Requirements, alert specifications, and technical design
 - [docs/troubleshooting-scenarios.md](docs/troubleshooting-scenarios.md) — Fourteen BGP fault scenarios and coverage assessment
 - [docs/design-duckdb-wasm.md](docs/design-duckdb-wasm.md) — Architectural record for the DuckDB WASM integration
@@ -122,6 +129,8 @@ Filter expressions parse once into an AST and run either against DuckDB WASM or 
 ## Deployment
 
 Pull requests run lint, unit tests, build, and end-to-end tests via `.github/workflows/ci.yml`. Pushes to `main` run the same checks and deploy to GitHub Pages under `/bgpshark/` via `.github/workflows/deploy.yml`.
+
+Releases are cut by pushing a version tag: add the version's section to [`CHANGELOG.md`](CHANGELOG.md), set the same version in `package.json`, merge to `main`, then push `v<version>`. `.github/workflows/release.yml` re-runs the checks, confirms the tag matches `package.json`, and publishes a GitHub Release with that section as its notes.
 
 ## Privacy
 

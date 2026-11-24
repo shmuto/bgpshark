@@ -1,6 +1,7 @@
 # BGPShark — Requirements & Technical Design
 
 > Authoritative design reference for the current implementation.
+> For diagrams of how the modules fit together (load pipeline, filtering, findings, CI), see [`architecture.md`](architecture.md).
 > For the rationale behind the DuckDB WASM architecture, see [`design-duckdb-wasm.md`](design-duckdb-wasm.md).
 > For fault-coverage tracking across 14 troubleshooting scenarios, see [`troubleshooting-scenarios.md`](troubleshooting-scenarios.md).
 
@@ -88,7 +89,7 @@ Path Identifiers are retained per prefix and displayed on packet detail chips an
 - **Sessions (`/sessions`):** With no session chosen, a table of every session (state at end of capture, message counts, worst finding). With one chosen, its OPEN comparison (§2.1.10), negotiated hold time, per-direction prefix counts, and its OPEN/NOTIFICATION events (or every message). Old `/neighbors?router=&peer=` links redirect here and choose the session they named.
 - **Route Analysis (`/routes`):** Per-prefix announce/withdraw history, flap counts, AS_PATH analysis, and best-path attribute columns (shown only when present on the selected route; `ORIGIN` shown only when values differ).
 - **SQL Console (`/sql`):** Ad-hoc SQL queries against DuckDB WASM with schema sidebar and templates.
-- **Capture Builder (`/build`):** §2.1.12.
+- **Capture Builder (`/builder`):** §2.1.12.
 - **User Manual (`/manual`):** §2.1.13.
 
 Screen state is synchronized with URL query parameters (`?filter=`, `?selected=`, `?frame=`, `?all=1`, and route search/sort/mode).
@@ -227,7 +228,7 @@ No failure is allowed to silently display empty data:
 | Directory | Responsibility |
 |-----------|----------------|
 | `public/` | Static assets (`favicon.svg`, `sample.pcapng`, `THIRD-PARTY-LICENSES.txt`, `manual/*.png`) |
-| `docs/` | Technical design, DuckDB ADR, troubleshooting scenario assessment |
+| `docs/` | Architecture diagrams, technical design, DuckDB ADR, troubleshooting scenario assessment |
 | `src/pages/` | Route-level pages and Markdown sources for the user manual (`manual/`) |
 | `src/components/` | Feature UI components (`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `workspace/`) |
 | `src/hooks/` | State, filtering, virtualization, theming, split pane, and file drop hooks |
@@ -243,24 +244,18 @@ No failure is allowed to silently display empty data:
 
 ### 4.3 Data Flow
 
+```mermaid
+flowchart TB
+    drop["User drops / selects file"] -- "ArrayBuffer" --> proc["useBgpAnalyzer.processBuffer<br/>pcap / pcapng parser: Ethernet/SLL → VLAN/QinQ → IPv4/IPv6 → TCP<br/>TCP reassembly & BGP message dispatch (bgp/parser.ts)"]
+    proc -- "BgpPacket[] + GenericPacket[]" --> ctx["AppContext (React)<br/>packets, allPackets"]
+    proc -. "after the list is shown" .-> loader["db/loader.ts → DuckDB WASM<br/>(Arrow IPC)"]
+    proc -. "not awaited" .-> store["storage.ts → IndexedDB<br/>(raw file)"]
+    ctx --> pages["Pages & components<br/>Workspace: Messages, Sessions, Routes, SQL"]
+    loader --> queries["db/queries.ts<br/>getMatchingFrameIndexes(filter)<br/>executeRawSql(sql)"]
+    queries -- "frame indexes / result rows" --> pages
 ```
-User drops/selects file
-        │ ArrayBuffer
-        ▼
-useBgpAnalyzer.processBuffer
-  - pcap / pcapng parser (Ethernet/SLL → VLAN/QinQ → IPv4/IPv6 → TCP)
-  - TCP segment reassembly & BGP message dispatch (bgp/parser.ts)
-        │ BgpPacket[] + GenericPacket[]
-        ├──────────────────────────────┐
-        ▼                              ▼
-AppContext (React)             db/loader.ts → DuckDB WASM (Arrow IPC)
-  - packets, allPackets        storage.ts   → IndexedDB (raw file)
-        │                              │
-        ▼                              ▼
-Pages & Components             db/queries.ts
-  - Workspace, Messages,         - getMatchingFrameIndexes(filter)
-    Sessions, Routes, SQL        - executeRawSql(sql)
-```
+
+The step-by-step sequence, state machines and filter decision flow are drawn in [`architecture.md` §4–§8](architecture.md#4-loading-a-capture).
 
 If DuckDB WASM fails to initialize, filtering automatically falls back to `src/lib/filter/parser.ts` and all screens except the SQL Console remain usable.
 
