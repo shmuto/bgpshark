@@ -1,54 +1,20 @@
 /**
  * DuckDB Query Functions
  *
- * Boundary: DuckDB serves two callers only - filter acceleration
- * (getMatchingFrameIndexes, used by useFilter.ts) and the SQL console
- * (executeRawSql, used by SqlConsolePage.tsx). Per-page aggregations (neighbor
- * stats, prefix stats, ...) are computed in memory with useMemo in the pages
- * that need them, so those analysis screens keep working when DuckDB is
- * unavailable.
+ * Boundary: DuckDB serves the SQL console only (executeRawSql, used by
+ * SqlConsolePage.tsx). Filtering and every per-page aggregation (neighbor
+ * stats, prefix stats, ...) are computed in memory from the parsed packets, so
+ * every other screen works without the database — and a capture is inserted
+ * into it only once the SQL console asks for it.
  *
- * DuckDB decides *which* packets match a filter; it never reconstitutes the
- * packets themselves. The tables are a flattened projection built for querying
- * and cannot represent everything the parser produces: the capabilities table,
- * for instance, has columns for a single AFI/SAFI pair and an AS number, which
+ * The tables are a flattened projection built for querying and cannot
+ * represent everything the parser produces: the capabilities table, for
+ * instance, has columns for a single AFI/SAFI pair and an AS number, which
  * cannot hold ADD-PATH's per-family list or Graceful Restart's forwarding
- * state. Rebuilding BgpPacket objects from those rows silently dropped that
- * data and crashed the OPEN detail view as soon as a filter was applied. Frame
- * indexes are the only thing crossing this boundary; the caller maps them back
- * onto the parsed objects it already holds, which are authoritative.
+ * state. They lead back to the parsed packets through `frame_index`; nothing
+ * rebuilds packets from rows.
  */
 import { getConnection } from './database'
-import { expressionToSql } from './filter-to-sql'
-import { parseQuery } from '../filter/parser'
-
-/**
- * Frame indexes of the packets matching a filter expression, in capture order.
- *
- * An empty or unparseable filter matches everything, mirroring the in-memory
- * evaluator, which leaves the packet list untouched rather than emptying it
- * while the user is still typing.
- */
-export async function getMatchingFrameIndexes(filterQuery?: string): Promise<number[]> {
-  const conn = await getConnection()
-
-  let whereClause = '1=1'
-  if (filterQuery && filterQuery.trim()) {
-    const parsed = parseQuery(filterQuery)
-    if (parsed.errors.length === 0 && parsed.expression) {
-      whereClause = expressionToSql(parsed.expression)
-    }
-  }
-
-  const result = await conn.query(`
-    SELECT p.frame_index
-    FROM packets p
-    WHERE ${whereClause}
-    ORDER BY p.frame_index
-  `)
-
-  return result.toArray().map((row) => Number((row as { frame_index: number }).frame_index))
-}
 
 /**
  * Outcome of a raw SQL query.

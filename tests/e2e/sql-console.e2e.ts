@@ -1,10 +1,13 @@
 import { test, expect } from '@playwright/test'
-import { loadSample, prefixCount, runSql } from './helpers'
+import { readFileSync } from 'node:fs'
+import { parsePcapng } from '../../src/lib/pcap'
+import { parseBgpFromPackets } from '../../src/lib/bgp'
+import { loadSample, prefixCount, runSql, waitForDatabase } from './helpers'
 
 test.beforeEach(async ({ page }) => {
   await loadSample(page)
   await page.getByRole('link', { name: 'SQL', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'SQL Console' })).toBeVisible()
+  await waitForDatabase(page)
 })
 
 test.describe('SQL console', () => {
@@ -37,7 +40,7 @@ test.describe('SQL console', () => {
     expect(body).not.toContain('Error:')
   })
 
-  test('the address bits the filter relies on are populated', async ({ page }) => {
+  test('the address bits a CIDR query can use are populated', async ({ page }) => {
     const body = await runSql(page, "select prefix, prefix_bits from nlri where prefix = '10.0.12.0'")
     // 10.0.12.0/24 -> 00001010 00000000 00001100
     expect(body).toContain('4:000010100000000000001100')
@@ -58,6 +61,21 @@ test.describe('SQL console', () => {
       await expect(page.getByText(/Results \(|Error:|no results/).first()).toBeVisible()
       expect(await page.locator('body').innerText(), `template: ${name}`).not.toContain('Error:')
     }
+  })
+
+  test('timestamps arrive to the millisecond the packet list shows', async ({ page }) => {
+    // Sent as Arrow timestamps rather than ISO text; read back as epoch
+    // milliseconds, every packet's time must match the parsed capture's.
+    const bytes = readFileSync(new URL('../../public/sample.pcapng', import.meta.url))
+    const parsed = parsePcapng(new Uint8Array(bytes).buffer as ArrayBuffer)
+    const expected = parseBgpFromPackets(parsed.packets)
+      .packets.map((p) => `${p.frameIndex}:${p.timestamp.getTime()}`)
+      .join(',')
+    const body = await runSql(
+      page,
+      "select string_agg(frame_index || ':' || epoch_ms(timestamp), ',' order by frame_index) as times from packets"
+    )
+    expect(body).toContain(expected)
   })
 
   test('packets carry their address bits', async ({ page }) => {

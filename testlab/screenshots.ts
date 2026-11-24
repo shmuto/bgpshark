@@ -116,7 +116,7 @@ async function findings(page: Page): Promise<Locator> {
   return region
 }
 
-/** Types a filter expression and waits past the DuckDB debounce. */
+/** Types a filter expression and waits for the list to settle. */
 async function filter(page: Page, expression: string): Promise<void> {
   const input = page.locator('input[type="text"]').first()
   await input.click()
@@ -372,10 +372,9 @@ async function run(browser: Browser, shot: Shot): Promise<void> {
     })
     // A loaded capture lands on Messages; every shot starts there.
     await page.waitForURL('**/messages')
-    // The packet list is up as soon as the parser finishes; the DuckDB insert
-    // runs after it, with a gauge in the header. A shot taken before it is done
-    // photographs that gauge, and a filtered one the in-memory answer instead
-    // of the one the manual describes.
+    // The packet list is up as soon as the parser finishes. DuckDB is loaded
+    // only by the SQL Console, so a shot of it waits for that itself; the
+    // header's gauge is waited out in case a shot is taken mid-insert.
     await page.waitForSelector('text=/Showing \\d+ of \\d+ packets/')
     await page.locator('[data-testid="db-load-status"]').waitFor({ state: 'detached', timeout: 60_000 })
     await page.waitForTimeout(500)

@@ -97,9 +97,11 @@ Screen state is synchronized with URL query parameters (`?filter=`, `?selected=`
 #### 2.1.9 Filtering
 One always-visible query box with autocomplete (focused by `/` or Ctrl/⌘+K), plus a **+ Filter** popover that builds a condition from menus and appends it to the box, so the text on screen is always the filter in effect. Packet-detail values (addresses, prefixes, ASNs, next hops, communities) offer "add to filter" / "filter on". Grammar: `field (= | == | != | contains | not contains | < | <= | > | >=) value`, combined with `and`, `or`, `not`, and parentheses. Ordered operators apply to numeric fields only.
 
-`ip` / `peer` and bare values are rewritten into ordinary comparisons while parsing, so both backends see only canonical fields: `ip <op> X` becomes `src_ip <op> X or dst_ip <op> X` (`and` for `!=` / `not contains`); a bare address becomes `ip = X`, a bare CIDR `prefix = X`, `AS<n>` `asn = n`, a bare MAC `mac = X`, and a bare message type `type = X`.
+`ip` / `peer` and bare values are rewritten into ordinary comparisons while parsing, so the evaluator sees only canonical fields: `ip <op> X` becomes `src_ip <op> X or dst_ip <op> X` (`and` for `!=` / `not contains`); a bare address becomes `ip = X`, a bare CIDR `prefix = X`, `AS<n>` `asn = n`, a bare MAC `mac = X`, and a bare message type `type = X`.
 
-Expressions parse once into an AST (`src/lib/filter/parser.ts`) and run either via DuckDB SQL (`src/lib/db/filter-to-sql.ts`) or in memory when DuckDB is unavailable. Optional numeric attributes (`med`, `local_pref`) are never coerced to `0`: an UPDATE lacking the attribute matches no comparison on that field in either backend.
+Expressions parse once into an AST (`src/lib/filter/parser.ts`) and are evaluated in memory. Up to `SYNC_FILTER_MAX_PACKETS` (20,000) packets this runs on every keystroke; above it the pass waits 200 ms for typing to pause and runs in ~12 ms slices (`filterPacketsWork`, `src/hooks/useFilter.ts`), with the previous result kept on screen meanwhile. `!=` and `not contains` are the complement of `=` and `contains`, as in Wireshark: `prefix != 10.0.0.0/8` matches every packet `prefix = 10.0.0.0/8` does not, OPENs and KEEPALIVEs included. Optional numeric attributes (`med`, `local_pref`) are never coerced to `0`: an UPDATE lacking the attribute matches no comparison on that field.
+
+Large captures used to be filtered by DuckDB instead, once the capture had been inserted into it. The insert took longer than the list to arrive, held the main thread while it ran, and ran the worker out of memory on a dense capture under the size limit, while one in-memory pass over 100 MB takes 0.1–0.7 s. So the SQL backend was removed.
 
 #### 2.1.10 Capability Diff (`src/components/neighbor/CapabilityDiff.tsx`)
 Choosing a session (the workspace scope) shows its two latest OPEN messages side by side on `/sessions`:
@@ -166,11 +168,22 @@ When a capture contains **no BGP messages at all**, `computeTransportAlerts` run
 | Ordinary SQL query | < 1s |
 | UI rendering | 60fps |
 
-Key techniques: virtualized packet list (`useVirtualRows`), route-level `React.lazy` code splitting, dynamic DuckDB import, `useMemo` aggregations, debounced SQL filtering, and bit-string columns (`prefix_bits`) for CIDR matching. The DuckDB tables have primary keys but no secondary indexes and no copy of the raw frame bytes: maintaining 24 indexes was most of the insert and gained the filter's queries nothing measurable, and the Base64 frames were read by nothing (see `src/lib/db/schema.ts`). Parsing currently runs on the main thread and can move to a Web Worker if needed.
+Key techniques: virtualized packet list (`useVirtualRows`), route-level `React.lazy` code splitting, DuckDB imported and started only for the SQL Console, `useMemo` aggregations, and a debounced, sliced in-memory filter. The DuckDB tables live in a compressed in-memory catalog and have no indexes, no primary keys and no copy of the raw frame bytes (see `src/lib/db/database.ts` and `schema.ts`). The bundle targets ES2022, so class fields are not lowered to a `defineProperty` call per instance. Parsing currently runs on the main thread and can move to a Web Worker if needed.
 
-**Load pipeline.** Reading, parsing and decoding are in front of the packet list and drive the load gauge (`src/lib/load-progress.ts`). Decoding runs in slices of about 12ms (`parseBgpFromPacketsAsync`), so the gauge keeps moving through it; the reassembly and session state carry across slices in the decoder. The decoder keeps one copy of each value a capture repeats — path attribute blocks, individual attributes, prefixes — and hands it to every message carrying it (`src/lib/bgp/shared-decode.ts`); decoded messages are therefore shared and must be treated as read-only. The DuckDB insert runs after the list is shown (`useBgpAnalyzer`), with its own gauge in the header; `dbStatus` is state, so the filter and the SQL console switch to SQL when it lands. The loader flattens and inserts a chunk of rows at a time (`ROWS_PER_FLUSH`) rather than holding every table's rows at once. Each chunk is written straight into Arrow column buffers (`src/lib/db/arrow-columns.ts`), with no row objects in between, and the next chunk is flattened while the DuckDB worker inserts the previous one. Saving to IndexedDB is not awaited.
+**Load pipeline.** Reading, parsing and decoding are in front of the packet list and drive the load gauge (`src/lib/load-progress.ts`). Decoding runs in slices of about 12ms (`parseBgpFromPacketsAsync`), so the gauge keeps moving through it; the reassembly and session state carry across slices in the decoder. The decoder keeps one copy of each value a capture repeats — path attribute blocks, individual attributes, prefixes — and hands it to every message carrying it (`src/lib/bgp/shared-decode.ts`); decoded messages are therefore shared and must be treated as read-only. The decoder's IPv4 prefix table grows to about two million slots, enough to share a full table's prefixes. DuckDB is not started at page load: the SQL Console asks for the capture when it opens (`requestDatabase` in `useBgpAnalyzer`), with its own gauge in the header, and the previous capture's tables are dropped when another is opened. The loader flattens and inserts a chunk of rows at a time (`ROWS_PER_FLUSH`) rather than holding every table's rows at once. Each chunk is written straight into Arrow column buffers (`src/lib/db/arrow-columns.ts`), with no row objects in between. Repeated text is dictionary-encoded, and the next chunk is flattened while the DuckDB worker appends the previous one to its tables. An append binds columns by position, so `src/lib/db/load-batches.ts` lists them in schema order, checked against the live tables at load and against `SCHEMA_SQL` in a unit test. Saving to IndexedDB is not awaited.
 
-**Large captures.** What limits capture size is the tab's JS heap (about 4 GB), not parse time: how much a decoded capture weighs depends on how often its values repeat. Values repeated on nearly every frame are shared rather than copied (`src/lib/pcap/shared-values.ts`, shared attribute flags), and a decoded path attribute keeps no copy of its bytes. Above `SYNC_FILTER_MAX_PACKETS` (20,000) packets the per-keystroke in-memory filter pass is skipped once DuckDB holds the capture; the filter box's value suggestions are gathered in slices from its first focus (`filterValuesForAsync`), reading each shared attribute list and prefix once, and join the list when done; filter suggestions and prefix statistics are computed once per packet array (`prefixStatsFor`). Each route's history is kept as typed columns pointing back into the decoded packets, prefixes and per-attribute-list announcements, about 12 bytes an event rather than a 65-byte object (`RouteHistory`); the Routes screen rebuilds the selected route's events when it is opened. Above `BACKGROUND_FINDINGS_MIN_PACKETS` (20,000) the findings are worked out in ~12 ms slices so the list is usable while they are — first the route statistics they read (`prefixStatsForAsync`), then the rules themselves (`alertsForAsync`, `scopedAlertsForAsync`; each rule's loops are generators run by `src/lib/sliced.ts`, so the sliced and synchronous runs are one body). The findings column says so until they appear. Measured in headless Chromium on synthetic, UPDATE-heavy captures whose attribute lists repeat from UPDATE to UPDATE, the list opens in about 2.5–4 s for 50 MB, 4–10 s for 100 MB and 8–17 s for 200 MB, with findings after 3.5–6 s, 6.5–12 s and 14–25 s, SQL ready after 10–12 s for 50 MB and 37–47 s for 200 MB, and the heap at most 0.2–0.35 GB, 0.4–0.7 GB and 0.7–1.3 GB. When every UPDATE carries its own prefix, AS_PATH and MED, 100 MB opens its list in about 7 s, shows findings after 40–43 s and is ready for SQL after 46–51 s with the heap at 1.7 GB; 200 MB of that reaches 3.5 GB and stops responding, which is why `MAX_FILE_SIZE` stops at 100 MB.
+**Large captures.** What limits capture size is the tab's JS heap (about 4 GB), not parse time: how much a decoded capture weighs depends on how often its values repeat. Values repeated on nearly every frame are shared rather than copied (`src/lib/pcap/shared-values.ts`, shared attribute flags), and a decoded path attribute keeps no copy of its bytes. The filter box's value suggestions are gathered in slices from its first focus (`filterValuesForAsync`), reading each shared attribute list once and recognising IPv4 prefixes already listed by address (`Ipv4PrefixIndex`, `src/lib/net/ipv4-index.ts`); they join the list when done. Filter suggestions and prefix statistics are computed once per packet array (`prefixStatsFor`). Route statistics find an IPv4 route by address and mask length rather than by a `prefix/length` string built per announcement, and keep each peer's route state as a byte per route. Each route's history is kept as typed columns pointing back into the decoded packets and per-attribute-list announcements, about 12 bytes an event (`RouteHistory`); an event's prefix is kept only when it carries an ADD-PATH Path Identifier or an EVPN RD. The Routes screen rebuilds the selected route's events when it is opened. Above `BACKGROUND_FINDINGS_MIN_PACKETS` (20,000) the findings are worked out in ~12 ms slices so the list is usable while they are — first the route statistics they read (`prefixStatsForAsync`), then the rules themselves (`alertsForAsync`, `scopedAlertsForAsync`; each rule's loops are generators run by `src/lib/sliced.ts`, so the sliced and synchronous runs are one body). The findings column says so until they appear.
+
+Measured in headless Chromium on synthetic captures of four sessions (generated with `src/lib/build`), before and after the changes that made DuckDB on-demand and the per-route work allocation-free:
+
+| Capture | List | Findings | Heap at most | SQL Console ready after opening | DuckDB memory |
+|---------|------|----------|--------------|------------------------------|---------------|
+| 50 MB, every UPDATE its own prefix, AS_PATH and MED | 2.0 s | 3.1 s (was 5.0 s) | 0.65 GB (was 0.87 GB) | — | — |
+| 95 MB, the same | 3.4 s (was 3.7 s) | 5.7 s (was 10.5 s) | 1.3 GB (was 1.8 GB) | 11.6 s | 59 MB (was 822 MB) |
+| 94 MB, 200 routes per UPDATE, 22 million announcements | 1.2 s (was 1.6 s) | 3.9 s (was 13.6 s) | 1.3 GB (was 1.4 GB) | 17.4 s (was: out of memory) | 139 MB (was > 3.1 GB) |
+| 94 MB, a table transfer cycling through 1.2 million routes, 50 per UPDATE | 4.0 s (was 6.1 s) | 11.1 s (was 39.8 s) | 1.8 GB (was 3.7 GB) | — | — |
+
+The last shape is what a full table looks like and remains the most expensive: about 1.2 million route objects, their keys and their parsed prefixes. `MAX_FILE_SIZE` stays at 100 MB.
 
 ### 3.2 Browser Support
 Latest Chrome/Edge, Firefox, and Safari.
@@ -201,7 +214,7 @@ No failure is allowed to silently display empty data:
 |---------|---------------|----------|
 | Invalid file type or size | Inline error under drop zone | Select another file |
 | Partial parse failure | Warning banner under header; valid frames still load | Inspect warnings |
-| DuckDB init failure | Notice in SQL Console and load banner | Filtering falls back to in-memory |
+| DuckDB init failure | Notice in SQL Console | Reopen the SQL Console to retry; every other screen is unaffected |
 | SQL query error | DuckDB error message in results panel | Edit query |
 | Uncaught render error | Error boundary screen | Reset to upload screen |
 
@@ -235,7 +248,7 @@ No failure is allowed to silently display empty data:
 | `src/lib/pcap/` | libpcap/pcapng parsers, IPv6 walking, BGP marker detection, pcap writer |
 | `src/lib/bgp/` | Message & path attribute parsers, EVPN, error hints, hold-timer, route-refresh, neighbor & prefix stats |
 | `src/lib/build/` | BGP encoders, TCP/IP/Ethernet framing, scenario compiler, presets |
-| `src/lib/db/` | DuckDB lifecycle, schema, Arrow IPC loader, query API, filter-to-SQL compiler |
+| `src/lib/db/` | DuckDB lifecycle, schema, Arrow IPC loader, query API for the SQL Console |
 | `src/lib/filter/` | Filter expression lexer, parser, and in-memory evaluator |
 | `src/lib/net/` | Prefix parsing, bit keys, and CIDR containment |
 | `tests/lib/` | Unit tests mirroring `src/lib/` and dashboard alerts |
@@ -248,22 +261,22 @@ No failure is allowed to silently display empty data:
 flowchart TB
     drop["User drops / selects file"] -- "ArrayBuffer" --> proc["useBgpAnalyzer.processBuffer<br/>pcap / pcapng parser: Ethernet/SLL → VLAN/QinQ → IPv4/IPv6 → TCP<br/>TCP reassembly & BGP message dispatch (bgp/parser.ts)"]
     proc -- "BgpPacket[] + GenericPacket[]" --> ctx["AppContext (React)<br/>packets, allPackets"]
-    proc -. "after the list is shown" .-> loader["db/loader.ts → DuckDB WASM<br/>(Arrow IPC)"]
+    pages -. "SQL Console opened<br/>(requestDatabase)" .-> loader["db/loader.ts → DuckDB WASM<br/>(Arrow IPC)"]
     proc -. "not awaited" .-> store["storage.ts → IndexedDB<br/>(raw file)"]
     ctx --> pages["Pages & components<br/>Workspace: Messages, Sessions, Routes, SQL"]
-    loader --> queries["db/queries.ts<br/>getMatchingFrameIndexes(filter)<br/>executeRawSql(sql)"]
-    queries -- "frame indexes / result rows" --> pages
+    loader --> queries["db/queries.ts<br/>executeRawSql(sql)"]
+    queries -- "result rows" --> pages
 ```
 
 The step-by-step sequence, state machines and filter decision flow are drawn in [`architecture.md` §4–§8](architecture.md#4-loading-a-capture).
 
-If DuckDB WASM fails to initialize, filtering automatically falls back to `src/lib/filter/parser.ts` and all screens except the SQL Console remain usable.
+If DuckDB WASM fails to start, only the SQL Console is affected; it says so and retries the next time it is opened.
 
 #### DuckDB's role is intentionally narrow
 
-`src/lib/db/queries.ts` exposes only two entry points: `getMatchingFrameIndexes` (SQL-accelerated filtering) and `executeRawSql` (SQL Console).
+`src/lib/db/queries.ts` exposes one entry point, `executeRawSql`, for the SQL Console. Filtering and every aggregation run in memory on the parsed packets.
 
-**DuckDB selects; it does not reconstitute.** `getMatchingFrameIndexes` returns `frameIndex` values, which are resolved against the already-parsed `BgpPacket[]` in memory. Because the SQL tables are a flattened projection that cannot represent every nested capability or attribute losslessly, keeping `frameIndex` as the sole join key prevents field loss when filters are active. Authoritative TypeScript types live in `src/lib/pcap/types.ts` and `src/lib/bgp/types.ts`.
+**DuckDB never reconstitutes packets.** The SQL tables are a flattened projection that cannot represent every nested capability or attribute losslessly; results lead back to the parsed `BgpPacket[]` through `frame_index`, which the console links to Messages. Authoritative TypeScript types live in `src/lib/pcap/types.ts` and `src/lib/bgp/types.ts`.
 
 ---
 
@@ -293,4 +306,4 @@ The app is an SPA with a thin header (capture name, language, theme, and a menu 
 - **TCP reassembly cap:** Reassembly buffers per directional flow are capped at `BGP_MAX_MESSAGE_LENGTH`; flows exceeding this limit are treated as desynced and dropped with a warning.
 - **Link layers:** Ethernet II (link type 1) and Linux cooked capture / SLL (113), with 802.1Q and QinQ VLAN tags stripped.
 - **Transport:** IPv4 and IPv6 over TCP (port 179, plus non-standard ports detected by BGP message marker).
-- **File size:** Capped at 100 MB per capture (`src/lib/file-constraints.ts`). The binding constraint is memory — the parsed packets in the JS heap plus DuckDB WASM — not parse time; see §3.1 for what larger captures cost.
+- **File size:** Capped at 100 MB per capture (`src/lib/file-constraints.ts`). The binding constraint is memory — the parsed packets in the JS heap, plus DuckDB WASM once the SQL Console is opened — not parse time; see §3.1 for what larger captures cost.

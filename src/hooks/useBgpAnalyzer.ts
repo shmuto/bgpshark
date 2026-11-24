@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { isPcapng, parsePcapngWork, parsePcapWork, type GenericPacket } from '../lib/pcap'
 import { runInSlices } from '../lib/sliced'
 import { parseBgpFromPacketsAsync, type BgpPacket } from '../lib/bgp'
-import { initDatabase, loadPackets, isInitialized, isDataLoaded } from '../lib/db'
+import { initDatabase, loadPackets, unloadPackets, isInitialized } from '../lib/db'
 import { savePcapFile, loadPcapFile, clearPcapFile } from '../lib/storage'
 import { formatLoadProgressLabel, loadProgress, type LoadProgress } from '../lib/load-progress'
 import { useI18n } from '../i18n'
@@ -10,17 +10,23 @@ import { useI18n } from '../i18n'
 type AnalyzerWarning = { kind: 'duckdbFailed' } | { kind: 'raw'; message: string }
 
 /**
- * Where the capture is on its way into DuckDB, which happens *after* the
- * packet list is on screen.
+ * Where the capture is on its way into DuckDB, which happens only once the SQL
+ * console asks for it (`requestDatabase`).
  *
- * - `idle`: no capture.
+ * - `idle`: not asked for yet, or no capture.
  * - `loading`: the insert is running, or waiting for the database to start.
- * - `loaded`: SQL filtering and the SQL console can use it.
- * - `failed`: the insert failed; filtering stays in memory.
- * - `unavailable`: the database itself never started.
+ * - `loaded`: the SQL console can use it.
+ * - `failed`: the insert failed.
+ * - `unavailable`: the database itself did not start.
  *
- * Kept as state, not read from `isDataLoaded()` at render, so that the screens
- * that switch on it — the filter, the SQL console — re-render when it changes.
+ * DuckDB serves the SQL console and nothing else, so a capture is not inserted
+ * until that screen is opened. Inserting every capture in the background used
+ * to hold the main thread for seconds while the findings were being worked out
+ * beside it, and a dense 94MB capture ran the worker out of memory — for a
+ * screen many investigations never open.
+ *
+ * Kept as state, not read from `isDataLoaded()` at render, so that the SQL
+ * console re-renders when it changes.
  */
 export type DbStatus = 'idle' | 'loading' | 'loaded' | 'failed' | 'unavailable'
 type AnalyzerError =
@@ -116,25 +122,20 @@ export function useBgpAnalyzer() {
 
   const [internalState, setState] = useState<InternalAnalyzerState>(initialState)
   const restoredRef = useRef(false)
-  // Latest parsed packets, for the backfill below — a capture dropped while
-  // DuckDB was still initializing is parsed before the database can take it.
+  // The capture on screen, for `requestDatabase`.
   const packetsRef = useRef<BgpPacket[]>([])
-  // Which capture the app is showing. A DuckDB insert runs after the list is
-  // up and can outlive its capture — the user drops another file, or resets —
-  // so its updates are applied only while it still belongs to the capture on
-  // screen.
+  // Which capture the app is showing. A DuckDB insert can outlive its capture
+  // — the user drops another file, or resets — so its updates are applied
+  // only while it still belongs to the capture on screen.
   const generationRef = useRef(0)
-  // Set once DuckDB has failed to start, so later captures say so instead of
-  // waiting for a database that is not coming.
-  const dbInitFailedRef = useRef(false)
+  // The capture generation the database was last asked to hold, so asking
+  // again — the SQL console mounting twice, or revisited — starts no second
+  // insert.
+  const requestedRef = useRef<number | null>(null)
 
   /**
-   * Insert a capture's packets into DuckDB, in the background.
-   *
-   * Not awaited by the load: the packet list, the findings and in-memory
-   * filtering need only the parsed packets, and the insert used to be most of
-   * the wait in front of them. Until it finishes the filter stays in memory
-   * and the SQL console says the capture is still loading.
+   * Insert a capture's packets into DuckDB. Until it finishes the SQL console
+   * says the capture is still loading.
    */
   const loadIntoDatabase = useCallback(async (packets: BgpPacket[], generation: number) => {
     const current = () => generation === generationRef.current
@@ -150,8 +151,7 @@ export function useBgpAnalyzer() {
     } catch (err) {
       console.error('Failed to load packets into DuckDB:', err)
       if (!current()) return
-      // Continue without DuckDB — but say so. Filtering falls back to the
-      // in-memory evaluator; only the SQL console is actually lost.
+      // Continue without DuckDB — but say so. Only the SQL console is lost.
       setState((prev) => ({
         ...prev,
         dbStatus: 'failed',
@@ -176,6 +176,7 @@ export function useBgpAnalyzer() {
       // that finishes starting while this one decodes, hence the cleared ref.
       const generation = ++generationRef.current
       packetsRef.current = []
+      requestedRef.current = null
       const current = () => generation === generationRef.current
       const report = async (progress: LoadProgress): Promise<void> => {
         setState((prev) => ({ ...prev, progress }))
@@ -230,12 +231,6 @@ export function useBgpAnalyzer() {
         }
 
         packetsRef.current = bgpResult.packets
-        const hasRows = bgpResult.packets.length > 0
-        const dbStatus: DbStatus = !hasRows
-          ? 'idle'
-          : dbInitFailedRef.current
-            ? 'unavailable'
-            : 'loading'
         setState({
           status: 'ready',
           fileName,
@@ -250,25 +245,21 @@ export function useBgpAnalyzer() {
           error: null,
           dbReady: isInitialized(),
           progress: null,
-          dbStatus,
-          dbProgress:
-            dbStatus === 'loading'
-              ? loadProgress('database', undefined, undefined, localeRef.current)
-              : null,
+          dbStatus: 'idle',
+          dbProgress: null,
         })
 
-        // Neither of these is awaited. Saving keeps the capture for the next
-        // visit and has no bearing on this one; a failure only means a reload
-        // finds nothing to restore. A database that is still starting picks
-        // the packets up from `packetsRef` once it is ready.
+        // Not awaited. Saving keeps the capture for the next visit and has no
+        // bearing on this one; a failure only means a reload finds nothing to
+        // restore.
         if (options?.saveToStorage) {
           savePcapFile(fileName, options.saveToStorage).catch((err) => {
             console.error('Failed to save file to storage:', err)
           })
         }
-        if (hasRows && isInitialized()) {
-          void loadIntoDatabase(bgpResult.packets, generation)
-        }
+        // The previous capture's tables, if the SQL console loaded them, are
+        // memory in the worker that nothing will read again.
+        if (isInitialized()) void unloadPackets()
         return true
       } catch (e) {
         if (!current()) return false
@@ -284,38 +275,46 @@ export function useBgpAnalyzer() {
         return false
       }
     },
-    [loadIntoDatabase]
+    []
   )
 
-  // Initialize DuckDB on mount and restore persisted data
+  /**
+   * Make DuckDB hold the capture on screen: start the database if it is not
+   * up, then insert the packets. Called by the SQL console when it opens;
+   * asking again for the same capture does nothing.
+   */
+  const requestDatabase = useCallback(async () => {
+    const generation = generationRef.current
+    const packets = packetsRef.current
+    if (packets.length === 0 || requestedRef.current === generation) return
+    requestedRef.current = generation
+    const current = () => generation === generationRef.current
+
+    setState((prev) => ({
+      ...prev,
+      dbStatus: 'loading',
+      dbProgress: loadProgress('database', undefined, undefined, localeRef.current),
+    }))
+    try {
+      await initDatabase()
+    } catch (err) {
+      console.error('Failed to initialize DuckDB:', err)
+      if (!current()) return
+      // Asked again the next time the console opens: a start that timed out
+      // on a slow network may well succeed then.
+      requestedRef.current = null
+      setState((prev) => ({ ...prev, dbReady: false, dbStatus: 'unavailable', dbProgress: null }))
+      return
+    }
+    if (!current()) return
+    setState((prev) => ({ ...prev, dbReady: true }))
+    await loadIntoDatabase(packets, generation)
+  }, [loadIntoDatabase])
+
+  // Restore the capture kept from the last visit. The database is not
+  // started here: only the SQL console needs it, and it asks.
   useEffect(() => {
     const init = async () => {
-      // Initialize DuckDB
-      if (!isInitialized()) {
-        setState((prev) => ({ ...prev, status: 'initializing' }))
-
-        try {
-          await initDatabase()
-          setState((prev) => ({ ...prev, dbReady: true }))
-          // A capture uploaded while the database was still coming up was
-          // parsed straight past the load step. Load it now.
-          if (packetsRef.current.length > 0 && !isDataLoaded()) {
-            void loadIntoDatabase(packetsRef.current, generationRef.current)
-          }
-        } catch (err) {
-          console.error('Failed to initialize DuckDB:', err)
-          dbInitFailedRef.current = true
-          setState((prev) => ({
-            ...prev,
-            dbReady: false,
-            dbStatus: prev.dbStatus === 'loading' ? 'unavailable' : prev.dbStatus,
-            dbProgress: null,
-          }))
-        }
-      } else {
-        setState((prev) => ({ ...prev, dbReady: true }))
-      }
-
       // Try to restore persisted data (only once)
       if (!restoredRef.current) {
         restoredRef.current = true
@@ -346,7 +345,7 @@ export function useBgpAnalyzer() {
     }
 
     init()
-  }, [processBuffer, loadIntoDatabase])
+  }, [processBuffer])
 
   const loadFile = useCallback(
     async (file: File) => {
@@ -374,6 +373,8 @@ export function useBgpAnalyzer() {
   const reset = useCallback(() => {
     packetsRef.current = []
     generationRef.current++
+    requestedRef.current = null
+    if (isInitialized()) void unloadPackets()
 
     // Clear stored data
     clearPcapFile().catch((err) => {
@@ -424,5 +425,6 @@ export function useBgpAnalyzer() {
     loadFile,
     selectPacket,
     reset,
+    requestDatabase,
   }
 }

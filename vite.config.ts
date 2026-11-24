@@ -261,6 +261,12 @@ export default defineConfig({
   base: '/bgpshark/',
   build: {
     outDir: 'dist',
+    // ES2022, for native class fields. Vite's default (ES2020) lowers them to
+    // an `Object.defineProperty` call per field per instance, and the decoder
+    // constructs a `BinaryReader` per message: on a 100MB capture those calls
+    // alone were 0.6s of the load. Every browser this app supports (latest
+    // Chrome, Edge, Firefox and Safari; see docs/design.md §3.2) runs ES2022.
+    target: 'es2022',
     rollupOptions: {
       output: {
         // React changes when we upgrade it, the app changes every commit. Split

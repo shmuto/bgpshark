@@ -221,6 +221,14 @@ function parsePrefixes(
       break
     }
 
+    // The common case — a shared IPv4 prefix — is read without a byte view:
+    // it was an allocation per route, and most routes are repeats the table
+    // already holds.
+    if (pathId === undefined && shared && afi !== 2 && prefixBytes <= 4) {
+      prefixes.push(sharedIpv4Prefix(shared, reader.readAddressBits(prefixBytes), prefixLength))
+      continue
+    }
+
     const octets = reader.readBytes(prefixBytes)
     prefixes.push(
       pathId === undefined && shared && (afi !== 2 || shared.otherPrefixes.active())
@@ -240,6 +248,17 @@ function decodePrefix(afi: number, octets: Uint8Array, prefixLength: number, pat
 }
 
 /** The capture's one copy of a prefix, decoded on first sight. */
+/** The shared IPv4 prefix for `address` (four octets as an int32) and `prefixLength`. */
+function sharedIpv4Prefix(shared: SharedDecodedValues, address: number, prefixLength: number): BgpPrefix {
+  return (
+    shared.ipv4Prefixes.get(address, prefixLength) ??
+    shared.ipv4Prefixes.set(address, prefixLength, {
+      prefix: `${address >>> 24}.${(address >>> 16) & 255}.${(address >>> 8) & 255}.${address & 255}`,
+      length: prefixLength,
+    })
+  )
+}
+
 function sharedPrefix(shared: SharedDecodedValues, afi: number, octets: Uint8Array, prefixLength: number): BgpPrefix {
   if (afi !== 2) {
     let address = 0

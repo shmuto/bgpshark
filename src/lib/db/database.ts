@@ -68,6 +68,7 @@ export async function initDatabase(): Promise<void> {
     if (attempt.cancelled) {
       throw new Error('DuckDB initialization abandoned after timeout')
     }
+    await useCompressedCatalog(connection)
 
     // The schema is part of "usable", so it is built on the connection before
     // that connection is published rather than after. Publishing first opened a
@@ -117,6 +118,28 @@ export async function initDatabase(): Promise<void> {
 }
 
 /**
+ * The catalog the capture's tables live in: an in-memory database that, unlike
+ * DuckDB's default one, compresses what it stores.
+ *
+ * DuckDB keeps an in-memory database's rows uncompressed unless asked, and the
+ * worker has a little over 3GB to hold them in. A 94MB capture of table
+ * transfers — 22 million announced routes, each a row of `nlri` with nine
+ * EVPN columns that are NULL for any other family — needed all of it: the
+ * insert failed with "Out of Memory Error ... (3.1 GiB/3.1 GiB used)" and the
+ * SQL console was lost for that capture. Compressed, the same tables take
+ * about 140MB. A 100MB capture of unique routes went from 822MB to about 60MB.
+ *
+ * `USE` makes it the connection's default, so the schema, the loader and every
+ * query the SQL console sends find the tables without naming the catalog.
+ */
+export const CAPTURE_CATALOG = 'capture'
+
+async function useCompressedCatalog(connection: duckdb.AsyncDuckDBConnection): Promise<void> {
+  await connection.query(`ATTACH ':memory:' AS ${CAPTURE_CATALOG} (COMPRESS)`)
+  await connection.query(`USE ${CAPTURE_CATALOG}`)
+}
+
+/**
  * Create database schema.
  *
  * Takes the connection rather than reading the module-level `conn`, because the
@@ -156,6 +179,9 @@ export async function getDatabase(): Promise<duckdb.AsyncDuckDB> {
  */
 export async function resetDatabase(): Promise<void> {
   const connection = await getConnection()
+  // The SQL console shares this connection, and a `USE` typed there would
+  // otherwise send the next capture's tables somewhere else.
+  await connection.query(`USE ${CAPTURE_CATALOG}`)
 
   // Drop all tables
   const dropStatements = splitSqlStatements(DROP_TABLES_SQL)

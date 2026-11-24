@@ -129,7 +129,7 @@ function reachability(
 }
 
 function MessagesView({ linked }: { linked: boolean }) {
-  const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket, dbStatus } = useApp()
+  const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
   // The rows come from the session chosen in the workspace. Everything that
   // looks *around* a packet — the hold timer, the previous message on the
   // session, links by index — keeps using the whole capture, so narrowing the
@@ -210,8 +210,7 @@ function MessagesView({ linked }: { linked: boolean }) {
   // reachable; after that the user's own clicks own the selection.
   const selectionAppliedRef = useRef(false)
 
-  // SQL filtering waits for the background insert; until then, and if it
-  // fails, the filter runs in memory.
+  // In memory, and in slices on a large capture; see `useFilter`.
   const {
     query,
     setQuery,
@@ -220,7 +219,7 @@ function MessagesView({ linked }: { linked: boolean }) {
     showParseErrors,
     parseErrors,
     isFiltering,
-  } = useFilter(scopedPackets, { initialQuery: initialFilter, useDuckDB: dbStatus === 'loaded' })
+  } = useFilter(scopedPackets, { initialQuery: initialFilter })
 
 
   // Clear highlight after animation
@@ -274,8 +273,7 @@ function MessagesView({ linked }: { linked: boolean }) {
    * `type = UPDATE` is still a KEEPALIVE, and building the lookup from the
    * filtered set used to render it as a bare TCP segment instead.
    *
-   * With a filter active, a BGP frame is shown when the filter (DuckDB or in
-   * memory) kept it, and a non-BGP frame when the filter's transport fields
+   * With a filter active, a BGP frame is shown when the filter kept it, and a non-BGP frame when the filter's transport fields
    * (`src_ip`, `dst_ip`, `src_port`, `dst_port`, `frame`) match it — so
    * `src_ip = 10.0.13.1` narrows to that peer's handshake, BGP and teardown,
    * while a BGP-only condition such as `type = UPDATE` leaves just the BGP

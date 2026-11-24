@@ -13,6 +13,7 @@ import type { AsPathAttribute, BgpPacket, BgpPathAttribute, BgpPrefix, BgpUpdate
 import { formatEvpnIdentity } from './evpn'
 import { formatPrefix, parseBgpPrefix, type ParsedPrefix } from '../net/prefix'
 import { SharedTable } from './shared-decode'
+import { Ipv4PrefixIndex, ipv4PrefixAddress } from '../net/ipv4-index'
 
 export interface PrefixEvent {
   timestamp: Date
@@ -114,18 +115,31 @@ interface Announcement {
  * dense 200MB capture 3.4 million of them, 240MB of a 1GB heap. Nearly all of
  * an event is something the capture already holds: the packet (its time and
  * sender), the decoded prefix (its RD and Path Identifier) and the UPDATE's
- * attributes, which repeat across UPDATEs. So an event is three references to
+ * attributes, which repeat across UPDATEs. So an event is three indexes into
  * those, twelve bytes, and the `PrefixEvent` the Routes screen shows is put
  * back together from them when it asks (`RouteHistory.events`). The rules
  * that walk every event read the columns directly.
+ *
+ * The prefix itself is kept only when it says more than the route's key does:
+ * an ADD-PATH Path Identifier or an EVPN route's RD. For any other route every
+ * event's prefix is the route, so a reference per event — 22 million of them
+ * on a 94MB table transfer, in an array grown by copying — bought nothing.
  */
 interface HistoryStore {
   packets: BgpPacket[]
   packetIndex: Int32Array
   /** Index into `announcements`; -1 for a withdraw. */
   announcement: Int32Array
-  prefix: BgpPrefix[]
+  /** Index into `distinctPrefixes`, or -1 when the prefix carries nothing beyond the route's key. */
+  distinct: Int32Array
+  distinctPrefixes: BgpPrefix[]
   announcements: Announcement[]
+}
+
+/** The event's prefix if it carries a Path Identifier or an RD; see `HistoryStore`. */
+function distinctPrefix(store: HistoryStore, at: number): BgpPrefix | undefined {
+  const distinct = store.distinct[at]
+  return distinct < 0 ? undefined : store.distinctPrefixes[distinct]
 }
 
 /**
@@ -169,7 +183,7 @@ export class RouteHistory {
   }
 
   pathId(index: number): number | undefined {
-    return this.store.prefix[this.start + index].pathId
+    return distinctPrefix(this.store, this.start + index)?.pathId
   }
 
   /** Whether any event came from one of `sources`. */
@@ -186,7 +200,7 @@ export class RouteHistory {
     const packetIndex = store.packetIndex[at]
     const packet = store.packets[packetIndex]
     const announcement = store.announcement[at] >= 0 ? store.announcements[store.announcement[at]] : undefined
-    const prefix = store.prefix[at]
+    const prefix = distinctPrefix(store, at)
     return {
       timestamp: packet.timestamp,
       action: announcement ? 'announce' : 'withdraw',
@@ -196,11 +210,11 @@ export class RouteHistory {
       localPref: announcement?.localPref,
       origin: announcement?.origin,
       communities: announcement?.communities,
-      rd: prefix.evpn?.rd,
+      rd: prefix?.evpn?.rd,
       // Off the prefix rather than the UPDATE, like `rd`: it is part of the
       // NLRI entry, not of the attributes shared by every prefix in the
       // UPDATE, so each route in a block keeps its own.
-      pathId: prefix.pathId,
+      pathId: prefix?.pathId,
       source: packet.srcIp,
       packetIndex,
     }
@@ -232,6 +246,66 @@ class Int32Column {
     this.data[this.length++] = value
   }
 }
+
+const NEVER_SEEN = 0
+const UP = 1
+const DOWN = 2
+
+/**
+ * One peer's view of every route: whether it currently announces it
+ * (`UP`), withdrew it (`DOWN`) or never spoke of it (`NEVER_SEEN`), by the
+ * route's index in the statistics.
+ *
+ * A byte per route while the capture's peers can afford it — there is one of
+ * these per announcing peer, and they share `DENSE_BUDGET` — and a `Map`
+ * past that. The `Map` was all there used to be, keyed by `prefix/length`
+ * text, and its lookups were the other half of a 20-second pass over a large
+ * table transfer.
+ */
+class RouteStates {
+  private dense: Uint8Array | null = new Uint8Array(1024)
+  private sparse: Map<number, number> | null = null
+  private readonly budget: { bytes: number }
+
+  constructor(budget: { bytes: number }) {
+    this.budget = budget
+    budget.bytes -= 1024
+  }
+
+  get(id: number): number {
+    const dense = this.dense
+    if (dense) return id < dense.length ? dense[id] : NEVER_SEEN
+    return this.sparse!.get(id) ?? NEVER_SEEN
+  }
+
+  set(id: number, state: number): void {
+    if (this.dense && id >= this.dense.length) this.grow(id)
+    if (this.dense) this.dense[id] = state
+    else this.sparse!.set(id, state)
+  }
+
+  private grow(id: number): void {
+    const dense = this.dense!
+    let size = dense.length * 2
+    while (size <= id) size *= 2
+    if (size - dense.length > this.budget.bytes) {
+      // Over budget: keep the routes this peer has spoken of, and only those.
+      const sparse = new Map<number, number>()
+      for (let route = 0; route < dense.length; route++) if (dense[route] !== NEVER_SEEN) sparse.set(route, dense[route])
+      this.budget.bytes += dense.length
+      this.dense = null
+      this.sparse = sparse
+      return
+    }
+    this.budget.bytes -= size - dense.length
+    const next = new Uint8Array(size)
+    next.set(dense)
+    this.dense = next
+  }
+}
+
+/** Bytes of `RouteStates` all of one capture's peers may hold between them. */
+const DENSE_BUDGET = 64 << 20
 
 /**
  * `aggregatePrefixStats`, computed once per packet array.
@@ -318,7 +392,14 @@ function withAsns(current: readonly string[], added: readonly string[]): readonl
 
 /** What a route's statistics hold until `finish` fills in its history. */
 const NO_HISTORY = new RouteHistory(
-  { packets: [], packetIndex: new Int32Array(0), announcement: new Int32Array(0), prefix: [], announcements: [] },
+  {
+    packets: [],
+    packetIndex: new Int32Array(0),
+    announcement: new Int32Array(0),
+    distinct: new Int32Array(0),
+    distinctPrefixes: [],
+    announcements: [],
+  },
   0,
   0
 )
@@ -358,10 +439,21 @@ function createAggregator(packets: BgpPacket[]) {
   const stats: PrefixStats[] = []
   const statIds = new Map<string, number>()
   /**
-   * Per announcing peer, whether each route is currently announced; absent
-   * means never announced.
+   * Each decoded IPv6 or EVPN prefix's route, so its key — a string built from
+   * the prefix — is made and looked up once per prefix object rather than once
+   * per event; the decoder hands over one object for every repeat of a prefix
+   * (`shared-decode.ts`). A `SharedTable`, so that on a capture whose prefixes
+   * are never repeated objects it rests rather than adding a lookup to every
+   * event. IPv4 routes have `ipv4Routes` instead.
    */
-  const routeUpByPeer = new Map<string, Map<string, boolean>>()
+  const statOfPrefix = new SharedTable<BgpPrefix, number>()
+  /**
+   * Per announcing peer, whether each route — by its index in `stats` — is
+   * currently announced; absent means never announced.
+   */
+  const routeUpByPeer = new Map<string, RouteStates>()
+  const denseBudget = { bytes: DENSE_BUDGET }
+  const ipv4Routes = new Ipv4PrefixIndex()
   const asnText = new Map<number, string>()
   /**
    * Each AS_PATH's text and AS numbers, worked out once per decoded path. The
@@ -396,7 +488,8 @@ function createAggregator(packets: BgpPacket[]) {
   const eventStat = new Int32Column()
   const eventPacket = new Int32Column()
   const eventAnnouncement = new Int32Column()
-  const eventPrefix: BgpPrefix[] = []
+  const eventDistinct = new Int32Column()
+  const distinctPrefixes: BgpPrefix[] = []
 
   const gather = (attributes: BgpPathAttribute[]): Gathered => {
     const consult = gatheredLists.active()
@@ -485,6 +578,50 @@ function createAggregator(packets: BgpPacket[]) {
     return id
   }
 
+  /** The route `prefix` belongs to, by its index in `stats`, created on first sight. */
+  const statFor = (prefix: BgpPrefix, timestamp: Date, ms: number): number => {
+    // An IPv4 route — nearly every one — is found by its address, without
+    // building its key; see `Ipv4PrefixIndex`.
+    const address = ipv4PrefixAddress(prefix)
+    if (address >= 0) {
+      let id = ipv4Routes.get(address | 0, prefix.length)
+      if (id < 0) {
+        id = addStat(formatPrefix(prefix), prefix, timestamp, ms)
+        ipv4Routes.add(address | 0, prefix.length, id)
+      }
+      return id
+    }
+    const consult = statOfPrefix.active()
+    let statId = consult ? statOfPrefix.get(prefix) : undefined
+    if (statId !== undefined) return statId
+    // EVPN routes are keyed by what identifies them across the fabric, not by
+    // the leaf that happened to advertise them — see `formatEvpnIdentity`.
+    const key = prefix.evpn ? formatEvpnIdentity(prefix.evpn) : formatPrefix(prefix)
+    statId = statIds.get(key)
+    if (statId === undefined) {
+      statId = addStat(key, prefix, timestamp, ms)
+      statIds.set(key, statId)
+    }
+    return consult ? statOfPrefix.set(prefix, statId) : statId
+  }
+
+  /** A new route's statistics, by its index in `stats`. */
+  const addStat = (key: string, prefix: BgpPrefix, timestamp: Date, ms: number): number => {
+    stats.push({
+      key,
+      parsed: parseBgpPrefix(prefix),
+      asns: NO_ASNS,
+      announced: 0,
+      withdrawn: 0,
+      lastSeen: timestamp,
+      flap: 0,
+      lastSeenMs: ms,
+      eventCount: 0,
+      history: NO_HISTORY,
+    })
+    return stats.length - 1
+  }
+
   /**
    * Records one announce or withdraw against `prefix/length`. Every caller goes
    * through here so the four NLRI sources cannot drift apart on how a route is
@@ -492,55 +629,35 @@ function createAggregator(packets: BgpPacket[]) {
    */
   const record = (
     prefix: BgpPrefix,
-    routeUp: Map<string, boolean>,
+    routeUp: RouteStates,
     timestamp: Date,
+    /** `timestamp` in milliseconds, read once per packet. */
+    ms: number,
     packetIndex: number,
     announcement: Announcement | null,
     /** Index into `announcements`; -1 for a withdraw. */
     announcementIndex: number
   ) => {
-    // EVPN routes are keyed by what identifies them across the fabric, not by
-    // the leaf that happened to advertise them — see `formatEvpnIdentity`.
-    const key = prefix.evpn ? formatEvpnIdentity(prefix.evpn) : formatPrefix(prefix)
-    let statId = statIds.get(key)
-    let stat: PrefixStats
-    if (statId === undefined) {
-      statId = stats.length
-      stat = {
-        key,
-        parsed: parseBgpPrefix(prefix),
-        asns: NO_ASNS,
-        announced: 0,
-        withdrawn: 0,
-        lastSeen: timestamp,
-        flap: 0,
-        lastSeenMs: timestamp.getTime(),
-        eventCount: 0,
-        history: NO_HISTORY,
-      }
-      stats.push(stat)
-      statIds.set(key, statId)
-    } else {
-      stat = stats[statId]
-    }
+    const statId = statFor(prefix, timestamp, ms)
+    const stat = stats[statId]
 
     if (announcement) {
       stat.announced++
-      routeUp.set(key, true)
+      routeUp.set(statId, UP)
       stat.asns = withAsns(stat.asns, announcement.asns)
     } else {
       stat.withdrawn++
-      if (routeUp.get(key) !== false) stat.flap++
-      routeUp.set(key, false)
+      if (routeUp.get(statId) !== DOWN) stat.flap++
+      routeUp.set(statId, DOWN)
     }
 
     stat.eventCount++
     stat.lastSeen = timestamp
-    stat.lastSeenMs = timestamp.getTime()
+    stat.lastSeenMs = ms
     eventStat.push(statId)
     eventPacket.push(packetIndex)
     eventAnnouncement.push(announcementIndex)
-    eventPrefix.push(prefix)
+    eventDistinct.push(prefix.pathId !== undefined || prefix.evpn ? distinctPrefixes.push(prefix) - 1 : -1)
   }
 
   const addPacket = (packet: BgpPacket, packetIndex: number) => {
@@ -548,10 +665,11 @@ function createAggregator(packets: BgpPacket[]) {
     const source = packet.srcIp
     let routeUp = routeUpByPeer.get(source)
     if (!routeUp) {
-      routeUp = new Map()
+      routeUp = new RouteStates(denseBudget)
       routeUpByPeer.set(source, routeUp)
     }
     const { timestamp } = packet
+    const ms = timestamp.getTime()
 
     for (const msg of packet.messages) {
       if (msg.type !== 'UPDATE') continue
@@ -564,12 +682,12 @@ function createAggregator(packets: BgpPacket[]) {
       const nlri = update.nlri || []
       if (nlri.length > 0) {
         const id = announcementId(gathered)
-        for (const entry of nlri) record(entry, routeUp, timestamp, packetIndex, announcement, id)
+        for (const entry of nlri) record(entry, routeUp, timestamp, ms, packetIndex, announcement, id)
       }
 
       // Process withdrawn routes
       for (const wr of update.withdrawnRoutes || []) {
-        record(wr, routeUp, timestamp, packetIndex, null, -1)
+        record(wr, routeUp, timestamp, ms, packetIndex, null, -1)
       }
 
       // Process MP_REACH_NLRI / MP_UNREACH_NLRI (IPv6 and other families)
@@ -579,11 +697,11 @@ function createAggregator(packets: BgpPacket[]) {
           const reached = attr.parsed.nlri || []
           if (reached.length === 0) continue
           const id = announcementId(gathered, attr, attr.parsed.nextHop)
-          for (const entry of reached) record(entry, routeUp, timestamp, packetIndex, announcement, id)
+          for (const entry of reached) record(entry, routeUp, timestamp, ms, packetIndex, announcement, id)
         }
         if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
           for (const entry of attr.parsed.withdrawnRoutes || []) {
-            record(entry, routeUp, timestamp, packetIndex, null, -1)
+            record(entry, routeUp, timestamp, ms, packetIndex, null, -1)
           }
         }
       }
@@ -602,14 +720,15 @@ function createAggregator(packets: BgpPacket[]) {
       packets,
       packetIndex: new Int32Array(total),
       announcement: new Int32Array(total),
-      prefix: new Array<BgpPrefix>(total),
+      distinct: new Int32Array(total),
+      distinctPrefixes,
       announcements,
     }
     for (let event = 0; event < total; event++) {
       const at = cursor[eventStat.data[event]]++
       store.packetIndex[at] = eventPacket.data[event]
       store.announcement[at] = eventAnnouncement.data[event]
-      store.prefix[at] = eventPrefix[event]
+      store.distinct[at] = eventDistinct.data[event]
     }
 
     // Sort history by timestamp. Packets come in capture order, so a history is
@@ -640,11 +759,11 @@ function sortRange(store: HistoryStore, start: number, end: number, timeOf: (at:
   order.sort((a, b) => timeOf(a) - timeOf(b))
   const packetIndex = order.map((at) => store.packetIndex[at])
   const announcement = order.map((at) => store.announcement[at])
-  const prefix = order.map((at) => store.prefix[at])
+  const distinct = order.map((at) => store.distinct[at])
   for (let i = 0; i < order.length; i++) {
     store.packetIndex[start + i] = packetIndex[i]
     store.announcement[start + i] = announcement[i]
-    store.prefix[start + i] = prefix[i]
+    store.distinct[start + i] = distinct[i]
   }
 }
 

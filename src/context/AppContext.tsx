@@ -16,7 +16,7 @@ interface AppContextType {
   selectedPacketIndex: number | null
   /** How far the load in flight has got; null when nothing is loading. */
   progress: LoadProgress | null
-  /** Where the capture is on its way into DuckDB, after the list is up. */
+  /** Where the capture is on its way into DuckDB, which the SQL console asks for. */
   dbStatus: DbStatus
   /** How far the DuckDB insert has got; null unless `dbStatus` is `loading`. */
   dbProgress: LoadProgress | null
@@ -25,6 +25,8 @@ interface AppContextType {
   loadFile: (file: File) => Promise<void>
   selectPacket: (index: number | null) => void
   reset: () => void
+  /** Load the capture into DuckDB, starting the database if need be. */
+  requestDatabase: () => Promise<void>
 }
 
 const AppContext = createContext<AppContextType | null>(null)
@@ -47,6 +49,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     loadFile: analyzer.loadFile,
     selectPacket: analyzer.selectPacket,
     reset: analyzer.reset,
+    requestDatabase: analyzer.requestDatabase,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

@@ -93,21 +93,20 @@ flowchart LR
     file[".pcap / .pcapng"] --> pcap["lib/pcap<br/>フレーム"] --> bgp["lib/bgp<br/>BGP メッセージ"]
     bgp --> state["AppContext<br/>BgpPacket[]"]
     state --> views["ワークスペース<br/>Messages · Sessions · Routes<br/>Findings"]
-    state -. "裏で投入" .-> duck["DuckDB WASM<br/>SQL Console · 高速フィルタ"]
-    duck -- "一致したフレーム番号" --> views
+    views -. "SQL Console を開いたとき" .-> duck["DuckDB WASM<br/>SQL Console"]
     file -. "再読み込み用に保存" .-> idb[("IndexedDB")]
 ```
 
-処理はすべてブラウザのタブ内で行います。デコードが終わるとすぐにパケット一覧を表示し、DuckDB への投入はその後に行います。DuckDB は「どのフレームが一致するか」だけを返すため、DuckDB がなくても SQL Console 以外の画面はすべて使えます。フィルタ式は一度だけ構文木に変換し、DuckDB WASM 上の SQL かメモリ上の評価のどちらかで実行します。
+処理はすべてブラウザのタブ内で行います。デコードが終わるとすぐにパケット一覧を表示します。フィルタ式は一度だけ構文木に変換し、メモリ上で評価します。大きなキャプチャでは小分けに実行します。DuckDB は SQL Console を開いたときにだけ起動してキャプチャを投入するため、それ以外の画面は DuckDB なしで使えます。
 
-読み込みの流れ、デコードの階層、状態遷移、フィルタの 2 方式、DuckDB のテーブル、Findings の算出、画面構成、Capture Builder、CI の図は **[docs/architecture.ja.md](docs/architecture.ja.md)** にまとめています。
+読み込みの流れ、デコードの階層、状態遷移、フィルタの評価、DuckDB のテーブル、Findings の算出、画面構成、Capture Builder、CI の図は **[docs/architecture.ja.md](docs/architecture.ja.md)** にまとめています。
 
 | パス | 役割 |
 |------|------|
 | `src/lib/pcap/` | pcap / pcapng パーサー、pcap ライター、IPv6 および非標準ポート検出 |
 | `src/lib/bgp/` | BGP メッセージ・パス属性パーサー、エラーヒント、セッション・プレフィックス解析 |
 | `src/lib/build/` | BGP エンコーダー、TCP/IP/Ethernet フレーミング、シナリオビルダーとプリセット |
-| `src/lib/db/` | DuckDB WASM 初期化、スキーマ、Arrow IPC ローダー、クエリ API、フィルタ→SQL 変換 |
+| `src/lib/db/` | DuckDB WASM 初期化、スキーマ、Arrow IPC ローダー、SQL Console 用のクエリ API |
 | `src/lib/filter/` | フィルタ式の字句解析・構文解析・インメモリ評価 |
 | `src/lib/net/` | プレフィックス解析および CIDR 包含判定 |
 | `src/pages/` | 各画面のページコンポーネントおよびアプリ内マニュアル（`manual/manual.md`, `manual/manual.ja.md`） |
