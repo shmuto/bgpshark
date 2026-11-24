@@ -151,10 +151,18 @@ export function endpointKey(ip: string, port: number): string {
 export class BgpSessionTracker {
   /** endpoint → what that end advertised in its OPEN. */
   private advertised = new Map<string, Advertised>()
+  /**
+   * `from` → `to` → the decoding worked out for that direction. It is asked
+   * for on every message, and it only changes when an OPEN arrives, so it is
+   * worked out once per OPEN rather than per message — on a large capture
+   * that was hundreds of thousands of identical negotiations.
+   */
+  private decodings = new Map<string, Map<string, UpdateDecoding>>()
 
   /** Record an OPEN seen coming *from* `from`. */
   observeOpen(from: string, open: BgpOpenMessage): void {
     this.advertised.set(from, advertisedFrom(open))
+    this.decodings.clear()
   }
 
   /**
@@ -165,6 +173,20 @@ export class BgpSessionTracker {
    * the defaults rather than trusting half an exchange.
    */
   decodingFor(from: string, to: string): UpdateDecoding {
+    let byReceiver = this.decodings.get(from)
+    if (!byReceiver) {
+      byReceiver = new Map()
+      this.decodings.set(from, byReceiver)
+    }
+    let decoding = byReceiver.get(to)
+    if (!decoding) {
+      decoding = this.negotiate(from, to)
+      byReceiver.set(to, decoding)
+    }
+    return decoding
+  }
+
+  private negotiate(from: string, to: string): UpdateDecoding {
     const sender = this.advertised.get(from)
     const receiver = this.advertised.get(to)
     if (!sender || !receiver) return DEFAULT_DECODING
