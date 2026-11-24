@@ -106,6 +106,9 @@ pcap/pcapng → BGP パーサー → ┬→ React state (AppContext)
 | `src/lib/net/` | プレフィックス解析および CIDR 包含判定 |
 | `src/pages/` | 各画面のページコンポーネントおよびアプリ内マニュアル（`manual/manual.md`, `manual/manual.ja.md`） |
 | `src/components/` | UI コンポーネント（`builder/`, `common/`, `dashboard/`, `layout/`, `message/`, `neighbor/`, `workspace/`） |
+| `src/context/` | アプリ全体の状態（読み込んだキャプチャ、ワークスペースのセッション・検出結果・選択状態） |
+| `src/hooks/` | 解析・フィルタ・テーマ・分割ペイン・列設定などの React フック |
+| `src/i18n/` | UI 文言と NOTIFICATION の日本語ヒント |
 | `testlab/` | ContainerLab トポロジ、障害シナリオ生成スクリプト（`scenarios.ts`）、スクリーンショット生成 |
 | `docs/` | 技術設計書およびトラブルシューティングシナリオ評価 |
 

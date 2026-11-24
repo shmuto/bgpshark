@@ -2,10 +2,13 @@ name: CI
 
 # deploy.yml only runs on pushes to main, so on its own it checks a change after
 # it has already landed. This runs the same checks on the pull request, which is
-# the point at which a failure is still cheap.
+# the point at which a failure is still cheap. The jobs live in checks.yml.
 on:
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 # A new push to a pull request makes the run for the previous one moot, and with
 # the e2e job split into shards each run holds four runners — so stacked pushes
@@ -16,86 +19,5 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Run unit tests
-        run: bun test
-
-      - name: Build
-        run: bun run build
-
-  e2e:
-    # Split across three runners. The suite is CPU-bound — each spec starts
-    # its own DuckDB — so more workers on one 4-core runner mostly make every
-    # spec slower, while another runner really does divide the wall clock.
-    # Each shard pays ~30s of setup and build, which is why it stops at three.
-    strategy:
-      # One failing shard should not cancel the others: the report of the
-      # whole suite is what tells a flake from a regression.
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
-      - name: Install dependencies
-        run: bun install
-
-      # The browser is the slowest thing in this job and the least interesting:
-      # a good day is a 25s download from cdn.playwright.dev, a bad one has been
-      # nearly ten minutes. It only changes when Playwright does, so key the
-      # cache on that and let a version bump be the only run that pays.
-      - name: Note the Playwright version
-        id: playwright
-        run: echo "version=$(bunx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore the browser
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-
-      # --only-shell skips the full Chrome build (177MB) and takes the headless
-      # shell (114MB) on its own, which is what a headless run launches anyway.
-      # A `--headed` or `--ui` run needs the full browser, so those stay local.
-      # The install is a no-op once the cache has restored the browser; the apt
-      # side of --with-deps still runs, and is fast and off the Playwright CDN.
-      - name: Install Chromium
-        run: bunx playwright install --with-deps --only-shell chromium
-
-      # E2E_PREVIEW builds the app and tests the production bundle, CSP and
-      # all, rather than the dev server — see playwright.config.ts.
-      - name: Run end-to-end tests
-        run: bunx playwright test --shard=${{ matrix.shard }}/3
-        env:
-          E2E_PREVIEW: '1'
-
-      - name: Upload report
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-${{ matrix.shard }}
-          path: playwright-report
-          retention-days: 7
+  checks:
+    uses: ./.github/workflows/checks.yml

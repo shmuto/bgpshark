@@ -1,0 +1,115 @@
+name: Checks
+
+# The checks every change has to pass: lint, unit tests, build, and the
+# end-to-end suite against the production bundle. ci.yml runs them on pull
+# requests and deploy.yml on main before publishing. They used to be two copies
+# of the same jobs, which is how one of them gets a fix the other never does.
+on:
+  workflow_call:
+    inputs:
+      upload-pages:
+        description: Upload dist/ as the GitHub Pages artifact for a later deploy job.
+        type: boolean
+        default: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Run unit tests
+        run: bun test
+
+      - name: Build
+        run: bun run build
+
+      - name: Setup Pages
+        if: inputs.upload-pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        if: inputs.upload-pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  # Drives the built app in a real browser. Several of this app's failure modes
+  # are only visible here — SQL that compiles but will not run, a route guard
+  # that redirects before the capture has loaded — so on main a failure blocks
+  # the deploy. If it ever turns flaky, drop it from the checks rather than
+  # letting a red run become something to ignore.
+  e2e:
+    # Split across three runners. The suite is CPU-bound — each spec starts
+    # its own DuckDB — so more workers on one 4-core runner mostly make every
+    # spec slower, while another runner really does divide the wall clock.
+    # Each shard pays ~30s of setup and build, which is why it stops at three.
+    strategy:
+      # One failing shard should not cancel the others: the report of the
+      # whole suite is what tells a flake from a regression.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      # The browser is the slowest thing in this job and the least interesting:
+      # a good day is a 25s download from cdn.playwright.dev, a bad one has been
+      # nearly ten minutes. It only changes when Playwright does, so key the
+      # cache on that and let a version bump be the only run that pays.
+      # Caches reach a branch from the default branch and not the other way
+      # round, so it is the run on main whose download pull requests restore.
+      - name: Note the Playwright version
+        id: playwright
+        run: echo "version=$(bunx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # --only-shell skips the full Chrome build (177MB) and takes the headless
+      # shell (114MB) on its own, which is what a headless run launches anyway.
+      # A `--headed` or `--ui` run needs the full browser, so those stay local.
+      # The install is a no-op once the cache has restored the browser; the apt
+      # side of --with-deps still runs, and is fast and off the Playwright CDN.
+      - name: Install Chromium
+        run: bunx playwright install --with-deps --only-shell chromium
+
+      # E2E_PREVIEW builds the app and tests the production bundle, CSP and
+      # all, rather than the dev server — see playwright.config.ts.
+      - name: Run end-to-end tests
+        run: bunx playwright test --shard=${{ matrix.shard }}/3
+        env:
+          E2E_PREVIEW: '1'
+
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.shard }}
+          path: playwright-report
+          retention-days: 7
