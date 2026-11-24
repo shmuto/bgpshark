@@ -29,5 +29,8 @@ export {
   announce,
   withdraw,
   END_OF_RIB,
+  ROUTER_A,
+  ROUTER_B,
   type PresetDefinition,
 } from './presets'
+export { establish, keepSide, mergeCaptures } from './compose'

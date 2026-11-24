@@ -21,14 +21,18 @@ export interface PresetDefinition {
   build: () => Scenario
 }
 
-const ROUTER_A: ScenarioPeer = {
+/**
+ * The two routers most captures are between. Exported so a one-off capture
+ * only has to state what is different about its peers.
+ */
+export const ROUTER_A: ScenarioPeer = {
   ip: '10.0.0.1',
   as: 65001,
   routerId: '1.1.1.1',
   holdTime: 90,
 }
 
-const ROUTER_B: ScenarioPeer = {
+export const ROUTER_B: ScenarioPeer = {
   ip: '10.0.0.2',
   as: 65002,
   routerId: '2.2.2.2',

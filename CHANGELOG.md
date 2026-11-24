@@ -6,6 +6,11 @@ Each version's section here becomes the top of its GitHub Release notes (`.githu
 
 ## [Unreleased]
 
+### Development
+
+- `bun run pcap` builds a capture file from a preset or a capture description (`.ts` / `.json`), writes it to `testlab/out/`, and with `--dump` lists every frame as the app's parsers decode it. `bun run pcap --new <file>` writes a starter description.
+- `src/lib/build` gains `establish()`, `mergeCaptures()`, `keepSide()` and the shared `ROUTER_A` / `ROUTER_B` peers, and each built capture records which peer sent every frame.
+
 ## [0.1.0] - 2026-11-24
 
 The first tagged release. BGPShark is live at <https://shmuto.github.io/bgpshark/>.

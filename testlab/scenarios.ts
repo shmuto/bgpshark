@@ -36,6 +36,9 @@ import { fileURLToPath } from 'node:url'
 import {
   announce,
   buildScenario,
+  establish,
+  keepSide,
+  mergeCaptures,
   presetById,
   withdraw,
   END_OF_RIB,
@@ -44,24 +47,12 @@ import {
   type Scenario,
 } from '../src/lib/build'
 import { Afi, Safi } from '../src/lib/bgp/constants'
-import { writePcap, type ExportableFrame } from '../src/lib/pcap/writer'
 
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), 'scenarios')
 
 /** The two ends of most of these, so a scenario only states its own quirk. */
 const A = { ip: '10.0.0.1', as: 65001, routerId: '1.1.1.1', holdTime: 90 }
 const B = { ip: '10.0.0.2', as: 65002, routerId: '2.2.2.2', holdTime: 90 }
-
-/** The steps every healthy session starts with. */
-function establish(): Scenario['steps'] {
-  return [
-    { kind: 'handshake' },
-    { kind: 'open', from: 'a' },
-    { kind: 'open', from: 'b' },
-    { kind: 'keepalive', from: 'a' },
-    { kind: 'keepalive', from: 'b' },
-  ]
-}
 
 interface BuiltCase {
   bytes: Uint8Array
@@ -296,10 +287,8 @@ const s4: ScenarioCase = {
       ],
     })
 
-    const merged = [...viaShortPath.frames, ...viaLongPath.frames].sort(
-      (x, y) => x.timestamp.getTime() - y.timestamp.getTime()
-    )
-    return { bytes: writePcap(merged, viaShortPath.linkType), frameCount: merged.length }
+    const merged = mergeCaptures([viaShortPath, viaLongPath])
+    return { bytes: merged.bytes, frameCount: merged.frames.length }
   },
 }
 
@@ -653,22 +642,9 @@ const s12: ScenarioCase = {
       ],
     })
 
-    const fromA = full.frames.filter((frame) => sourcedBy(frame, A.ip))
-    return { bytes: writePcap(fromA, full.linkType), frameCount: fromA.length }
+    const fromA = keepSide(full, 'a')
+    return { bytes: fromA.bytes, frameCount: fromA.frames.length }
   },
-}
-
-/**
- * Whether an untagged Ethernet/IPv4 frame came from `ip`.
- *
- * The source address sits at offset 26: 14 bytes of Ethernet header, then 12
- * into the IPv4 header. Good enough for frames this file built itself, and
- * deliberately not a parser — `lib/pcap` is the parser.
- */
-function sourcedBy(frame: ExportableFrame, ip: string): boolean {
-  const octets = ip.split('.').map(Number)
-  if (octets.length !== 4) throw new Error(`sourcedBy expects an IPv4 address, got "${ip}"`)
-  return octets.every((octet, i) => frame.frameBytes[26 + i] === octet)
 }
 
 // ---------------------------------------------------------------------------

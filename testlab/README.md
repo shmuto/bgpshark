@@ -11,6 +11,51 @@ bun run testlab/scenarios.ts          # generate all 14 captures into testlab/sc
 bun run testlab/scenarios.ts s3 s11   # generate specific scenarios only
 ```
 
+## One-off captures
+
+When you need a capture for a single check — confirming a fix by hand, reproducing a report — describe it in a file and let `testlab/pcap.ts` do the rest, rather than writing a script that imports the builder and writes bytes itself:
+
+```bash
+bun run pcap --new /tmp/case.ts       # write a starter capture file
+bun run pcap /tmp/case.ts --dump      # build it into testlab/out/case.pcap and list each frame
+bun run pcap flap -o /tmp/flap.pcap   # a preset, written wherever you like
+bun run pcap --list                   # the preset ids
+```
+
+`--dump` reads the written file back through the app's own pcap and BGP parsers, so what it lists is what BGPShark will show — a capture that does not decode as intended shows up here, before you open it in the browser. Parser warnings are printed too; they do not fail the command, because a deliberately malformed capture is a legitimate thing to build.
+
+A capture file's default export may be any of:
+
+| Export | Result |
+|--------|--------|
+| a `Scenario` | that session |
+| an array of `Scenario`s or built captures | all of them merged in time order |
+| a `BuiltCapture` (e.g. from `mergeCaptures` or `keepSide`) | that capture |
+| a `Uint8Array` | written as is, for captures the builder cannot express |
+| a function, optionally async | whatever it returns; it is passed the builder module plus `Afi` and `Safi`, so a file outside the repository needs no imports |
+
+A `.json` file holding a `Scenario` (or an array of them) also works. Several sources on one command line are merged into one file; the command warns when two of them reuse the same TCP connection, since every preset uses the same two routers.
+
+The pieces most captures share are in `src/lib/build`: `ROUTER_A` / `ROUTER_B`, `establish()` for the handshake-OPEN-KEEPALIVE opening, `announce()` / `withdraw()` / `END_OF_RIB`, `mergeCaptures()` for several sessions in one file, and `keepSide()` for a capture with one direction missing.
+
+```ts
+// Two upstreams, the second seen only in one direction.
+export default ({ ROUTER_A, ROUTER_B, buildScenario, establish, keepSide }) => [
+  { a: ROUTER_A, b: ROUTER_B, steps: establish() },
+  keepSide(
+    buildScenario({
+      a: { ...ROUTER_A, ip: '10.0.1.1' },
+      b: { ...ROUTER_B, ip: '10.0.1.2' },
+      startTime: new Date('2026-01-01T00:00:05Z'),
+      steps: establish(),
+    }),
+    'a'
+  ),
+]
+```
+
+Output in `testlab/out/` is gitignored. If a capture turns out to be worth keeping, move its description into `testlab/scenarios.ts` or a test helper rather than committing the pcap.
+
 ## Manual screenshots
 
 The screenshots embedded in the in-app user manual (`public/manual/*.png`) are generated from the scenarios above by driving the live app in Chromium:
