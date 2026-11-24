@@ -21,7 +21,8 @@ import type {
 import { endOfRibMarker } from '../../lib/bgp/update'
 import { peeringKey } from '../../lib/bgp/peering'
 import type { GenericPacket } from '../../lib/pcap'
-import { prefixStatsFor, type PrefixStats } from '../../lib/bgp/prefix-stats'
+import { prefixStatsFor, prefixStatsForAsync, type PrefixEvent, type PrefixStats } from '../../lib/bgp/prefix-stats'
+import { pauseAt, runInSlices, runToEnd, type Sliced } from '../../lib/sliced'
 import type { DashboardAlert } from './types'
 import { formatAsPath } from '../../lib/bgp/as-path-display'
 import { getMessages, type Locale } from '../../i18n/locale'
@@ -88,11 +89,13 @@ interface NotificationGroup {
  * its AS is wrong is a different fault from B telling A the same thing, and the
  * row names a direction.
  */
-function groupNotifications(packets: BgpPacket[], locale: Locale): DashboardAlert[] {
+function* groupNotifications(packets: BgpPacket[], locale: Locale): Sliced<DashboardAlert[]> {
   const t = getMessages(locale).alerts
   const groups = new Map<string, NotificationGroup>()
 
-  packets.forEach((packet, packetIndex) => {
+  for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+    if (pauseAt(packetIndex)) yield
+    const packet = packets[packetIndex]
     for (const msg of packet.messages) {
       if (msg.type !== 'NOTIFICATION') continue
       const notif = msg as BgpNotificationMessage
@@ -122,7 +125,7 @@ function groupNotifications(packets: BgpPacket[], locale: Locale): DashboardAler
       }
       if (packet.timestamp > group.last) group.last = packet.timestamp
     }
-  })
+  }
 
   return Array.from(groups.values()).map((group) => ({
     id: `notif-${group.firstPacketIndex}`,
@@ -160,9 +163,12 @@ interface PathChange {
  * of session. ADD-PATH Path Identifiers are kept apart for the same reason:
  * several paths from one peer is what ADD-PATH is for.
  */
-function asPathChange(stat: PrefixStats): PathChange | null {
+function* asPathChange(stat: PrefixStats): Sliced<PathChange | null> {
   const bySource = new Map<string, PathChange>()
-  for (const event of stat.history) {
+  const history = stat.history
+  for (let index = 0; index < history.length; index++) {
+    if (pauseAt(index)) yield
+    const event = history[index]
     if (event.action !== 'announce' || event.asPath === undefined) continue
     const key = `${event.source}|${event.pathId ?? ''}`
     let entry = bySource.get(key)
@@ -192,7 +198,7 @@ function describeAsPath(path: string, locale: Locale): string {
  *
  * Warnings, not criticals: nothing here means a session is broken.
  */
-function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAlert[] {
+function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<DashboardAlert[]> {
   const t = getMessages(locale).alerts
   const alerts: DashboardAlert[] = []
 
@@ -242,10 +248,14 @@ function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAler
   // More than one AS_PATH for the same route: a reroute, a prepend change, or
   // a leak. Which of those it is only the AS numbers can say, so the row shows
   // the first path and the latest one.
-  const repathed = stats
-    .map((stat) => ({ stat, change: asPathChange(stat) }))
-    .filter((entry): entry is { stat: PrefixStats; change: PathChange } => entry.change !== null)
-    .sort(
+  const repathed: { stat: PrefixStats; change: PathChange }[] = []
+  for (let index = 0; index < stats.length; index++) {
+    if (pauseAt(index)) yield
+    const stat = stats[index]
+    const change = yield* asPathChange(stat)
+    if (change !== null) repathed.push({ stat, change })
+  }
+  repathed.sort(
       (a, b) =>
         b.change.paths.length - a.change.paths.length || b.stat.lastSeenMs - a.stat.lastSeenMs
     )
@@ -284,15 +294,16 @@ function computeRouteAlerts(stats: PrefixStats[], locale: Locale): DashboardAler
   // moving. Comparing AS_PATHs only within a peer (above) no longer sees that,
   // and "AS_PATH changed" was never the right name for it anyway: the fact
   // worth a row is which leaf the MAC was behind, and which it is behind now.
-  const moved = stats
-    .filter((stat) => stat.key.startsWith('[2] '))
-    .map((stat) => {
-      const announcements = stat.history.filter((event) => event.action === 'announce')
-      const moves = announcements.filter((event, i) => i > 0 && event.source !== announcements[i - 1].source)
-      return { stat, announcements, moves }
-    })
-    .filter((entry) => entry.moves.length > 0)
-    .sort((a, b) => b.moves.length - a.moves.length || b.stat.lastSeenMs - a.stat.lastSeenMs)
+  const moved: { stat: PrefixStats; announcements: PrefixEvent[]; moves: PrefixEvent[] }[] = []
+  for (let index = 0; index < stats.length; index++) {
+    if (pauseAt(index)) yield
+    const stat = stats[index]
+    if (!stat.key.startsWith('[2] ')) continue
+    const announcements = stat.history.filter((event) => event.action === 'announce')
+    const moves = announcements.filter((event, i) => i > 0 && event.source !== announcements[i - 1].source)
+    if (moves.length > 0) moved.push({ stat, announcements, moves })
+  }
+  moved.sort((a, b) => b.moves.length - a.moves.length || b.stat.lastSeenMs - a.stat.lastSeenMs)
 
   for (const { stat, announcements, moves } of moved.slice(0, ROUTE_ALERT_LIMIT)) {
     const last = moves[moves.length - 1]
@@ -347,10 +358,10 @@ interface PairFacts {
   firstSeen: Date | null
 }
 
-function collectPairFacts(
+function* collectPairFacts(
   packets: BgpPacket[],
   allPackets: GenericPacket[]
-): Map<string, PairFacts> {
+): Sliced<Map<string, PairFacts>> {
   const pairs = new Map<string, PairFacts>()
 
   const factsFor = (src: string, dst: string): PairFacts => {
@@ -371,7 +382,9 @@ function collectPairFacts(
     return facts
   }
 
-  for (const packet of allPackets) {
+  for (let frameIndex = 0; frameIndex < allPackets.length; frameIndex++) {
+    if (pauseAt(frameIndex)) yield
+    const packet = allPackets[frameIndex]
     if (packet.protocol !== 'TCP') continue
     if (packet.srcPort !== 179 && packet.dstPort !== 179) continue
 
@@ -383,12 +396,14 @@ function collectPairFacts(
     if (!facts.firstSeen || packet.timestamp < facts.firstSeen) facts.firstSeen = packet.timestamp
   }
 
-  packets.forEach((packet, packetIndex) => {
-    if (packet.messages.length === 0) return
+  for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+    if (pauseAt(packetIndex)) yield
+    const packet = packets[packetIndex]
+    if (packet.messages.length === 0) continue
     const facts = factsFor(packet.srcIp, packet.dstIp)
     facts.bgpSenders.add(packet.srcIp)
     if (facts.firstBgpIndex === undefined) facts.firstBgpIndex = packetIndex
-  })
+  }
 
   return pairs
 }
@@ -402,15 +417,15 @@ function collectPairFacts(
  * capture was taken on one router, and is why a capture of a session that
  * never came up used to be summarised as "every session looks healthy".
  */
-function computeSessionSetupAlerts(
+function* computeSessionSetupAlerts(
   packets: BgpPacket[],
   allPackets: GenericPacket[],
   locale: Locale
-): DashboardAlert[] {
+): Sliced<DashboardAlert[]> {
   const t = getMessages(locale).alerts
   const alerts: DashboardAlert[] = []
 
-  for (const facts of collectPairFacts(packets, allPackets).values()) {
+  for (const facts of (yield* collectPairFacts(packets, allPackets)).values()) {
     const { ipA, ipB } = facts
 
     // Only one direction. Either the capture caught one leg, or the peer's
@@ -504,15 +519,17 @@ function newConnection(): Connection {
   return { bgpSenders: new Set(), sawNotification: false, opens: [], endOfRib: [] }
 }
 
-function splitIntoConnections(
+function* splitIntoConnections(
   frames: GenericPacket[],
   bgpByFrame: Map<number, BgpPacket>,
   indexByFrame: Map<number, number>
-): Connection[] {
+): Sliced<Connection[]> {
   const connections: Connection[] = []
   let current: Connection | null = null
 
-  for (const frame of frames) {
+  for (let index = 0; index < frames.length; index++) {
+    if (pauseAt(index)) yield
+    const frame = frames[index]
     // A bare SYN opens a connection; a SYN-ACK is the answer to one and must
     // not start a second, or every handshake would be split down the middle.
     if (frame.tcpFlags?.syn && !frame.tcpFlags.ack) {
@@ -592,19 +609,23 @@ function splitIntoConnections(
  * ideas of where one connection ends and the next begins would leave rows
  * contradicting each other on the same capture.
  */
-function connectionsByPeering(
+function* connectionsByPeering(
   packets: BgpPacket[],
   allPackets: GenericPacket[]
-): Map<string, Connection[]> {
+): Sliced<Map<string, Connection[]>> {
   const bgpByFrame = new Map<number, BgpPacket>()
   const indexByFrame = new Map<number, number>()
-  packets.forEach((packet, packetIndex) => {
+  for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+    if (pauseAt(packetIndex)) yield
+    const packet = packets[packetIndex]
     bgpByFrame.set(packet.frameIndex, packet)
     indexByFrame.set(packet.frameIndex, packetIndex)
-  })
+  }
 
   const framesByPair = new Map<string, GenericPacket[]>()
-  for (const frame of allPackets) {
+  for (let index = 0; index < allPackets.length; index++) {
+    if (pauseAt(index)) yield
+    const frame = allPackets[index]
     if (frame.protocol !== 'TCP') continue
     if (frame.srcPort !== 179 && frame.dstPort !== 179) continue
     const key = sortedPairKey(frame.srcIp, frame.dstIp)
@@ -615,7 +636,7 @@ function connectionsByPeering(
 
   const byPeering = new Map<string, Connection[]>()
   for (const [key, frames] of framesByPair) {
-    byPeering.set(key, splitIntoConnections(frames, bgpByFrame, indexByFrame))
+    byPeering.set(key, yield* splitIntoConnections(frames, bgpByFrame, indexByFrame))
   }
   return byPeering
 }
@@ -870,27 +891,38 @@ export function computeAlerts(
   allPackets: GenericPacket[] = [],
   locale: Locale = 'en'
 ): DashboardAlert[] {
+  return runToEnd(alertsWork(packets, allPackets, locale))
+}
+
+/** `computeAlerts`, as work that pauses; see `src/lib/sliced.ts`. */
+function* alertsWork(
+  packets: BgpPacket[],
+  allPackets: GenericPacket[],
+  locale: Locale
+): Sliced<DashboardAlert[]> {
   const t = getMessages(locale).alerts
   const alerts: DashboardAlert[] = []
-  const byPeering = connectionsByPeering(packets, allPackets)
+  const byPeering = yield* connectionsByPeering(packets, allPackets)
 
-  alerts.push(...computeSessionSetupAlerts(packets, allPackets, locale))
+  alerts.push(...(yield* computeSessionSetupAlerts(packets, allPackets, locale)))
   alerts.push(...computeSilentTeardownAlerts(byPeering, locale))
   alerts.push(...computeGracefulRestartAlerts(byPeering, locale))
 
   // 1. NOTIFICATIONs, one row per repeated fault rather than per packet.
-  alerts.push(...groupNotifications(packets, locale))
+  alerts.push(...(yield* groupNotifications(packets, locale)))
 
   // 2. Flapping sessions: repeated OPEN exchanges between the same peer pair.
   const opensByPair = new Map<string, { timestamp: Date; packetIndex: number }[]>()
-  packets.forEach((packet, packetIndex) => {
+  for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+    if (pauseAt(packetIndex)) yield
+    const packet = packets[packetIndex]
     for (const msg of packet.messages) {
       if (msg.type !== 'OPEN') continue
       const key = sortedPairKey(packet.srcIp, packet.dstIp)
       if (!opensByPair.has(key)) opensByPair.set(key, [])
       opensByPair.get(key)!.push({ timestamp: packet.timestamp, packetIndex })
     }
-  })
+  }
   for (const [key, opens] of opensByPair) {
     if (opens.length < FLAP_OPEN_THRESHOLD) continue
 
@@ -919,7 +951,7 @@ export function computeAlerts(
   }
 
   // 3–4. Withdrawal bursts and route-level findings, which no one session owns.
-  alerts.push(...computeCaptureWideAlerts(packets, locale))
+  alerts.push(...(yield* computeCaptureWideAlerts(packets, locale)))
 
   return sortAlerts(alerts)
 }
@@ -958,23 +990,27 @@ const CAPTURE_WIDE_RULES = new Set<DashboardAlert['rule']>([
  * scope cannot filter them; `scopeAlerts` reruns this over the session's own
  * packets instead.
  */
-function computeCaptureWideAlerts(packets: BgpPacket[], locale: Locale): DashboardAlert[] {
+function* computeCaptureWideAlerts(packets: BgpPacket[], locale: Locale): Sliced<DashboardAlert[]> {
   const t = getMessages(locale).alerts
   const alerts: DashboardAlert[] = []
 
   // Bursts of withdrawn prefixes within a short time window.
   const withdrawEvents: { timestamp: Date; count: number; packetIndex: number }[] = []
-  packets.forEach((packet, packetIndex) => {
+  for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
+    if (pauseAt(packetIndex)) yield
+    const packet = packets[packetIndex]
     for (const msg of packet.messages) {
       if (msg.type !== 'UPDATE') continue
       const count = getWithdrawnCount(msg as BgpUpdateMessage)
       if (count > 0) withdrawEvents.push({ timestamp: packet.timestamp, count, packetIndex })
     }
-  })
+  }
   withdrawEvents.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
 
   let cursor = 0
+  let windows = 0
   while (cursor < withdrawEvents.length) {
+    if (pauseAt(windows++)) yield
     const windowStartTime = withdrawEvents[cursor].timestamp.getTime()
     let windowEnd = cursor
     let windowTotal = 0
@@ -1005,7 +1041,7 @@ function computeCaptureWideAlerts(packets: BgpPacket[], locale: Locale): Dashboa
   // Route-level findings. aggregatePrefixStats walks every packet, so it is
   // called once here and both route rules read the same result — as does the
   // Routes screen, through the same cache.
-  alerts.push(...computeRouteAlerts(prefixStatsFor(packets), locale))
+  alerts.push(...(yield* computeRouteAlerts(prefixStatsFor(packets), locale)))
 
   return alerts
 }
@@ -1035,24 +1071,187 @@ export function scopeAlerts(
    */
   scopePackets?: BgpPacket[]
 ): DashboardAlert[] {
+  return runToEnd(scopeAlertsWork(alerts, packets, scope, locale, scopePackets))
+}
+
+/** `scopeAlerts`, as work that pauses; see `src/lib/sliced.ts`. */
+function* scopeAlertsWork(
+  alerts: DashboardAlert[],
+  packets: BgpPacket[],
+  scope: string | null,
+  locale: Locale,
+  scopePackets: BgpPacket[] | undefined
+): Sliced<DashboardAlert[]> {
   if (!scope) return alerts
 
   const indices: number[] = []
   const collected: BgpPacket[] = []
-  packets.forEach((packet, index) => {
-    if (peeringKey(packet.srcIp, packet.dstIp) !== scope) return
+  for (let index = 0; index < packets.length; index++) {
+    if (pauseAt(index)) yield
+    const packet = packets[index]
+    if (peeringKey(packet.srcIp, packet.dstIp) !== scope) continue
     indices.push(index)
     collected.push(packet)
-  })
+  }
   const sessionPackets = scopePackets && scopePackets.length === collected.length ? scopePackets : collected
 
   const own = alerts.filter((alert) =>
     alert.peering ? alert.peering === scope : !CAPTURE_WIDE_RULES.has(alert.rule)
   )
-  const routes = computeCaptureWideAlerts(sessionPackets, locale).map((alert) =>
+  const routes = (yield* computeCaptureWideAlerts(sessionPackets, locale)).map((alert) =>
     alert.packetIndex === undefined ? alert : { ...alert, packetIndex: indices[alert.packetIndex] }
   )
   return sortAlerts([...own, ...routes])
+}
+
+/**
+ * The findings for a capture, worked out once per capture and language.
+ *
+ * Cached like the route statistics they read, and for the same reason: on a
+ * large capture they take seconds, so they are worked out in the background
+ * (`alertsForAsync`) and the workspace then reads them from here at once. The
+ * returned array is shared; callers must not change it.
+ */
+const alertsByPackets = new WeakMap<
+  BgpPacket[],
+  { allPackets: GenericPacket[]; byLocale: Map<Locale, DashboardAlert[]> }
+>()
+
+function cachedAlerts(packets: BgpPacket[], allPackets: GenericPacket[], locale: Locale) {
+  const entry = alertsByPackets.get(packets)
+  return entry?.allPackets === allPackets ? entry.byLocale.get(locale) : undefined
+}
+
+function cacheAlerts(
+  packets: BgpPacket[],
+  allPackets: GenericPacket[],
+  locale: Locale,
+  alerts: DashboardAlert[]
+): DashboardAlert[] {
+  let entry = alertsByPackets.get(packets)
+  if (entry?.allPackets !== allPackets) {
+    entry = { allPackets, byLocale: new Map() }
+    alertsByPackets.set(packets, entry)
+  }
+  entry.byLocale.set(locale, alerts)
+  return alerts
+}
+
+/** `computeAlerts`, cached; see `alertsByPackets`. */
+export function alertsFor(packets: BgpPacket[], allPackets: GenericPacket[], locale: Locale): DashboardAlert[] {
+  return (
+    cachedAlerts(packets, allPackets, locale) ??
+    cacheAlerts(packets, allPackets, locale, computeAlerts(packets, allPackets, locale))
+  )
+}
+
+/** Whether `alertsFor` already has these findings. */
+export function hasAlerts(packets: BgpPacket[], allPackets: GenericPacket[], locale: Locale): boolean {
+  return cachedAlerts(packets, allPackets, locale) !== undefined
+}
+
+/**
+ * `alertsFor`, worked out in slices that hand the page back between them —
+ * the route statistics first, then the rules. Same findings, same cache.
+ * Resolves to null if `signal` aborts first.
+ */
+export async function alertsForAsync(
+  packets: BgpPacket[],
+  allPackets: GenericPacket[],
+  locale: Locale,
+  signal?: AbortSignal
+): Promise<DashboardAlert[] | null> {
+  const cached = cachedAlerts(packets, allPackets, locale)
+  if (cached) return cached
+  // The rules read the statistics through `prefixStatsFor`, which answers at
+  // once after this; without it, that one call would be the freeze again.
+  if (!(await prefixStatsForAsync(packets, signal))) return null
+  const alerts = await runInSlices(alertsWork(packets, allPackets, locale), signal)
+  if (!alerts) return null
+  // Worked out synchronously in the meantime, by a screen that could not
+  // wait: keep that copy, so everyone holds the same array.
+  return cachedAlerts(packets, allPackets, locale) ?? cacheAlerts(packets, allPackets, locale, alerts)
+}
+
+/**
+ * One session's findings, cached on the session's packet array — which the
+ * workspace keeps for as long as the scope is chosen — together with what
+ * they were worked out from.
+ */
+const scopedBySessionPackets = new WeakMap<
+  BgpPacket[],
+  {
+    alerts: DashboardAlert[]
+    packets: BgpPacket[]
+    scope: string
+    locale: Locale
+    scoped: DashboardAlert[]
+  }
+>()
+
+function cachedScopedAlerts(
+  alerts: DashboardAlert[],
+  packets: BgpPacket[],
+  scope: string,
+  locale: Locale,
+  sessionPackets: BgpPacket[]
+): DashboardAlert[] | undefined {
+  const entry = scopedBySessionPackets.get(sessionPackets)
+  return entry &&
+    entry.alerts === alerts &&
+    entry.packets === packets &&
+    entry.scope === scope &&
+    entry.locale === locale
+    ? entry.scoped
+    : undefined
+}
+
+/** `scopeAlerts` over the workspace's session packets, cached; see `scopedBySessionPackets`. */
+export function scopedAlertsFor(
+  alerts: DashboardAlert[],
+  packets: BgpPacket[],
+  scope: string | null,
+  locale: Locale,
+  sessionPackets: BgpPacket[]
+): DashboardAlert[] {
+  if (!scope) return alerts
+  const cached = cachedScopedAlerts(alerts, packets, scope, locale, sessionPackets)
+  if (cached) return cached
+  const scoped = scopeAlerts(alerts, packets, scope, locale, sessionPackets)
+  scopedBySessionPackets.set(sessionPackets, { alerts, packets, scope, locale, scoped })
+  return scoped
+}
+
+/** Whether `scopedAlertsFor` already has this session's findings. */
+export function hasScopedAlerts(
+  alerts: DashboardAlert[],
+  packets: BgpPacket[],
+  scope: string | null,
+  locale: Locale,
+  sessionPackets: BgpPacket[]
+): boolean {
+  return !scope || cachedScopedAlerts(alerts, packets, scope, locale, sessionPackets) !== undefined
+}
+
+/** `scopedAlertsFor`, in slices; see `alertsForAsync`. */
+export async function scopedAlertsForAsync(
+  alerts: DashboardAlert[],
+  packets: BgpPacket[],
+  scope: string | null,
+  locale: Locale,
+  sessionPackets: BgpPacket[],
+  signal?: AbortSignal
+): Promise<DashboardAlert[] | null> {
+  if (!scope) return alerts
+  const cached = cachedScopedAlerts(alerts, packets, scope, locale, sessionPackets)
+  if (cached) return cached
+  if (!(await prefixStatsForAsync(sessionPackets, signal))) return null
+  const scoped = await runInSlices(scopeAlertsWork(alerts, packets, scope, locale, sessionPackets), signal)
+  if (!scoped) return null
+  const meantime = cachedScopedAlerts(alerts, packets, scope, locale, sessionPackets)
+  if (meantime) return meantime
+  scopedBySessionPackets.set(sessionPackets, { alerts, packets, scope, locale, scoped })
+  return scoped
 }
 
 /**
