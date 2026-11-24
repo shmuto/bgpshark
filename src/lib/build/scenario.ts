@@ -81,12 +81,14 @@ export interface BuiltCapture {
   frames: ExportableFrame[]
   /**
    * Which peer put each frame on the wire, index for index with `frames`.
+   * Undefined for a frame that belongs to no session: one read from an
+   * existing file, or built by `buildPackets` without a `from`.
    *
    * Kept beside the frames rather than read back out of their headers so that
    * deleting one direction does not depend on where the source address sits —
    * which moves with the link type, VLAN tags and IP version.
    */
-  senders: Side[]
+  senders: Array<Side | undefined>
   linkType: number
   /** Anything the scenario asked for that could not be honoured exactly. */
   warnings: string[]

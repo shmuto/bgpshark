@@ -24,10 +24,17 @@ function run(...args: string[]) {
   return { code: result.exitCode, stdout: result.stdout.toString(), stderr: result.stderr.toString() }
 }
 
+const frameCount = (resolved: Awaited<ReturnType<typeof resolveExport>>) =>
+  resolved.kind === 'parts' ? resolved.parts.reduce((n, part) => n + part.capture.frames.length, 0) : -1
+
 describe('resolveExport', () => {
   test('builds a Scenario', async () => {
-    const resolved = await resolveExport(scenario, 'x')
-    expect(resolved.kind).toBe('capture')
+    expect(frameCount(await resolveExport(scenario, 'x'))).toBe(7)
+  })
+
+  test('builds a PacketList', async () => {
+    const list = { packets: [{ protocol: 'icmp', src: '10.0.0.1', dst: '10.0.0.2' }] }
+    expect(frameCount(await resolveExport(list, 'x'))).toBe(1)
   })
 
   test('passes the builder to a function export', async () => {
@@ -35,12 +42,12 @@ describe('resolveExport', () => {
       async (kit: { establish: typeof establish }) => ({ ...scenario, steps: kit.establish() }),
       'x'
     )
-    expect(resolved.kind === 'capture' && resolved.capture.frames.length).toBe(7)
+    expect(frameCount(resolved)).toBe(7)
   })
 
-  test('merges an array, and keeps raw bytes as they are', async () => {
-    const merged = await resolveExport([scenario, buildScenario(scenario)], 'x')
-    expect(merged.kind === 'capture' && merged.capture.frames.length).toBe(14)
+  test('keeps an array as named parts, and raw bytes as they are', async () => {
+    const resolved = await resolveExport([scenario, buildScenario(scenario)], 'x')
+    expect(resolved.kind === 'parts' && resolved.parts.map((part) => part.name)).toEqual(['x[0]', 'x[1]'])
 
     const bytes = new Uint8Array([1, 2, 3])
     expect(await resolveExport(bytes, 'x')).toEqual({ kind: 'bytes', bytes })
@@ -49,17 +56,18 @@ describe('resolveExport', () => {
   test('names the source when the export is wrong', async () => {
     await expect(resolveExport({ nope: true }, 'case.ts')).rejects.toThrow(/^case\.ts:/)
     await expect(resolveExport([scenario, new Uint8Array(3)], 'case.ts')).rejects.toThrow(
-      /case\.ts: raw pcap bytes cannot be merged/
+      /case\.ts\[1\]: raw pcap bytes cannot be merged/
     )
   })
 })
 
 describe('sharedConnections', () => {
-  test('flags sources that would collapse into one TCP connection', () => {
-    const one = buildScenario(scenario)
-    const other = buildScenario({ ...scenario, a: { ...ROUTER_A, port: 52000 } })
-    expect(sharedConnections([one, buildScenario(scenario)], ['p', 'q'])).toHaveLength(1)
-    expect(sharedConnections([one, other], ['p', 'q'])).toEqual([])
+  test('flags parts that would collapse into one TCP connection', () => {
+    const one = { name: 'p', capture: buildScenario(scenario) }
+    const same = { name: 'q', capture: buildScenario(scenario) }
+    const other = { name: 'r', capture: buildScenario({ ...scenario, a: { ...ROUTER_A, port: 52000 } }) }
+    expect(sharedConnections([one, same])).toHaveLength(1)
+    expect(sharedConnections([one, other])).toEqual([])
   })
 })
 
@@ -91,6 +99,41 @@ describe('bun run pcap', () => {
     const result = run(file, '-o', join(work, 'json.pcap'))
     expect(result.code).toBe(0)
     expect(result.stdout).toMatch(/7 frames/)
+  })
+
+  test('reads an existing capture as a source', () => {
+    const result = run(join(REPO, 'public', 'sample.pcapng'), '-o', join(work, 'sample.pcap'))
+    expect(result.code).toBe(0)
+    expect(result.stdout).toMatch(/119 frames/)
+  })
+
+  test('load() reads a capture beside the capture file, wherever it is run from', () => {
+    writeFileSync(join(work, 'beside.pcap'), buildScenario(scenario).bytes)
+    const file = join(work, 'edit.ts')
+    writeFileSync(
+      file,
+      `export default ({ load, dropFrames, buildPackets, mergeCaptures }) => [
+        dropFrames(load('beside.pcap'), [1]),
+        buildPackets({ packets: [{ protocol: 'udp', src: '10.9.9.9', dst: '10.9.9.8', srcPort: 1, dstPort: 2 }] }),
+      ]\n`
+    )
+    const result = Bun.spawnSync(['bun', SCRIPT, file, '-o', join(work, 'edit.pcap'), '--dump'], { cwd: REPO })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.toString()).toMatch(/7 frames/)
+    expect(result.stdout.toString()).toMatch(/10\.9\.9\.9:1 → 10\.9\.9\.8:2\s+UDP/)
+  })
+
+  test('writes raw bytes as they are, damage and all', () => {
+    const file = join(work, 'damaged.ts')
+    writeFileSync(
+      file,
+      `export default ({ buildScenario, establish, patchRecord, ROUTER_A, ROUTER_B }) =>
+        patchRecord(buildScenario({ a: ROUTER_A, b: ROUTER_B, steps: establish() }).bytes, 3, { capturedLength: 9999 })\n`
+    )
+    const result = run(file, '-o', join(work, 'damaged.pcap'))
+    expect(result.code).toBe(0)
+    expect(result.stdout).toMatch(/2 frames/)
+    expect(result.stderr).toMatch(/file appears truncated/)
   })
 
   test('imports the builder relatively from inside the repository', () => {

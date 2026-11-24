@@ -19,6 +19,7 @@ When you need a capture for a single check — confirming a fix by hand, reprodu
 bun run pcap --new /tmp/case.ts       # write a starter capture file
 bun run pcap /tmp/case.ts --dump      # build it into testlab/out/case.pcap and list each frame
 bun run pcap flap -o /tmp/flap.pcap   # a preset, written wherever you like
+bun run pcap real.pcapng --dump       # an existing capture, listed as the app reads it
 bun run pcap --list                   # the preset ids
 ```
 
@@ -29,14 +30,39 @@ A capture file's default export may be any of:
 | Export | Result |
 |--------|--------|
 | a `Scenario` | that session |
-| an array of `Scenario`s or built captures | all of them merged in time order |
-| a `BuiltCapture` (e.g. from `mergeCaptures` or `keepSide`) | that capture |
-| a `Uint8Array` | written as is, for captures the builder cannot express |
-| a function, optionally async | whatever it returns; it is passed the builder module plus `Afi` and `Safi`, so a file outside the repository needs no imports |
+| a `PacketList` (`{ packets: [...] }`) | exactly those packets — see below |
+| a `BuiltCapture` (from any builder, `readCapture`, or an edit) | that capture |
+| an array of any of the above | all of them merged in time order |
+| a `Uint8Array` | written as is — for a file damaged with `patchRecord` |
+| a function, optionally async | whatever it returns; it is passed the builder module plus `Afi`, `Safi` and `load(path)`, so a file outside the repository needs no imports |
 
-A `.json` file holding a `Scenario` (or an array of them) also works. Several sources on one command line are merged into one file; the command warns when two of them reuse the same TCP connection, since every preset uses the same two routers.
+A `.json` file holding a `Scenario` (or an array of them) also works, and a `.pcap` / `.pcapng` / `.cap` on the command line is read in as it is. Several sources on one command line are merged into one file; the command warns when two of them reuse the same TCP connection, since every preset uses the same two routers.
 
 The pieces most captures share are in `src/lib/build`: `ROUTER_A` / `ROUTER_B`, `establish()` for the handshake-OPEN-KEEPALIVE opening, `announce()` / `withdraw()` / `END_OF_RIB`, `mergeCaptures()` for several sessions in one file, and `keepSide()` for a capture with one direction missing.
+
+### Beyond a clean BGP session
+
+Three things the session builder cannot say on its own:
+
+- **Bytes the encoder has no spec for.** A message `{ type: 'RAW', bytes }` goes on the TCP stream verbatim, with no header added and no checks: EVPN or any other NLRI the encoder does not know, an unknown message type, a bad marker or length, half a message, or data that is not BGP at all. `bgpMessage(type, body)` adds the 19-byte header for you, and `hex('ff ff 00 13')` turns text into bytes.
+- **Traffic that is not a session.** `buildPackets({ packets })` builds exactly the packets listed — `protocol: 'tcp' | 'udp' | 'icmp'` or any IP protocol number — with real checksums and no connection state, so a TCP packet carries just the flags and sequence number it is given. Use it for the ICMP, BFD or stray RST around a session, or a connection on another port.
+- **Damage and existing captures.** `readCapture(bytes)` (or `load(path)` in a function export) reads any pcap or pcapng, keeping non-IP frames the app skips. Then, each returning a new capture: `dropFrames`, `filterFrames`, `shiftTime` (all frames, or from one on), `startAt`, `overwriteBytes`, `editFrame`, `snapFrames` (what `tcpdump -s` does). Frames are numbered from 1, as in the app. `patchRecord` makes a record header lie about its length or time; it works on the finished file's bytes, so it comes last.
+
+```ts
+// A real capture with a frame lost, a minute's silence, and a ping alongside.
+export default ({ load, dropFrames, shiftTime, buildPackets }) => [
+  shiftTime(dropFrames(load('real.pcapng'), [12]), 60_000, { from: 20 }),
+  buildPackets({
+    startTime: new Date('2026-01-01T00:00:00Z'),
+    packets: [
+      { protocol: 'icmp', src: '10.0.0.1', dst: '10.0.0.2' },
+      { protocol: 'icmp', type: 0, src: '10.0.0.2', dst: '10.0.0.1' },
+    ],
+  }),
+]
+```
+
+Timestamps are kept to the millisecond, because built frames hold a `Date`: a capture read in and written back keeps its frame order but loses any sub-millisecond part.
 
 ```ts
 // Two upstreams, the second seen only in one direction.

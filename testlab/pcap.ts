@@ -11,6 +11,7 @@
  *   bun run pcap --new /tmp/x.ts         # start a capture file
  *   bun run pcap /tmp/x.ts --dump        # build it and list what was decoded
  *   bun run pcap established flap        # presets, merged into one file
+ *   bun run pcap real.pcapng --dump      # an existing capture, listed (and copied)
  *   bun run pcap --list                  # preset ids
  *
  * The listing is read back through the app's own parsers, not the builder's
@@ -19,19 +20,32 @@
  *
  * A capture file's default export may be any of:
  *
- * - a `Scenario`, or an array of them (built and merged in time order)
- * - a `BuiltCapture`, e.g. from `mergeCaptures` or `keepSide`
- * - raw pcap bytes, for captures the builder cannot express
+ * - a `Scenario`, a `PacketList` (traffic that is not a session), or a
+ *   `BuiltCapture` — from the builders, `readCapture`, or any of the edits in
+ *   `src/lib/build/edit.ts`
+ * - an array of those, merged in time order
+ * - raw pcap bytes, written as they are — for a file damaged with `patchRecord`
  * - a function, optionally async, returning any of the above. It is passed the
- *   builder module, so a file outside the repository needs no import paths.
+ *   builder module plus `load(path)`, which reads an existing capture relative
+ *   to the capture file, so a file outside the repository needs no imports.
  *
- * A `.json` file holding a `Scenario` or an array of them works too.
+ * A `.json` file holding a `Scenario` or an array of them works too, and a
+ * `.pcap` / `.pcapng` / `.cap` source is read in as it is.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as build from '../src/lib/build'
-import { PRESETS, buildScenario, mergeCaptures, presetById, type BuiltCapture } from '../src/lib/build'
+import {
+  PRESETS,
+  buildPackets,
+  buildScenario,
+  mergeCaptures,
+  presetById,
+  readCapture,
+  type BuiltCapture,
+  type PacketList,
+} from '../src/lib/build'
 import { Afi, Safi } from '../src/lib/bgp/constants'
 import { parseBgpFromPackets } from '../src/lib/bgp/parser'
 import type { BgpMessage } from '../src/lib/bgp/types'
@@ -43,16 +57,29 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 /** Gitignored, like `testlab/scenarios/`: the description is what is worth keeping. */
 const DEFAULT_OUT_DIR = join(REPO_ROOT, 'testlab', 'out')
 
-/** What a capture file is handed when its default export is a function. */
-export const BUILD_KIT = { ...build, Afi, Safi }
+const CAPTURE_EXTENSIONS = new Set(['.pcap', '.pcapng', '.cap'])
+
+/**
+ * What a capture file is handed when its default export is a function: the
+ * builder, and `load`, which reads a capture relative to the file asking —
+ * so `load('real.pcap')` means the one beside it, wherever it was run from.
+ */
+export function buildKit(baseDir: string) {
+  return {
+    ...build,
+    Afi,
+    Safi,
+    load: (path: string) => readCapture(readFileSync(resolve(baseDir, path))),
+  }
+}
 
 const USAGE = `Usage:
   bun run pcap <source>... [-o <out.pcap>] [--dump]
   bun run pcap --new <file.ts>
   bun run pcap --list
 
-<source> is a preset id (see --list) or a .ts/.js/.json capture file.
-Several sources are merged into one capture in time order.
+<source> is a preset id (see --list), a .ts/.js/.json capture file, or an
+existing .pcap/.pcapng/.cap. Several sources are merged in time order.
 
   -o, --out <path>  where to write (default: testlab/out/<name>.pcap)
   --dump            list every frame as the app decodes it
@@ -63,71 +90,81 @@ Several sources are merged into one capture in time order.
 // Sources
 // ---------------------------------------------------------------------------
 
-/** A source resolved to something writable: frames we can merge, or opaque bytes. */
-type Resolved = { kind: 'capture'; capture: BuiltCapture } | { kind: 'bytes'; bytes: Uint8Array }
-
-function isScenario(value: unknown): value is build.Scenario {
-  return typeof value === 'object' && value !== null && Array.isArray((value as build.Scenario).steps)
+/** A part of the output, named so that a warning can say where it came from. */
+export interface Part {
+  name: string
+  capture: BuiltCapture
 }
 
-function isBuiltCapture(value: unknown): value is BuiltCapture {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Array.isArray((value as BuiltCapture).frames) &&
-    Array.isArray((value as BuiltCapture).senders)
-  )
+/** A source resolved to something writable: parts to merge, or opaque bytes. */
+type Resolved = { kind: 'parts'; parts: Part[] } | { kind: 'bytes'; bytes: Uint8Array }
+
+function has(value: unknown, key: string): boolean {
+  return typeof value === 'object' && value !== null && key in value
 }
 
 /**
- * Whatever a capture file exported, as one capture.
+ * Whatever a capture file exported, as the parts it is made of.
  *
+ * Kept as parts rather than merged on the spot so that two sessions on one
+ * TCP connection are caught whether they came from two files or one array.
  * `where` names the source in errors, because the usual mistake — exporting
  * the wrong thing, or nothing — is only fixable if you know which file did it.
  */
-export async function resolveExport(value: unknown, where: string): Promise<Resolved> {
-  if (typeof value === 'function') return resolveExport(await value(BUILD_KIT), where)
+export async function resolveExport(
+  value: unknown,
+  where: string,
+  kit: ReturnType<typeof buildKit> = buildKit(process.cwd())
+): Promise<Resolved> {
+  if (typeof value === 'function') return resolveExport(await value(kit), where, kit)
   if (value instanceof Uint8Array) return { kind: 'bytes', bytes: value }
-  if (isBuiltCapture(value)) return { kind: 'capture', capture: value }
-  if (isScenario(value)) return { kind: 'capture', capture: buildScenario(value) }
+
+  const one = (capture: BuiltCapture): Resolved => ({ kind: 'parts', parts: [{ name: where, capture }] })
+  if (has(value, 'frames') && has(value, 'senders')) return one(value as BuiltCapture)
+  if (has(value, 'steps')) return one(buildScenario(value as build.Scenario))
+  if (has(value, 'packets')) return one(buildPackets(value as PacketList))
 
   if (Array.isArray(value)) {
     if (value.length === 0) throw new Error(`${where}: exported an empty array`)
-    const parts = await Promise.all(value.map((item, i) => resolveExport(item, `${where}[${i}]`)))
-    return { kind: 'capture', capture: mergeCaptures(parts.map((part) => captureOf(part, where))) }
+    const resolved = await Promise.all(value.map((item, i) => resolveExport(item, `${where}[${i}]`, kit)))
+    return { kind: 'parts', parts: resolved.flatMap((part, i) => partsOf(part, `${where}[${i}]`)) }
   }
 
   throw new Error(
-    `${where}: the default export must be a Scenario, an array of them, a BuiltCapture, ` +
-      `pcap bytes, or a function returning one of those`
+    `${where}: the default export must be a Scenario, a PacketList, a BuiltCapture, an array ` +
+      `of those, pcap bytes, or a function returning one of those`
   )
 }
 
 /**
  * Raw bytes have no record of who sent which frame and may not even be a
- * classic pcap, so they cannot be merged — only written as they are.
+ * readable pcap, so they cannot be merged — only written as they are.
  */
-function captureOf(resolved: Resolved, where: string): BuiltCapture {
-  if (resolved.kind === 'capture') return resolved.capture
+function partsOf(resolved: Resolved, where: string): Part[] {
+  if (resolved.kind === 'parts') return resolved.parts
   throw new Error(`${where}: raw pcap bytes cannot be merged with other sources; build it on its own`)
 }
 
 async function loadSource(source: string): Promise<Resolved> {
   const preset = presetById(source)
-  if (preset) return { kind: 'capture', capture: buildScenario(preset.build()) }
+  if (preset) return { kind: 'parts', parts: [{ name: source, capture: buildScenario(preset.build()) }] }
 
   const path = resolve(source)
   if (!existsSync(path)) {
     throw new Error(`"${source}" is neither a preset id nor an existing file (bun run pcap --list)`)
   }
 
-  if (extname(path) === '.json') {
+  const extension = extname(path).toLowerCase()
+  if (CAPTURE_EXTENSIONS.has(extension)) {
+    return { kind: 'parts', parts: [{ name: source, capture: readCapture(readFileSync(path)) }] }
+  }
+  if (extension === '.json') {
     return resolveExport(JSON.parse(readFileSync(path, 'utf8')), source)
   }
 
   const module = await import(pathToFileURL(path).href)
   if (!('default' in module)) throw new Error(`${source}: has no default export`)
-  return resolveExport(module.default, source)
+  return resolveExport(module.default, source, buildKit(dirname(path)))
 }
 
 function nameOf(source: string): string {
@@ -208,15 +245,24 @@ function dump(pcap: PcapParseResult, bgp: ReturnType<typeof parseBgpFromPackets>
 
   return pcap.allPackets.map((packet) => {
     const elapsed = ((packet.timestamp.getTime() - start) / 1000).toFixed(3).padStart(9)
-    const from = `${packet.srcIp}:${packet.srcPort ?? ''}`
-    const to = `${packet.dstIp}:${packet.dstPort ?? ''}`
+    const endpoint = (ip: string, port: number | undefined) =>
+      port === undefined ? ip : ip.includes(':') ? `[${ip}]:${port}` : `${ip}:${port}`
+    const from = endpoint(packet.srcIp, packet.srcPort)
+    const to = endpoint(packet.dstIp, packet.dstPort)
+    // TCP shows its flags; anything else says what it is in the same column.
+    const kind =
+      packet.protocol === 'TCP'
+        ? flagText(packet.tcpFlags)
+        : packet.protocol === 'OTHER'
+          ? `IP/${packet.protocolNumber}`
+          : packet.protocol
     const messages = messagesByFrame.get(packet.frameIndex)?.map(describeMessage).join(' | ')
     const what = messages ?? (packet.payloadLength > 0 ? `${packet.payloadLength} bytes` : '')
     return [
       String(packet.frameIndex).padStart(4),
       elapsed,
       `${from} → ${to}`.padEnd(40),
-      flagText(packet.tcpFlags).padEnd(11),
+      kind.padEnd(11),
       what,
     ]
       .join('  ')
@@ -227,9 +273,9 @@ function dump(pcap: PcapParseResult, bgp: ReturnType<typeof parseBgpFromPackets>
 function connections(bytes: Uint8Array): Set<string> {
   const { pcap } = readBack(bytes)
   return new Set(
-    pcap.allPackets.map((p) =>
-      [`${p.srcIp}:${p.srcPort}`, `${p.dstIp}:${p.dstPort}`].sort().join(' <-> ')
-    )
+    pcap.allPackets
+      .filter((p) => p.protocol === 'TCP')
+      .map((p) => [`${p.srcIp}:${p.srcPort}`, `${p.dstIp}:${p.dstPort}`].sort().join(' <-> '))
   )
 }
 
@@ -238,20 +284,20 @@ function connections(bytes: Uint8Array): Set<string> {
  * a single connection whose sequence numbers make no sense — every preset uses
  * the same two routers, so this is the easy mistake to make with this tool.
  */
-export function sharedConnections(parts: BuiltCapture[], names: string[]): string[] {
+export function sharedConnections(parts: Part[]): string[] {
   const seen = new Map<string, string>()
   const found: string[] = []
-  parts.forEach((part, i) => {
-    for (const key of connections(part.bytes)) {
+  for (const { name, capture } of parts) {
+    for (const key of connections(capture.bytes)) {
       const earlier = seen.get(key)
-      if (earlier !== undefined && earlier !== names[i]) {
+      if (earlier !== undefined) {
         found.push(
-          `${earlier} and ${names[i]} both use ${key}; they will read as one session. ` +
+          `${earlier} and ${name} both use ${key}; they will read as one session. ` +
             `Give one of them different addresses or ports.`
         )
-      } else seen.set(key, names[i])
+      } else seen.set(key, name)
     }
-  })
+  }
   return found
 }
 
@@ -353,14 +399,16 @@ async function main(): Promise<void> {
   let bytes: Uint8Array
   let warnings: string[] = []
   let clashes: string[] = []
+  let written: number | undefined
   if (resolved.length === 1 && resolved[0].kind === 'bytes') {
     bytes = resolved[0].bytes
   } else {
-    const parts = resolved.map((part, i) => captureOf(part, options.sources[i]))
-    const capture = mergeCaptures(parts)
+    const parts = resolved.flatMap((part, i) => partsOf(part, options.sources[i]))
+    const capture = mergeCaptures(parts.map((part) => part.capture))
     bytes = capture.bytes
+    written = capture.frames.length
     warnings = capture.warnings
-    clashes = sharedConnections(parts, options.sources)
+    clashes = sharedConnections(parts)
   }
 
   const out = resolve(options.out ?? join(DEFAULT_OUT_DIR, `${options.sources.map(nameOf).join('+')}.pcap`))
@@ -369,10 +417,11 @@ async function main(): Promise<void> {
 
   const { pcap, bgp } = readBack(bytes)
   const messageCount = bgp.packets.reduce((sum, packet) => sum + packet.messages.length, 0)
-  console.log(
-    `wrote ${display(out)}  ` +
-      `(${pcap.allPackets.length} frames, ${messageCount} BGP messages)`
-  )
+  // The app lists IP frames only, so a capture with ARP or LLDP in it has more
+  // frames than it shows; say both rather than let the count look wrong.
+  const seen = pcap.allPackets.length
+  const frames = written === undefined || written === seen ? `${seen} frames` : `${written} frames, ${seen} shown by the app`
+  console.log(`wrote ${display(out)}  (${frames}, ${messageCount} BGP messages)`)
 
   if (options.dump) for (const line of dump(pcap, bgp)) console.log(line)
 

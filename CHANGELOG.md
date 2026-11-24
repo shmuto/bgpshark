@@ -10,6 +10,7 @@ Each version's section here becomes the top of its GitHub Release notes (`.githu
 
 - `bun run pcap` builds a capture file from a preset or a capture description (`.ts` / `.json`), writes it to `testlab/out/`, and with `--dump` lists every frame as the app's parsers decode it. `bun run pcap --new <file>` writes a starter description.
 - `src/lib/build` gains `establish()`, `mergeCaptures()`, `keepSide()` and the shared `ROUTER_A` / `ROUTER_B` peers, and each built capture records which peer sent every frame.
+- `bun run pcap` also takes existing `.pcap` / `.pcapng` files, and `src/lib/build` can now build what a clean session cannot: verbatim bytes inside a session (`{ type: 'RAW' }`, `bgpMessage`, `hex`), packets that are not a session (`buildPackets`, with UDP, ICMP and raw IP frames), and edits to any capture (`readCapture`, `dropFrames`, `shiftTime`, `overwriteBytes`, `snapFrames`, `patchRecord`, …).
 
 ## [0.1.0] - 2026-11-24
 

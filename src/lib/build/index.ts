@@ -1,4 +1,5 @@
 export {
+  bgpMessage,
   encodeMessage,
   AS_TRANS,
   BGP_MAX_MESSAGE_LENGTH,
@@ -10,10 +11,35 @@ export {
   type OpenSpec,
   type PathAttributeSpec,
   type PrefixSpec,
+  type RawMessageSpec,
   type RouteRefreshSpec,
   type UpdateSpec,
 } from './bgp-encode'
-export { buildTcpFrame, maxSegmentSize, type TcpFrameSpec } from './frame'
+export {
+  buildIcmpFrame,
+  buildRawIpFrame,
+  buildTcpFrame,
+  buildUdpFrame,
+  maxSegmentSize,
+  type IcmpFrameSpec,
+  type IpFrameSpec,
+  type RawIpFrameSpec,
+  type TcpFrameSpec,
+  type UdpFrameSpec,
+} from './frame'
+export { buildPackets, tcpFlags, type PacketList, type PacketSpec } from './packets'
+export {
+  dropFrames,
+  editFrame,
+  filterFrames,
+  hex,
+  overwriteBytes,
+  patchRecord,
+  readCapture,
+  shiftTime,
+  snapFrames,
+  startAt,
+} from './edit'
 export {
   buildScenario,
   openFor,
