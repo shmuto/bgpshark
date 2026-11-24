@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { holdTimerExpiryCapture, loadCapture, loadSample, openMessagesAfterLoad } from './helpers'
+import { holdTimerExpiryCapture, listSettled, loadCapture, loadSample, openMessagesAfterLoad } from './helpers'
 
 /**
  * The one number a Hold Timer Expired NOTIFICATION does not carry.
@@ -54,7 +54,7 @@ test.describe('the silence before a hold timer teardown', () => {
     await input.click()
     await input.fill('type == NOTIFICATION')
     await page.keyboard.press('Escape')
-    await page.waitForTimeout(1200)
+    await listSettled(page)
 
     await page.getByText('Hold Timer Expired/Unspecific').first().click()
     const panel = page.getByText('Silence before the teardown').locator('..')

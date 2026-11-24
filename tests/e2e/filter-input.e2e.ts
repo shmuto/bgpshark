@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { applyFilter, loadSample, shownCount, showFindings } from './helpers'
+import { applyFilter, listSettled, loadSample, shownCount, showFindings } from './helpers'
 
 test.describe('the filter box', () => {
   test.beforeEach(async ({ page }) => {
@@ -106,22 +106,22 @@ test.describe('the filter box', () => {
   test('== and a bare address filter like their spelled-out forms', async ({ page }) => {
     const input = page.getByLabel('Filter', { exact: true })
     await input.fill('src_ip = 10.0.13.1 or dst_ip = 10.0.13.1')
-    await page.waitForTimeout(1200)
+    await listSettled(page)
     const both = await shownCount(page)
 
     await input.fill('10.0.13.1')
-    await page.waitForTimeout(1200)
+    await listSettled(page)
     expect(await shownCount(page)).toBe(both)
 
     await input.fill('peer == 10.0.13.1')
-    await page.waitForTimeout(1200)
+    await listSettled(page)
     expect(await shownCount(page)).toBe(both)
   })
 
   test('a value in the packet detail can be applied as a filter', async ({ page }) => {
     await page.getByLabel('Filter', { exact: true }).fill('type = UPDATE')
     await page.keyboard.press('Escape')
-    await page.waitForTimeout(1200)
+    await listSettled(page)
     await page.locator('tbody [role="row"]').first().click()
 
     // The buttons appear on hover, the way a reader finds them.
@@ -173,10 +173,9 @@ test.describe('a filter carried in the URL', () => {
     await rail.getByRole('button', { name: /^10\.0\.14\.1 → 10\.0\.14\.4/ }).first().click()
     await page.waitForURL('**/messages**')
     await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
-    await page.waitForTimeout(600)
 
     // Narrowed to one peer pair, not the whole capture.
-    expect(await shownCount(page)).toBeLessThan(50)
+    await expect.poll(() => shownCount(page)).toBeLessThan(50)
   })
 })
 
@@ -198,7 +197,7 @@ test.describe('a filter in All Packets mode', () => {
     await loadSample(page)
     await applyFilter(page, 'src_ip = 10.0.13.1')
     await page.getByRole('button', { name: 'All Packets' }).click()
-    await page.waitForTimeout(400)
+    await listSettled(page)
 
     const text = await page.locator('tbody [role="row"]').allInnerTexts()
     // Its KEEPALIVEs still read as KEEPALIVEs, and no BGP-carrying segment has

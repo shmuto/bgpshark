@@ -80,16 +80,37 @@ export async function prefixCount(page: Page): Promise<number> {
 }
 
 /**
- * Types a filter expression and waits past the DuckDB debounce, so what the
- * assertion reads is the database's answer rather than the in-memory one that
- * appears first.
+ * Waits until the packet list shows the filter's answer: no sliced pass in
+ * flight (a capture over 20,000 packets filters after a pause), and the count
+ * the same on two looks in a row. A capture below that size is filtered in the
+ * render that takes the keystroke, so this usually returns at once — where a
+ * fixed wait, long enough for the DuckDB debounce this used to sit out, cost
+ * over a second per filter across the whole suite.
  */
+export async function listSettled(page: Page) {
+  await expect(page.getByText('filtering...')).toHaveCount(0)
+  const counter = page.getByText(/Showing \d+ of \d+ packets/).first()
+  let last = await counter.textContent()
+  await expect
+    .poll(
+      async () => {
+        const now = await counter.textContent()
+        const same = now === last
+        last = now
+        return same
+      },
+      { intervals: [50] }
+    )
+    .toBe(true)
+}
+
+/** Types a filter expression and waits until the list shows its answer. */
 export async function applyFilter(page: Page, expression: string) {
   const input = page.locator('input[type="text"]').first()
   await input.click()
   await input.fill(expression)
   await page.keyboard.press('Escape')
-  await page.waitForTimeout(1200)
+  await listSettled(page)
 }
 
 /**
@@ -104,7 +125,9 @@ export async function runSql(page: Page, sql: string): Promise<string> {
   await editor.fill(sql)
   await page.keyboard.press('Control+Enter')
   await expect(page.getByText(/Results \(|Error:/).first()).toBeVisible()
-  await page.waitForTimeout(600)
+  // The result and its table land in one render; the button says Run again
+  // once the query has finished.
+  await expect(page.getByRole('button', { name: /Running/ })).toHaveCount(0)
   return page.getByRole('main').innerText()
 }
 
