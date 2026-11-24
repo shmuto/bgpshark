@@ -42,17 +42,11 @@ function applyMask(bits: bigint, length: number, family: Family): bigint {
 }
 
 function parseIpv4(text: string): { bits: bigint; family: Family } | null {
-  const parts = text.split('.')
-  if (parts.length !== 4) return null
-
-  let bits = 0n
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null
-    const octet = Number(part)
-    if (octet > 255) return null
-    bits = (bits << 8n) | BigInt(octet)
-  }
-  return { bits, family: 4 }
+  // Read as a plain number and converted once: one BigInt per address rather
+  // than a shift and an OR per octet, which made this a visible cost when
+  // every route in a capture is parsed.
+  const bits = ipv4Bits(text)
+  return bits < 0 ? null : { bits: BigInt(bits), family: 4 }
 }
 
 function parseIpv6(text: string): { bits: bigint; family: Family } | null {

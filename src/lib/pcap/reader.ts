@@ -4,16 +4,44 @@
  */
 import { ipv4Text } from './shared-values'
 
+/**
+ * The DataView over the buffer most recently read from.
+ *
+ * A capture is one ArrayBuffer, and decoding it makes a reader for every
+ * message, attribute and capability in it — millions on a large capture. Each
+ * used to bring its own DataView, and creating those was a quarter of decode
+ * time. Readers now share one view of the whole buffer and keep their own
+ * window into it. One entry is enough: everything but the occasional
+ * reassembled message reads from the same buffer.
+ */
+let sharedBuffer: ArrayBufferLike | null = null
+let sharedView: DataView | null = null
+function viewOf(buffer: ArrayBufferLike): DataView {
+  if (buffer !== sharedBuffer) {
+    sharedBuffer = buffer
+    sharedView = new DataView(buffer)
+  }
+  return sharedView!
+}
+
 export class BinaryReader {
+  /** A view of the whole underlying buffer, shared with other readers. */
   private view: DataView
+  /** Where this reader's bytes start and end within `view`. */
+  private base: number
+  private end: number
   private _offset: number
   private _littleEndian: boolean
 
   constructor(buffer: ArrayBuffer | Uint8Array, littleEndian = true) {
     if (buffer instanceof Uint8Array) {
-      this.view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+      this.view = viewOf(buffer.buffer)
+      this.base = buffer.byteOffset
+      this.end = buffer.byteOffset + buffer.byteLength
     } else {
-      this.view = new DataView(buffer)
+      this.view = viewOf(buffer)
+      this.base = 0
+      this.end = buffer.byteLength
     }
     this._offset = 0
     this._littleEndian = littleEndian
@@ -26,12 +54,12 @@ export class BinaryReader {
 
   /** Get total buffer length */
   get length(): number {
-    return this.view.byteLength
+    return this.end - this.base
   }
 
   /** Get remaining bytes from current position */
   remaining(): number {
-    return this.view.byteLength - this._offset
+    return this.end - this.base - this._offset
   }
 
   /** Check if there are enough bytes to read */
@@ -46,15 +74,15 @@ export class BinaryReader {
 
   /** Move to absolute position */
   seek(offset: number): void {
-    if (offset < 0 || offset > this.view.byteLength) {
-      throw new RangeError(`Seek offset ${offset} out of bounds (0-${this.view.byteLength})`)
+    if (offset < 0 || offset > this.length) {
+      throw new RangeError(`Seek offset ${offset} out of bounds (0-${this.length})`)
     }
     this._offset = offset
   }
 
   /** Skip bytes from current position */
   skip(count: number): void {
-    if (this._offset + count > this.view.byteLength) {
+    if (this._offset + count > this.length) {
       throw new RangeError(`Skip would exceed buffer bounds`)
     }
     this._offset += count
@@ -65,7 +93,7 @@ export class BinaryReader {
     if (!this.hasBytes(1)) {
       throw new RangeError('Buffer underflow: cannot read Uint8')
     }
-    const value = this.view.getUint8(this._offset)
+    const value = this.view.getUint8(this.base + this._offset)
     this._offset += 1
     return value
   }
@@ -75,7 +103,7 @@ export class BinaryReader {
     if (!this.hasBytes(2)) {
       throw new RangeError('Buffer underflow: cannot read Uint16')
     }
-    const value = this.view.getUint16(this._offset, this._littleEndian)
+    const value = this.view.getUint16(this.base + this._offset, this._littleEndian)
     this._offset += 2
     return value
   }
@@ -85,7 +113,7 @@ export class BinaryReader {
     if (!this.hasBytes(4)) {
       throw new RangeError('Buffer underflow: cannot read Uint32')
     }
-    const value = this.view.getUint32(this._offset, this._littleEndian)
+    const value = this.view.getUint32(this.base + this._offset, this._littleEndian)
     this._offset += 4
     return value
   }
@@ -95,7 +123,7 @@ export class BinaryReader {
     if (!this.hasBytes(4)) {
       throw new RangeError('Buffer underflow: cannot read Int32')
     }
-    const value = this.view.getInt32(this._offset, this._littleEndian)
+    const value = this.view.getInt32(this.base + this._offset, this._littleEndian)
     this._offset += 4
     return value
   }
@@ -105,16 +133,21 @@ export class BinaryReader {
     if (!this.hasBytes(length)) {
       throw new RangeError(`Buffer underflow: cannot read ${length} bytes`)
     }
-    const start = this.view.byteOffset + this._offset
-    const result = new Uint8Array(this.view.buffer, start, length)
+    const result = new Uint8Array(this.view.buffer, this.base + this._offset, length)
     this._offset += length
     return result
   }
 
   /** Read IPv4 address as dotted-decimal string */
   readIpv4Address(): string {
-    const bytes = this.readBytes(4)
-    return ipv4Text(bytes[0], bytes[1], bytes[2], bytes[3])
+    if (!this.hasBytes(4)) {
+      throw new RangeError('Buffer underflow: cannot read 4 bytes')
+    }
+    // Read in place: a view for four bytes cost more than the address.
+    const at = this.base + this._offset
+    const view = this.view
+    this._offset += 4
+    return ipv4Text(view.getUint8(at), view.getUint8(at + 1), view.getUint8(at + 2), view.getUint8(at + 3))
   }
 
   /** Read IPv6 address as hex string */
@@ -130,7 +163,7 @@ export class BinaryReader {
 
   /** Check if there are more bytes to read */
   hasMore(): boolean {
-    return this._offset < this.view.byteLength
+    return this._offset < this.length
   }
 
   /** Get current position */
@@ -143,17 +176,16 @@ export class BinaryReader {
     if (!this.hasBytes(length)) {
       throw new RangeError(`Buffer underflow: cannot peek ${length} bytes`)
     }
-    const start = this.view.byteOffset + this._offset
-    return new Uint8Array(this.view.buffer, start, length)
+    return new Uint8Array(this.view.buffer, this.base + this._offset, length)
   }
 
   /** Peek Uint16 at specific offset from current position */
   peekUint16At(relativeOffset: number): number {
     const absoluteOffset = this._offset + relativeOffset
-    if (absoluteOffset + 2 > this.view.byteLength) {
+    if (absoluteOffset + 2 > this.length) {
       throw new RangeError('Peek would exceed buffer bounds')
     }
-    return this.view.getUint16(absoluteOffset, this._littleEndian)
+    return this.view.getUint16(this.base + absoluteOffset, this._littleEndian)
   }
 
   /** Create a sub-reader for a portion of the buffer */
