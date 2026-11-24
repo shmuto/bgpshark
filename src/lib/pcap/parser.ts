@@ -1,4 +1,5 @@
 import { BinaryReader } from './reader'
+import { pauseAt, runToEnd, type Sliced } from '../sliced'
 import { tcpFlagsFor } from './shared-values'
 import { BgpFlowDetector } from './bgp-detect'
 import { parseIpv6Header } from './ipv6'
@@ -35,6 +36,15 @@ function getProtocolName(protocol: number): GenericPacket['protocol'] {
  * Parse pcap file buffer
  */
 export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
+  return runToEnd(parsePcapWork(buffer))
+}
+
+/**
+ * `parsePcap`, as work that pauses every few hundred records, so a large
+ * capture can be read in slices that leave the page responsive; see
+ * `src/lib/sliced.ts`.
+ */
+export function* parsePcapWork(buffer: ArrayBuffer): Sliced<PcapParseResult> {
   const warnings: string[] = []
   const errors: string[] = []
   const packets: RawPacket[] = []
@@ -70,6 +80,7 @@ export function parsePcap(buffer: ArrayBuffer): PcapParseResult {
     let packetIndex = 0
     while (reader.remaining() >= 16) {
       packetIndex++
+      if (pauseAt(packetIndex)) yield
 
       try {
         const packetHeader = parsePacketHeader(reader, globalHeader.isNanosecond)

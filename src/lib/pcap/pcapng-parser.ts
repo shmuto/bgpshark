@@ -1,4 +1,5 @@
 import { BinaryReader } from './reader'
+import { pauseAt, runToEnd, type Sliced } from '../sliced'
 import { tcpFlagsFor } from './shared-values'
 import { BgpFlowDetector } from './bgp-detect'
 import { parseIpv6Header, type Ipv6Result } from './ipv6'
@@ -53,6 +54,15 @@ export function isPcapng(buffer: ArrayBuffer): boolean {
  * Parse pcapng file buffer
  */
 export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
+  return runToEnd(parsePcapngWork(buffer))
+}
+
+/**
+ * `parsePcapng`, as work that pauses every few hundred records, so a large
+ * capture can be read in slices that leave the page responsive; see
+ * `src/lib/sliced.ts`.
+ */
+export function* parsePcapngWork(buffer: ArrayBuffer): Sliced<PcapParseResult> {
   const warnings: string[] = []
   const errors: string[] = []
   const packets: RawPacket[] = []
@@ -67,7 +77,9 @@ export function parsePcapng(buffer: ArrayBuffer): PcapParseResult {
     let currentSection = false
     let packetIndex = 0
 
+    let blocks = 0
     while (reader.remaining() >= 8) {
+      if (pauseAt(blocks++)) yield
       const blockStart = reader.offset
       const blockType = reader.readUint32()
       const blockTotalLength = reader.readUint32()
