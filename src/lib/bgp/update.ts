@@ -3,6 +3,12 @@ import { getAfiName, getSafiName } from './constants'
 import { DEFAULT_DECODING, afiSafiKey, type UpdateDecoding } from './session'
 import { formatEvpnRoute, parseEvpnNlri } from './evpn'
 import { parseExtendedCommunities } from './extended-communities'
+import {
+  NO_PREFIXES,
+  bytesKey,
+  isShareableAttribute,
+  type SharedDecodedValues,
+} from './shared-decode'
 import type {
   BgpUpdateMessage,
   BgpPrefix,
@@ -34,16 +40,22 @@ const PATH_ATTR_TYPES: Record<number, string> = {
   32: 'LARGE_COMMUNITIES',
 }
 
+/**
+ * `shared`, when given, is the capture's table of decoded values to reuse —
+ * see `shared-decode.ts`. Without it every value is decoded afresh, which is
+ * what callers decoding a lone message (a test, the builder) want.
+ */
 export function parseUpdateMessage(
   data: Uint8Array,
   warnings: string[],
-  decoding: UpdateDecoding = DEFAULT_DECODING
+  decoding: UpdateDecoding = DEFAULT_DECODING,
+  shared?: SharedDecodedValues
 ): BgpUpdateMessage {
   const reader = new BinaryReader(data, false) // BGP uses network byte order (big-endian)
 
   // The classic fields carry IPv4 unicast only; anything else travels in
   // MP_REACH/MP_UNREACH, which name their own address family.
-  const ipv4Unicast = { afi: 1, addPath: negotiatedAddPath(decoding, 1, 1) }
+  const ipv4Unicast = { afi: 1, addPath: negotiatedAddPath(decoding, 1, 1), shared }
 
   // Withdrawn Routes Length (2 bytes)
   const withdrawnRoutesLength = reader.readUint16()
@@ -54,19 +66,7 @@ export function parseUpdateMessage(
   // Total Path Attribute Length (2 bytes)
   const totalPathAttrLength = reader.readUint16()
 
-  // Parse path attributes
-  const pathAttrEnd = reader.getPosition() + totalPathAttrLength
-  const pathAttributes: BgpPathAttribute[] = []
-
-  while (reader.getPosition() < pathAttrEnd) {
-    try {
-      const attr = parsePathAttribute(reader, warnings, decoding)
-      pathAttributes.push(attr)
-    } catch (e) {
-      warnings.push(`Failed to parse path attribute: ${e instanceof Error ? e.message : 'Unknown error'}`)
-      break
-    }
-  }
+  const pathAttributes = parsePathAttributeBlock(reader, totalPathAttrLength, warnings, decoding, shared)
 
   // Parse NLRI (remaining bytes)
   const nlriLength = data.length - reader.getPosition()
@@ -77,9 +77,62 @@ export function parseUpdateMessage(
     withdrawnRoutesLength,
     withdrawnRoutes,
     totalPathAttrLength,
-    pathAttributes: reconcileAs4Path(pathAttributes),
+    pathAttributes,
     nlri,
   }
+}
+
+/**
+ * An UPDATE's path attributes, reconciled with AS4_PATH, leaving `reader` at
+ * the end of what they used.
+ *
+ * With `shared`, a block whose bytes, read under the same AS width, decoded
+ * cleanly before is not decoded again: the earlier list is the answer. A
+ * block is only remembered when it decoded without a warning, ended exactly
+ * where its length said it would, and carries no routes of its own.
+ */
+function parsePathAttributeBlock(
+  reader: BinaryReader,
+  length: number,
+  warnings: string[],
+  decoding: UpdateDecoding,
+  shared: SharedDecodedValues | undefined
+): BgpPathAttribute[] {
+  const start = reader.getPosition()
+  const pathAttrEnd = start + length
+  let key: string | undefined
+  if (shared && pathAttrEnd <= reader.length && shared.attributeBlocks.active()) {
+    key = bytesKey(`${decoding.fourByteAs}|`, reader.peek(length))
+    const known = shared.attributeBlocks.get(key)
+    if (known) {
+      reader.seek(pathAttrEnd)
+      return known
+    }
+  }
+
+  const warningsBefore = warnings.length
+  const pathAttributes: BgpPathAttribute[] = []
+  while (reader.getPosition() < pathAttrEnd) {
+    try {
+      const attr = parsePathAttribute(reader, warnings, decoding, shared)
+      pathAttributes.push(attr)
+    } catch (e) {
+      warnings.push(`Failed to parse path attribute: ${e instanceof Error ? e.message : 'Unknown error'}`)
+      break
+    }
+  }
+  const reconciled = reconcileAs4Path(pathAttributes)
+
+  if (
+    key !== undefined &&
+    shared &&
+    warnings.length === warningsBefore &&
+    reader.getPosition() === pathAttrEnd &&
+    reconciled.every(isShareableAttribute)
+  ) {
+    shared.attributeBlocks.set(key, reconciled)
+  }
+  return reconciled
 }
 
 /** Longest prefix each family can have; anything above it is corruption. */
@@ -122,9 +175,10 @@ function parsePrefixes(
   reader: BinaryReader,
   length: number,
   warnings: string[],
-  options: { afi?: number; addPath?: boolean | null } = {}
+  options: { afi?: number; addPath?: boolean | null; shared?: SharedDecodedValues } = {}
 ): BgpPrefix[] {
-  const { afi = 1 } = options
+  const { afi = 1, shared } = options
+  if (length === 0) return NO_PREFIXES
   const addPath = resolveAddPath(reader, length, warnings, afi, options.addPath ?? null)
   const prefixes: BgpPrefix[] = []
   const endPos = reader.getPosition() + length
@@ -168,12 +222,35 @@ function parsePrefixes(
     }
 
     const octets = reader.readBytes(prefixBytes)
-    const prefix = afi === 2 ? formatIpv6Prefix(octets, prefixLength) : formatIpv4Prefix(octets, prefixLength)
-
-    prefixes.push({ prefix, length: prefixLength, ...(pathId !== undefined && { pathId }) })
+    prefixes.push(
+      pathId === undefined && shared && (afi !== 2 || shared.otherPrefixes.active())
+        ? sharedPrefix(shared, afi, octets, prefixLength)
+        : decodePrefix(afi, octets, prefixLength, pathId)
+    )
   }
 
-  return prefixes
+  return prefixes.length > 0 ? prefixes : NO_PREFIXES
+}
+
+function decodePrefix(afi: number, octets: Uint8Array, prefixLength: number, pathId: number | undefined): BgpPrefix {
+  const prefix = afi === 2 ? formatIpv6Prefix(octets, prefixLength) : formatIpv4Prefix(octets, prefixLength)
+  // Two literals rather than a conditional spread, which goes through the
+  // engine's generic property copy for every prefix. Same keys, same order.
+  return pathId !== undefined ? { prefix, length: prefixLength, pathId } : { prefix, length: prefixLength }
+}
+
+/** The capture's one copy of a prefix, decoded on first sight. */
+function sharedPrefix(shared: SharedDecodedValues, afi: number, octets: Uint8Array, prefixLength: number): BgpPrefix {
+  if (afi !== 2) {
+    let address = 0
+    for (let i = 0; i < 4; i++) address = (address << 8) | (octets[i] ?? 0)
+    return (
+      shared.ipv4Prefixes.get(address, prefixLength) ??
+      shared.ipv4Prefixes.set(address, prefixLength, decodePrefix(afi, octets, prefixLength, undefined))
+    )
+  }
+  const key = bytesKey(`${prefixLength}|`, octets)
+  return shared.otherPrefixes.get(key) ?? shared.otherPrefixes.set(key, decodePrefix(afi, octets, prefixLength, undefined))
 }
 
 /**
@@ -307,7 +384,8 @@ const ATTRIBUTE_FLAGS: ReadonlyArray<BgpPathAttribute['flags']> = Array.from({ l
 export function parsePathAttribute(
   reader: BinaryReader,
   warnings: string[],
-  decoding: UpdateDecoding = DEFAULT_DECODING
+  decoding: UpdateDecoding = DEFAULT_DECODING,
+  shared?: SharedDecodedValues
 ): BgpPathAttribute {
   const flagsByte = reader.readUint8()
   const flags = ATTRIBUTE_FLAGS[flagsByte >> 4]
@@ -318,6 +396,48 @@ export function parsePathAttribute(
   const length = flags.extendedLength ? reader.readUint16() : reader.readUint8()
 
   const rawValue = reader.readBytes(length)
+
+  // Only AS_PATH reads differently under a different session; the others
+  // depend on their bytes alone. The routes-carrying attributes never share.
+  const table = shared && typeCode !== 14 && typeCode !== 15 ? shared.attributes(typeCode) : undefined
+  const key = table?.active() ? attributeKey(flagsByte >> 4, typeCode, rawValue, decoding) : undefined
+  if (key !== undefined) {
+    const known = table!.get(key)
+    if (known) return known
+  }
+  const warningsBefore = warnings.length
+  const attribute = decodePathAttribute(flags, typeCode, typeName, length, rawValue, warnings, decoding)
+  if (key !== undefined && warnings.length === warningsBefore && isShareableAttribute(attribute)) {
+    table!.set(key, attribute)
+  }
+  return attribute
+}
+
+/**
+ * What identifies an attribute's decoding within its type: its flags, its
+ * bytes, and for AS_PATH the session's AS width. The short ones — ORIGIN,
+ * NEXT_HOP, MED, LOCAL_PREF, which are most of them — are keyed by a number,
+ * which costs no allocation and hashes far faster than a string.
+ */
+function attributeKey(flags: number, typeCode: number, value: Uint8Array, decoding: UpdateDecoding): string | number {
+  if (value.length <= 4 && typeCode !== AS_PATH_TYPE_CODE) {
+    let bits = 0
+    for (let i = 0; i < value.length; i++) bits = bits * 256 + value[i]
+    // flags (4 bits), length (0-4), value (32 bits): exact in a double.
+    return (flags * 8 + value.length) * 0x1_0000_0000 + bits
+  }
+  return bytesKey(`${flags}|${typeCode === AS_PATH_TYPE_CODE ? decoding.fourByteAs : ''}|`, value)
+}
+
+function decodePathAttribute(
+  flags: BgpPathAttribute['flags'],
+  typeCode: number,
+  typeName: string,
+  length: number,
+  rawValue: Uint8Array,
+  warnings: string[],
+  decoding: UpdateDecoding
+): BgpPathAttribute {
 
   // Try to parse the attribute value
   let parsed: ParsedPathAttribute | undefined

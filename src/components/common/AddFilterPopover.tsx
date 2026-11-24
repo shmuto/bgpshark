@@ -47,7 +47,9 @@ export function AddFilterPopover({ valuesFor, onAdd }: AddFilterPopoverProps) {
 
   const numeric = field !== 'ip' && FILTER_FIELDS[field].valueType === 'number'
   const operators = OPERATORS.filter((op) => numeric || !['<', '<=', '>', '>='].includes(op))
-  const values = valuesFor(field).slice(0, 200)
+  // Only while open: the values can take a while to gather on a large
+  // capture, and a closed popover shows none of them.
+  const values = open ? valuesFor(field).slice(0, 200) : []
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()

@@ -8,10 +8,11 @@
  *
  * There are two gauges, because the load is in two parts. The first is what
  * stands between the user and the packet list: reading, parsing and decoding.
- * Those are synchronous — the page cannot repaint until each returns — so all
- * a stage can do is announce that it has started, and the bar steps through
- * them. Each owns a slice sized by how long it takes: parsing a 100MB capture
- * is well under a second, decoding it several seconds.
+ * Reading and parsing are synchronous — the page cannot repaint until each
+ * returns — so all they can do is announce that they have started. Decoding,
+ * the long one, runs in slices and counts the packets it has done, so the bar
+ * moves through it. Each stage owns a slice sized by how long it takes:
+ * parsing a 100MB capture is well under a second, decoding it several seconds.
  *
  * The second is the DuckDB insert, which used to be most of the first gauge —
  * over half of a 50MB load, two thirds on a dense one — and now runs after the

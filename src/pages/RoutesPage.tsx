@@ -191,7 +191,7 @@ export function RoutesPage() {
 
     switch (search.kind) {
       case 'asn':
-        return prefixStats.filter(stat => stat.asns.has(search.asn))
+        return prefixStats.filter(stat => stat.asns.includes(search.asn))
 
       case 'prefix':
         return prefixStats.filter(stat => {

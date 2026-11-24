@@ -1,6 +1,7 @@
 /**
  * Data Loader - Load BgpPacket[] into DuckDB
  */
+import { yieldToPage } from '../yield-to-page'
 import type { AsyncDuckDBConnection } from '@duckdb/duckdb-wasm'
 import { getConnection, resetDatabase, markDataLoaded } from './database'
 import { addressBitKey, bgpPrefixBitKey } from '../net/prefix'
@@ -21,6 +22,16 @@ import type {
   MpUnreachNlriAttribute,
 } from '../bgp/types'
 import { formatExtendedCommunity } from '../bgp/extended-communities'
+import {
+  BoolColumn,
+  NumberColumn,
+  TextColumn,
+  TextListColumn,
+  batchToIpc,
+  tableBatch,
+  type Column,
+  type TableBatch,
+} from './arrow-columns'
 
 // Helper function to convert Uint8Array to Base64
 // Built a few kilobytes at a time: `fromCharCode` over a whole chunk is far
@@ -32,41 +43,6 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x2000) as unknown as number[])
   }
   return btoa(binary)
-}
-
-/**
- * A row of `nlri` or `withdrawn`. Named because the two tables share it and
- * both the buffer and the function taking it repeat the shape otherwise —
- * which is how a column added to one and forgotten in the other happens.
- */
-interface PrefixRow {
-  id: number
-  message_id: number
-  prefix: string
-  prefix_length: number
-  prefix_bits: string | null
-  afi: number
-  safi: number
-  evpn_route_type: number | null
-  evpn_type_name: string | null
-  evpn_rd: string | null
-  evpn_mac: string | null
-  evpn_ip: string | null
-  evpn_vni: number | null
-  evpn_vni2: number | null
-  evpn_esi: string | null
-  evpn_eth_tag: number | null
-}
-
-interface ExtendedCommunityRow {
-  id: number
-  message_id: number
-  kind: string
-  value: string
-  formatted: string
-  transitive: boolean
-  type_code: number
-  subtype: number
 }
 
 // ID counters for auto-increment
@@ -152,342 +128,260 @@ async function runLoad(packets: BgpPacket[], onProgress?: LoadProgressCallback):
 }
 
 /**
- * Flatten the packets into the rows of the ten tables and insert them, a
- * chunk of rows at a time.
+ * The ten tables' columns for one chunk, by the names the schema gives them.
+ *
+ * A column's kind is its Arrow transport type, not its declared SQL type: see
+ * `arrow-columns.ts`. Listing them here, once, is what replaced the row
+ * object types the extract functions used to build — a column added to the
+ * schema and not here is caught by the named-column `INSERT ... SELECT`.
+ */
+function createBatches() {
+  const n = () => new NumberColumn()
+  const b = () => new BoolColumn()
+  const t = () => new TextColumn()
+  const prefixColumns = () => ({
+    id: n(),
+    message_id: n(),
+    prefix: t(),
+    prefix_length: n(),
+    prefix_bits: t(),
+    afi: n(),
+    safi: n(),
+    evpn_route_type: n(),
+    evpn_type_name: t(),
+    evpn_rd: t(),
+    evpn_mac: t(),
+    evpn_ip: t(),
+    evpn_vni: n(),
+    evpn_vni2: n(),
+    evpn_esi: t(),
+    evpn_eth_tag: n(),
+  })
+  return {
+    packets: tableBatch('packets', () => ({
+      frame_index: n(),
+      timestamp: t(),
+      src_ip: t(),
+      dst_ip: t(),
+      src_ip_bits: t(),
+      dst_ip_bits: t(),
+      src_port: n(),
+      dst_port: n(),
+      raw_data_base64: t(),
+      parse_warnings: new TextListColumn(),
+    })),
+    messages: tableBatch('messages', () => ({
+      id: n(),
+      frame_index: n(),
+      message_index: n(),
+      type: t(),
+      version: n(),
+      my_as: n(),
+      hold_time: n(),
+      router_id: t(),
+      error_code: n(),
+      error_subcode: n(),
+      error_code_name: t(),
+      error_subcode_name: t(),
+      afi: n(),
+      safi: n(),
+      afi_name: t(),
+      safi_name: t(),
+    })),
+    capabilities: tableBatch('capabilities', () => ({
+      id: n(),
+      message_id: n(),
+      code: n(),
+      name: t(),
+      cap_type: t(),
+      cap_afi: n(),
+      cap_afi_name: t(),
+      cap_safi: n(),
+      cap_safi_name: t(),
+      cap_as_number: n(),
+    })),
+    pathAttributes: tableBatch('path_attributes', () => ({
+      id: n(),
+      message_id: n(),
+      type_code: n(),
+      type_name: t(),
+      flags_optional: b(),
+      flags_transitive: b(),
+      flags_partial: b(),
+      flags_extended: b(),
+      origin_value: t(),
+      next_hop: t(),
+      med_value: n(),
+      local_pref: n(),
+      aggregator_as: n(),
+      aggregator_addr: t(),
+    })),
+    asPath: tableBatch('as_path', () => ({
+      id: n(),
+      message_id: n(),
+      segment_type: t(),
+      segment_index: n(),
+      as_index: n(),
+      asn: n(),
+    })),
+    nlri: tableBatch('nlri', prefixColumns),
+    withdrawn: tableBatch('withdrawn', prefixColumns),
+    communities: tableBatch('communities', () => ({
+      id: n(),
+      message_id: n(),
+      asn: n(),
+      value: n(),
+      formatted: t(),
+    })),
+    largeCommunities: tableBatch('large_communities', () => ({
+      id: n(),
+      message_id: n(),
+      global_admin: n(),
+      local_data1: n(),
+      local_data2: n(),
+      formatted: t(),
+    })),
+    extCommunities: tableBatch('extended_communities', () => ({
+      id: n(),
+      message_id: n(),
+      kind: t(),
+      value: t(),
+      formatted: t(),
+      transitive: b(),
+      type_code: n(),
+      subtype: n(),
+    })),
+  }
+}
+
+type Batches = ReturnType<typeof createBatches>
+type PrefixBatch = Batches['nlri']
+
+/**
+ * How many rows, across all ten tables, to gather before sending them. Large
+ * enough that the per-chunk overhead (a staging table per table, one
+ * `INSERT ... SELECT` statement) stays small next to the rows it moves; small
+ * enough that a chunk's buffers never dominate the heap.
+ */
+const ROWS_PER_FLUSH = 250_000
+
+/** How long the flattening may hold the page before yielding, as elsewhere. */
+const FLATTEN_SLICE_MS = 12
+
+/**
+ * Flatten the packets into the ten tables' columns and insert them, a chunk at
+ * a time — building each chunk while the DuckDB worker inserts the one before.
+ *
+ * The two used to take turns: the page flattened a chunk while the worker sat
+ * idle, then waited, idle itself, for the worker to insert it. On a 45MB
+ * capture each was roughly half of a load of over twenty seconds. Now the
+ * worker is handed a chunk and the page moves straight on to the next one,
+ * so a load takes as long as the slower of the two rather than both.
+ *
+ * At most one chunk is in flight: the page waits for it before sending the
+ * next, which keeps the buffers alive at once to two chunks' worth.
  */
 async function insertPackets(
   conn: AsyncDuckDBConnection,
   packets: BgpPacket[],
   onProgress?: LoadProgressCallback
 ): Promise<void> {
-  // Prepare data arrays
-  const packetsData: Array<{
-    frame_index: number
-    timestamp: string
-    src_ip: string
-    dst_ip: string
-    src_ip_bits: string | null
-    dst_ip_bits: string | null
-    src_port: number
-    dst_port: number
-    raw_data_base64: string
-    parse_warnings: string[]
-  }> = []
+  // Imported here, like DuckDB itself in `initDatabase`, so Arrow is fetched
+  // with the database rather than weighing down the upload screen's bundle.
+  const arrow = await import('apache-arrow')
+  const batches = createBatches()
+  const tables: Array<TableBatch<Record<string, Column>> & { reset(): void }> = Object.values(batches)
+  const pendingRows = () => tables.reduce((sum, table) => sum + table.rows, 0)
 
-  const messagesData: Array<{
-    id: number
-    frame_index: number
-    message_index: number
-    type: string
-    version: number | null
-    my_as: number | null
-    hold_time: number | null
-    router_id: string | null
-    error_code: number | null
-    error_subcode: number | null
-    error_code_name: string | null
-    error_subcode_name: string | null
-    afi: number | null
-    safi: number | null
-    afi_name: string | null
-    safi_name: string | null
-  }> = []
-
-  const capabilitiesData: Array<{
-    id: number
-    message_id: number
-    code: number
-    name: string
-    cap_type: string | null
-    cap_afi: number | null
-    cap_afi_name: string | null
-    cap_safi: number | null
-    cap_safi_name: string | null
-    cap_as_number: number | null
-  }> = []
-
-  const pathAttrsData: Array<{
-    id: number
-    message_id: number
-    type_code: number
-    type_name: string
-    flags_optional: boolean
-    flags_transitive: boolean
-    flags_partial: boolean
-    flags_extended: boolean
-    origin_value: string | null
-    next_hop: string | null
-    med_value: number | null
-    local_pref: number | null
-    aggregator_as: number | null
-    aggregator_addr: string | null
-  }> = []
-
-  const asPathData: Array<{
-    id: number
-    message_id: number
-    segment_type: string
-    segment_index: number
-    as_index: number
-    asn: number
-  }> = []
-
-  const nlriData: PrefixRow[] = []
-  const withdrawnData: PrefixRow[] = []
-  const extCommunitiesData: ExtendedCommunityRow[] = []
-
-  const communitiesData: Array<{
-    id: number
-    message_id: number
-    asn: number
-    value: number
-    formatted: string
-  }> = []
-
-  const largeCommunitiesData: Array<{
-    id: number
-    message_id: number
-    global_admin: number
-    local_data1: number
-    local_data2: number
-    formatted: string
-  }> = []
-
-  const tables: Array<[string, unknown[]]> = [
-    ['packets', packetsData],
-    ['messages', messagesData],
-    ['capabilities', capabilitiesData],
-    ['path_attributes', pathAttrsData],
-    ['as_path', asPathData],
-    ['nlri', nlriData],
-    ['withdrawn', withdrawnData],
-    ['communities', communitiesData],
-    ['large_communities', largeCommunitiesData],
-    ['extended_communities', extCommunitiesData],
-  ]
-  const pendingRows = () => tables.reduce((sum, [, rows]) => sum + rows.length, 0)
-
-  // Insert what has been flattened so far and let it go. Holding only one
-  // chunk's rows at a time is the point: flattening the whole capture first
-  // put every row of every table in the JS heap at once — 14.6 million row
-  // objects for a 150MB capture — on top of the parsed packets themselves.
-  const flush = async () => {
-    for (const [tableName, rows] of tables) {
-      await insertRows(conn, tableName, rows)
-      rows.length = 0
-    }
+  let inFlight: Promise<void> = Promise.resolve()
+  // Packets whose rows are in the chunk in flight: inserted once it lands.
+  let sentThrough = 0
+  const flush = async (done: number) => {
+    const chunk = tables
+      .filter((table) => table.rows > 0)
+      .map((table) => ({ name: table.name, columns: Object.keys(table.columns), ipc: batchToIpc(arrow, table) }))
+    for (const table of tables) table.reset()
+    // The previous chunk must be in before this one goes: that bounds memory,
+    // and is where its failure, if any, surfaces.
+    await inFlight
+    onProgress?.(sentThrough, total)
+    sentThrough = done
+    inFlight = insertChunk(conn, chunk)
+    // Marked handled now; the rejection still reaches whoever awaits it next.
+    // Without this, a failure while the next chunk is being flattened is an
+    // unhandled rejection until then.
+    inFlight.catch(() => {})
   }
 
   const total = packets.length
   onProgress?.(0, total)
+  let sliceStart = performance.now()
   for (let index = 0; index < total; index++) {
-    const packet = packets[index]
-    packetsData.push({
-      frame_index: packet.frameIndex,
-      timestamp: packet.timestamp.toISOString(),
-      src_ip: packet.srcIp,
-      dst_ip: packet.dstIp,
-      src_ip_bits: addressBitKey(packet.srcIp),
-      dst_ip_bits: addressBitKey(packet.dstIp),
-      src_port: packet.srcPort,
-      dst_port: packet.dstPort,
-      raw_data_base64: uint8ArrayToBase64(packet.rawData),
-      parse_warnings: packet.parseWarnings,
-    })
-
-    // Process each message in packet
-    for (let msgIdx = 0; msgIdx < packet.messages.length; msgIdx++) {
-      const msg = packet.messages[msgIdx]
-      const messageId = ++messageIdCounter
-
-      const msgData = extractMessageData(msg, packet.frameIndex, msgIdx, messageId)
-      messagesData.push(msgData)
-
-      // Extract message-specific data
-      if (msg.type === 'OPEN') {
-        extractOpenData(msg, messageId, capabilitiesData)
-      } else if (msg.type === 'UPDATE') {
-        extractUpdateData(
-          msg,
-          messageId,
-          pathAttrsData,
-          asPathData,
-          nlriData,
-          withdrawnData,
-          communitiesData,
-          largeCommunitiesData,
-          extCommunitiesData
-        )
-      }
-    }
+    flattenPacket(batches, packets[index])
 
     if (pendingRows() >= ROWS_PER_FLUSH) {
-      await flush()
-      onProgress?.(index + 1, total)
+      await flush(index + 1)
+      sliceStart = performance.now()
+    } else if ((index & 0x3f) === 0x3f && performance.now() - sliceStart > FLATTEN_SLICE_MS) {
+      // While the worker is busy with the chunk in flight there is nothing to
+      // wait for, so the page would otherwise be held for the whole chunk.
+      await yieldToPage()
+      sliceStart = performance.now()
     }
   }
-  await flush()
+  await flush(total)
+  await inFlight
   onProgress?.(total, total)
 }
 
-/**
- * How many flattened rows, across all ten tables, to hold before inserting
- * them. Large enough that the per-insert overhead (a staging table, an
- * `INSERT ... SELECT`, a drop) stays small next to the rows it moves; small
- * enough that the rows never dominate the heap.
- */
-const ROWS_PER_FLUSH = 250_000
+/** One packet's rows, appended to the batches. */
+function flattenPacket(batches: Batches, packet: BgpPacket): void {
+  const p = batches.packets
+  const row = p.rows++
+  const c = p.columns
+  c.frame_index.set(row, packet.frameIndex)
+  c.timestamp.set(row, packet.timestamp.toISOString())
+  c.src_ip.set(row, packet.srcIp)
+  c.dst_ip.set(row, packet.dstIp)
+  c.src_ip_bits.set(row, addressBitKey(packet.srcIp))
+  c.dst_ip_bits.set(row, addressBitKey(packet.dstIp))
+  c.src_port.set(row, packet.srcPort)
+  c.dst_port.set(row, packet.dstPort)
+  c.raw_data_base64.set(row, uint8ArrayToBase64(packet.rawData))
+  c.parse_warnings.set(row, packet.parseWarnings)
 
-/**
- * How many rows go into one Arrow batch.
- *
- * Not a performance knob so much as a memory one: the rows are already in the
- * JS heap once, and a batch is copied twice more — into Arrow vectors, then
- * into the IPC buffer handed to the worker. Bounding the batch bounds those
- * copies, which matters for the `packets` table, where every row carries its
- * frame as base64.
- */
-const ROWS_PER_BATCH = 50_000
-
-type Arrow = typeof import('apache-arrow')
-
-/**
- * One column of a batch as an Arrow vector, typed from the values it holds.
- *
- * The type is deliberately loose, and deliberately not the table's declared
- * type: the rows land in a staging table first and reach the real one through
- * `INSERT ... SELECT`, so DuckDB casts each column to what the schema says,
- * exactly as it cast the literals of the `VALUES` statements this replaced.
- * That is why numbers travel as Float64 rather than Int32 — every value the
- * parsers emit fits one exactly, and an out-of-range one (a 4-byte ASN in an
- * INTEGER column) fails the cast loudly instead of wrapping silently in a
- * typed array. A column that is NULL in every row carries no evidence either
- * way, and goes as Utf8, which casts from NULL to anything.
- *
- * The buffers are laid out by hand rather than through `vectorFromArray`, for
- * two reasons. Arrow's builders compile their null checks with `new Function`,
- * which the production CSP (`script-src 'self' 'wasm-unsafe-eval'`) refuses —
- * and, as with the extension fetch described at `insertRows`, the dev server
- * has no CSP to say so. And they are slow: several times what DuckDB then
- * spends reading the result, which made them most of the load time once the
- * SQL parser was out of the way. Nothing in this file may call a builder (`vectorFromArray`,
- * `tableFromArrays`, `tableFromJSON`, `makeBuilder`).
- *
- * Non-finite numbers become NULL because that is what the loader has always
- * done with them — first through `JSON.stringify`, then through the literal
- * writer — and a change of transport should not quietly start writing `NaN`
- * into an INTEGER column.
- */
-function columnVector(arrow: Arrow, rows: Record<string, unknown>[], column: string): import('apache-arrow').Vector {
-  const length = rows.length
-  const values = rows.map((row) => row[column] ?? null)
-  const sample = values.find((value) => value !== null)
-  const { nullBitmap, nullCount } = validity(values, (value) => value !== null)
-
-  if (typeof sample === 'number') {
-    const data = new Float64Array(length)
-    const finite = validity(values, (value) => typeof value === 'number' && Number.isFinite(value))
-    for (let i = 0; i < length; i++) if (typeof values[i] === 'number') data[i] = values[i] as number
-    return arrow.makeVector(arrow.makeData({ type: new arrow.Float64(), length, ...finite, data }))
-  }
-
-  if (typeof sample === 'boolean') {
-    const data = new Uint8Array((length + 7) >> 3)
-    for (let i = 0; i < length; i++) if (values[i] === true) data[i >> 3] |= 1 << (i & 7)
-    return arrow.makeVector(arrow.makeData({ type: new arrow.Bool(), length, nullBitmap, nullCount, data }))
-  }
-
-  // The only list column is `parse_warnings`, which is text: the child is one
-  // Utf8 column of every warning back to back, and the offsets say which rows
-  // they belong to.
-  if (Array.isArray(sample)) {
-    const valueOffsets = new Int32Array(length + 1)
-    const items: string[] = []
-    for (let i = 0; i < length; i++) {
-      const list = values[i] as string[] | null
-      if (list) items.push(...list)
-      valueOffsets[i + 1] = items.length
+  for (let msgIdx = 0; msgIdx < packet.messages.length; msgIdx++) {
+    const msg = packet.messages[msgIdx]
+    const messageId = ++messageIdCounter
+    flattenMessage(batches.messages, msg, packet.frameIndex, msgIdx, messageId)
+    if (msg.type === 'OPEN') {
+      flattenOpen(batches.capabilities, msg, messageId)
+    } else if (msg.type === 'UPDATE') {
+      flattenUpdate(batches, msg, messageId)
     }
-    const child = new arrow.Field('item', new arrow.Utf8(), true)
-    return arrow.makeVector(
-      arrow.makeData({
-        type: new arrow.List(child),
-        length,
-        nullBitmap,
-        nullCount,
-        valueOffsets,
-        child: utf8Data(arrow, items),
-      })
-    )
   }
-
-  return arrow.makeVector(utf8Data(arrow, values))
-}
-
-/** Which of `values` are present, as the bitmap Arrow keeps beside a column. */
-function validity(
-  values: unknown[],
-  isPresent: (value: unknown) => boolean
-): { nullBitmap: Uint8Array; nullCount: number } {
-  const nullBitmap = new Uint8Array((values.length + 7) >> 3)
-  let nullCount = 0
-  for (let i = 0; i < values.length; i++) {
-    if (isPresent(values[i])) nullBitmap[i >> 3] |= 1 << (i & 7)
-    else nullCount++
-  }
-  return { nullBitmap, nullCount }
 }
 
 /**
- * A Utf8 column: every string back to back, with offsets marking where each
- * ends. Nearly all of it is ASCII — addresses, prefixes, names, base64 — so
- * bytes are written directly and only a string that needs it goes through the
- * encoder.
- */
-function utf8Data(arrow: Arrow, values: unknown[]): import('apache-arrow').Data<import('apache-arrow').Utf8> {
-  const length = values.length
-  const { nullBitmap, nullCount } = validity(values, (value) => value !== null)
-  const valueOffsets = new Int32Array(length + 1)
-  let bytes = new Uint8Array(Math.max(1024, length * 16))
-  let used = 0
-  const encoder = new TextEncoder()
-  for (let i = 0; i < length; i++) {
-    if (values[i] !== null) {
-      const text = String(values[i])
-      // UTF-8 never needs more than three bytes per UTF-16 unit.
-      if (used + text.length * 3 > bytes.length) {
-        const grown = new Uint8Array(Math.max(bytes.length * 2, used + text.length * 3))
-        grown.set(bytes.subarray(0, used))
-        bytes = grown
-      }
-      let ascii = true
-      for (let j = 0; j < text.length; j++) {
-        const code = text.charCodeAt(j)
-        if (code > 0x7f) {
-          ascii = false
-          break
-        }
-        bytes[used + j] = code
-      }
-      used += ascii ? text.length : encoder.encodeInto(text, bytes.subarray(used)).written
-    }
-    valueOffsets[i + 1] = used
-  }
-  return arrow.makeData({
-    type: new arrow.Utf8(),
-    length,
-    nullBitmap,
-    nullCount,
-    valueOffsets,
-    data: bytes.subarray(0, used),
-  })
-}
-
-/**
- * Insert rows as Arrow IPC, which DuckDB WASM reads natively.
+ * Send one chunk: every table into a staging table of its own, then a single
+ * statement that moves each into its real table and drops the staging.
  *
- * This is the third transport this function has had, and both earlier ones
- * failed in ways worth remembering.
+ * The staging tables are sent together and awaited together — the order they
+ * arrive in does not matter — so a chunk costs the worker two round trips
+ * rather than three per table. That matters now that the page is busy
+ * flattening the next chunk in between: each round trip waits for the page to
+ * yield before the next request goes out.
+ *
+ * The rows go through a staging table and a named-column `INSERT ... SELECT`
+ * rather than straight into the target, for two reasons. Inserting into an
+ * existing table binds Arrow columns by *position*, so a column added to the
+ * schema but not to `createBatches` — or in a different order — would land
+ * silently in the wrong place; naming them means each value can only reach the
+ * column it was meant for. And the SELECT is where DuckDB casts each column to
+ * its declared type, see `arrow-columns.ts`.
+ *
+ * Arrow IPC itself is the third transport this loader has had; both earlier
+ * ones failed in ways worth remembering.
  *
  * `read_json_auto` read best, but the JSON reader is an *extension*, and DuckDB
  * WASM fetches extensions from `extensions.duckdb.org` on first use. The
@@ -498,287 +392,147 @@ function utf8Data(arrow: Arrow, values: unknown[]): import('apache-arrow').Data<
  * Literal `VALUES` fixed that and was far too slow: DuckDB spends roughly a
  * tenth of a millisecond *parsing* each row of a VALUES list, independent of
  * indexes or constraints. An 18MB capture of 120,000 UPDATEs is 1.6 million
- * rows across these tables, and took nearly two minutes to load — during
- * which the app showed nothing but a spinner, because the packet list waits
- * on the load. People reasonably concluded it had hung.
+ * rows across these tables, and took nearly two minutes to load.
  *
  * Arrow skips the parser entirely and is built into the WASM build, not an
  * extension, so it keeps the promise that loading a capture touches no network
- * (`offline.e2e.ts` holds it to that). The same capture now loads in a few
- * seconds.
- *
- * The rows go through a staging table and a named-column `INSERT ... SELECT`
- * rather than straight into the target, for two reasons. Inserting into an
- * existing table binds Arrow columns by *position*, so a column added to the
- * schema but not to the row object — or in a different order — would land
- * silently in the wrong place; naming them means each value can only reach the
- * column it was meant for. And the
- * SELECT is where DuckDB casts each column to its declared type, see
- * `columnVector`.
+ * (`offline.e2e.ts` holds it to that).
  */
-async function insertRows(
+async function insertChunk(
   conn: AsyncDuckDBConnection,
-  tableName: string,
-  data: unknown[]
+  chunk: Array<{ name: string; columns: string[]; ipc: Uint8Array }>
 ): Promise<void> {
-  if (data.length === 0) return
-
-  // Imported here, like DuckDB itself in `initDatabase`, so Arrow is fetched
-  // with the database rather than weighing down the upload screen's bundle.
-  const arrow = await import('apache-arrow')
-
-  const rows = data as Record<string, unknown>[]
-  const columns = Object.keys(rows[0])
-  const columnList = columns.map((c) => `"${c}"`).join(', ')
-  const staging = `__load_${tableName}`
-
-  for (let start = 0; start < rows.length; start += ROWS_PER_BATCH) {
-    const batch = rows.slice(start, start + ROWS_PER_BATCH)
-    const vectors: Record<string, import('apache-arrow').Vector> = {}
-    for (const column of columns) vectors[column] = columnVector(arrow, batch, column)
-    const table = new arrow.Table(vectors)
-
-    // `insertArrowTable` does exactly this serialisation, but with the copy of
-    // apache-arrow DuckDB bundles; doing it here with ours means the Table
-    // object never has to be recognised across two copies of the library.
-    await conn.insertArrowFromIPCStream(arrow.tableToIPC(table, 'stream'), {
-      name: staging,
-      create: true,
-    })
-    try {
-      await conn.query(`INSERT INTO ${tableName} (${columnList}) SELECT ${columnList} FROM ${staging}`)
-    } finally {
-      await conn.query(`DROP TABLE IF EXISTS ${staging}`)
-    }
+  if (chunk.length === 0) return
+  const staging = (name: string) => `__load_${name}`
+  await Promise.all(
+    chunk.map(({ name, ipc }) => conn.insertArrowFromIPCStream(ipc, { name: staging(name), create: true }))
+  )
+  const statements = chunk.flatMap(({ name, columns }) => {
+    const list = columns.map((column) => `"${column}"`).join(', ')
+    return [`INSERT INTO ${name} (${list}) SELECT ${list} FROM ${staging(name)}`]
+  })
+  try {
+    await conn.query(statements.join(';\n'))
+  } finally {
+    await conn.query(chunk.map(({ name }) => `DROP TABLE IF EXISTS ${staging(name)}`).join(';\n'))
   }
 }
 
 /**
- * Extract message base data
+ * One `messages` row. Columns for other message types are left unwritten,
+ * which is NULL.
  */
-function extractMessageData(
+function flattenMessage(
+  batch: Batches['messages'],
   msg: BgpMessage,
   frameIndex: number,
   msgIndex: number,
   messageId: number
-): {
-  id: number
-  frame_index: number
-  message_index: number
-  type: string
-  version: number | null
-  my_as: number | null
-  hold_time: number | null
-  router_id: string | null
-  error_code: number | null
-  error_subcode: number | null
-  error_code_name: string | null
-  error_subcode_name: string | null
-  afi: number | null
-  safi: number | null
-  afi_name: string | null
-  safi_name: string | null
-} {
-  const base = {
-    id: messageId,
-    frame_index: frameIndex,
-    message_index: msgIndex,
-    type: msg.type,
-    version: null as number | null,
-    my_as: null as number | null,
-    hold_time: null as number | null,
-    router_id: null as string | null,
-    error_code: null as number | null,
-    error_subcode: null as number | null,
-    error_code_name: null as string | null,
-    error_subcode_name: null as string | null,
-    afi: null as number | null,
-    safi: null as number | null,
-    afi_name: null as string | null,
-    safi_name: null as string | null,
-  }
+): void {
+  const row = batch.rows++
+  const c = batch.columns
+  c.id.set(row, messageId)
+  c.frame_index.set(row, frameIndex)
+  c.message_index.set(row, msgIndex)
+  c.type.set(row, msg.type)
 
   if (msg.type === 'OPEN') {
     const open = msg as BgpOpenMessage
-    base.version = open.version
-    base.my_as = open.fourByteAs ?? open.myAs
-    base.hold_time = open.holdTime
-    base.router_id = open.bgpIdentifier
+    c.version.set(row, open.version)
+    c.my_as.set(row, open.fourByteAs ?? open.myAs)
+    c.hold_time.set(row, open.holdTime)
+    c.router_id.set(row, open.bgpIdentifier)
   } else if (msg.type === 'NOTIFICATION') {
     const notif = msg as BgpNotificationMessage
-    base.error_code = notif.errorCode
-    base.error_subcode = notif.errorSubcode
-    base.error_code_name = notif.errorCodeName
-    base.error_subcode_name = notif.errorSubcodeName
+    c.error_code.set(row, notif.errorCode)
+    c.error_subcode.set(row, notif.errorSubcode)
+    c.error_code_name.set(row, notif.errorCodeName)
+    c.error_subcode_name.set(row, notif.errorSubcodeName)
   } else if (msg.type === 'ROUTE_REFRESH') {
     const rr = msg as BgpRouteRefreshMessage
-    base.afi = rr.afi
-    base.safi = rr.safi
-    base.afi_name = rr.afiName
-    base.safi_name = rr.safiName
+    c.afi.set(row, rr.afi)
+    c.safi.set(row, rr.safi)
+    c.afi_name.set(row, rr.afiName)
+    c.safi_name.set(row, rr.safiName)
   }
-
-  return base
 }
 
-/**
- * Extract OPEN message capabilities
- */
-function extractOpenData(
-  msg: BgpOpenMessage,
-  messageId: number,
-  capabilitiesData: Array<{
-    id: number
-    message_id: number
-    code: number
-    name: string
-    cap_type: string | null
-    cap_afi: number | null
-    cap_afi_name: string | null
-    cap_safi: number | null
-    cap_safi_name: string | null
-    cap_as_number: number | null
-  }>
-): void {
+/** An OPEN's `capabilities` rows. */
+function flattenOpen(batch: Batches['capabilities'], msg: BgpOpenMessage, messageId: number): void {
+  const c = batch.columns
   for (const cap of msg.capabilities) {
-    const capData = {
-      id: ++capabilityIdCounter,
-      message_id: messageId,
-      code: cap.code,
-      name: cap.name,
-      cap_type: cap.parsed?.type ?? null,
-      cap_afi: null as number | null,
-      cap_afi_name: null as string | null,
-      cap_safi: null as number | null,
-      cap_safi_name: null as string | null,
-      cap_as_number: null as number | null,
+    const row = batch.rows++
+    c.id.set(row, ++capabilityIdCounter)
+    c.message_id.set(row, messageId)
+    c.code.set(row, cap.code)
+    c.name.set(row, cap.name)
+    c.cap_type.set(row, cap.parsed?.type ?? null)
+    if (cap.parsed?.type === 'MULTIPROTOCOL') {
+      c.cap_afi.set(row, cap.parsed.afi)
+      c.cap_afi_name.set(row, cap.parsed.afiName)
+      c.cap_safi.set(row, cap.parsed.safi)
+      c.cap_safi_name.set(row, cap.parsed.safiName)
+    } else if (cap.parsed?.type === 'FOUR_OCTET_AS') {
+      c.cap_as_number.set(row, cap.parsed.asNumber)
     }
-
-    if (cap.parsed) {
-      if (cap.parsed.type === 'MULTIPROTOCOL') {
-        capData.cap_afi = cap.parsed.afi
-        capData.cap_afi_name = cap.parsed.afiName
-        capData.cap_safi = cap.parsed.safi
-        capData.cap_safi_name = cap.parsed.safiName
-      } else if (cap.parsed.type === 'FOUR_OCTET_AS') {
-        capData.cap_as_number = cap.parsed.asNumber
-      }
-    }
-
-    capabilitiesData.push(capData)
   }
 }
 
-/**
- * Extract UPDATE message data
- */
-function extractUpdateData(
-  msg: BgpUpdateMessage,
-  messageId: number,
-  pathAttrsData: Array<{
-    id: number
-    message_id: number
-    type_code: number
-    type_name: string
-    flags_optional: boolean
-    flags_transitive: boolean
-    flags_partial: boolean
-    flags_extended: boolean
-    origin_value: string | null
-    next_hop: string | null
-    med_value: number | null
-    local_pref: number | null
-    aggregator_as: number | null
-    aggregator_addr: string | null
-  }>,
-  asPathData: Array<{
-    id: number
-    message_id: number
-    segment_type: string
-    segment_index: number
-    as_index: number
-    asn: number
-  }>,
-  nlriData: PrefixRow[],
-  withdrawnData: PrefixRow[],
-  communitiesData: Array<{
-    id: number
-    message_id: number
-    asn: number
-    value: number
-    formatted: string
-  }>,
-  largeCommunitiesData: Array<{
-    id: number
-    message_id: number
-    global_admin: number
-    local_data1: number
-    local_data2: number
-    formatted: string
-  }>,
-  extCommunitiesData: ExtendedCommunityRow[]
-): void {
-  // Path attributes
+/** An UPDATE's rows: its attributes and everything they carry, then its IPv4 NLRI. */
+function flattenUpdate(batches: Batches, msg: BgpUpdateMessage, messageId: number): void {
   for (const attr of msg.pathAttributes) {
-    const attrData = extractPathAttribute(attr, messageId)
-    pathAttrsData.push(attrData)
+    flattenPathAttribute(batches.pathAttributes, attr, messageId)
 
-    // Extract AS_PATH
-    if (attr.parsed?.type === 'AS_PATH') {
-      extractAsPath(attr.parsed as AsPathAttribute, messageId, asPathData)
-    }
-
-    // Extract communities
-    if (attr.parsed?.type === 'COMMUNITIES') {
-      extractCommunities(attr.parsed as CommunitiesAttribute, messageId, communitiesData)
-    }
-
-    // Extract large communities
-    if (attr.parsed?.type === 'LARGE_COMMUNITIES') {
-      extractLargeCommunities(attr.parsed as LargeCommunitiesAttribute, messageId, largeCommunitiesData)
-    }
-
-    // Extract extended communities
-    if (attr.parsed?.type === 'EXTENDED_COMMUNITIES') {
-      for (const community of (attr.parsed as ExtendedCommunitiesAttribute).communities) {
-        extCommunitiesData.push({
-          id: ++extCommunityIdCounter,
-          message_id: messageId,
-          kind: community.kind,
-          value: community.value,
-          formatted: formatExtendedCommunity(community),
-          transitive: community.transitive,
-          type_code: community.typeCode,
-          subtype: community.subtype,
-        })
+    const parsed = attr.parsed
+    if (!parsed) continue
+    switch (parsed.type) {
+      case 'AS_PATH':
+        flattenAsPath(batches.asPath, parsed as AsPathAttribute, messageId)
+        break
+      case 'COMMUNITIES':
+        flattenCommunities(batches.communities, parsed as CommunitiesAttribute, messageId)
+        break
+      case 'LARGE_COMMUNITIES':
+        flattenLargeCommunities(batches.largeCommunities, parsed as LargeCommunitiesAttribute, messageId)
+        break
+      case 'EXTENDED_COMMUNITIES': {
+        const batch = batches.extCommunities
+        const c = batch.columns
+        for (const community of (parsed as ExtendedCommunitiesAttribute).communities) {
+          const row = batch.rows++
+          c.id.set(row, ++extCommunityIdCounter)
+          c.message_id.set(row, messageId)
+          c.kind.set(row, community.kind)
+          c.value.set(row, community.value)
+          c.formatted.set(row, formatExtendedCommunity(community))
+          c.transitive.set(row, community.transitive)
+          c.type_code.set(row, community.typeCode)
+          c.subtype.set(row, community.subtype)
+        }
+        break
       }
-    }
-
-    // Extract MP_REACH_NLRI
-    if (attr.parsed?.type === 'MP_REACH_NLRI') {
-      const mp = attr.parsed as MpReachNlriAttribute
-      for (const prefix of mp.nlri) {
-        nlriData.push(prefixRow(++nlriIdCounter, messageId, prefix, mp.afi, mp.safi))
+      case 'MP_REACH_NLRI': {
+        const mp = parsed as MpReachNlriAttribute
+        for (const prefix of mp.nlri) {
+          flattenPrefix(batches.nlri, ++nlriIdCounter, messageId, prefix, mp.afi, mp.safi)
+        }
+        break
       }
-    }
-
-    // Extract MP_UNREACH_NLRI
-    if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
-      const mp = attr.parsed as MpUnreachNlriAttribute
-      for (const prefix of mp.withdrawnRoutes) {
-        withdrawnData.push(prefixRow(++withdrawnIdCounter, messageId, prefix, mp.afi, mp.safi))
+      case 'MP_UNREACH_NLRI': {
+        const mp = parsed as MpUnreachNlriAttribute
+        for (const prefix of mp.withdrawnRoutes) {
+          flattenPrefix(batches.withdrawn, ++withdrawnIdCounter, messageId, prefix, mp.afi, mp.safi)
+        }
+        break
       }
     }
   }
 
-  // IPv4 NLRI
   for (const prefix of msg.nlri) {
-    nlriData.push(prefixRow(++nlriIdCounter, messageId, prefix, 1, 1))
+    flattenPrefix(batches.nlri, ++nlriIdCounter, messageId, prefix, 1, 1)
   }
-
-  // IPv4 Withdrawn
   for (const prefix of msg.withdrawnRoutes) {
-    withdrawnData.push(prefixRow(++withdrawnIdCounter, messageId, prefix, 1, 1))
+    flattenPrefix(batches.withdrawn, ++withdrawnIdCounter, messageId, prefix, 1, 1)
   }
 }
 
@@ -787,179 +541,115 @@ function extractUpdateData(
  * well; every other family leaves them NULL, which is what makes
  * `WHERE evpn_mac = …` a question SQL can answer over a mixed capture.
  */
-function prefixRow(
+function flattenPrefix(
+  batch: PrefixBatch,
   id: number,
   messageId: number,
   prefix: BgpPrefix,
   afi: number,
   safi: number
-): PrefixRow {
-  const evpn = prefix.evpn
-  return {
-    id,
-    message_id: messageId,
-    prefix: prefix.prefix,
-    prefix_length: prefix.length,
-    prefix_bits: bgpPrefixBitKey(prefix),
-    afi,
-    safi,
-    evpn_route_type: evpn?.routeType ?? null,
-    evpn_type_name: evpn?.routeTypeName ?? null,
-    evpn_rd: evpn?.rd ?? null,
-    evpn_mac: evpn?.macAddress ?? null,
-    evpn_ip: evpn?.ipAddress ?? null,
-    evpn_vni: evpn?.label ?? null,
-    evpn_vni2: evpn?.label2 ?? null,
-    evpn_esi: evpn?.esi ?? null,
-    evpn_eth_tag: evpn?.ethernetTag ?? null,
-  }
-}
-
-/**
- * Extract path attribute data
- */
-function extractPathAttribute(
-  attr: BgpPathAttribute,
-  messageId: number
-): {
-  id: number
-  message_id: number
-  type_code: number
-  type_name: string
-  flags_optional: boolean
-  flags_transitive: boolean
-  flags_partial: boolean
-  flags_extended: boolean
-  origin_value: string | null
-  next_hop: string | null
-  med_value: number | null
-  local_pref: number | null
-  aggregator_as: number | null
-  aggregator_addr: string | null
-} {
-  const data = {
-    id: ++pathAttrIdCounter,
-    message_id: messageId,
-    type_code: attr.typeCode,
-    type_name: attr.typeName,
-    flags_optional: attr.flags.optional,
-    flags_transitive: attr.flags.transitive,
-    flags_partial: attr.flags.partial,
-    flags_extended: attr.flags.extendedLength,
-    origin_value: null as string | null,
-    next_hop: null as string | null,
-    med_value: null as number | null,
-    local_pref: null as number | null,
-    aggregator_as: null as number | null,
-    aggregator_addr: null as string | null,
-  }
-
-  if (attr.parsed) {
-    switch (attr.parsed.type) {
-      case 'ORIGIN':
-        data.origin_value = attr.parsed.value
-        break
-      case 'NEXT_HOP':
-        data.next_hop = attr.parsed.address
-        break
-      case 'MULTI_EXIT_DISC':
-        data.med_value = attr.parsed.value
-        break
-      case 'LOCAL_PREF':
-        data.local_pref = attr.parsed.value
-        break
-      case 'AGGREGATOR':
-        data.aggregator_as = attr.parsed.asNumber
-        data.aggregator_addr = attr.parsed.address
-        break
-    }
-  }
-
-  return data
-}
-
-/**
- * Extract AS_PATH segments
- */
-function extractAsPath(
-  asPath: AsPathAttribute,
-  messageId: number,
-  asPathData: Array<{
-    id: number
-    message_id: number
-    segment_type: string
-    segment_index: number
-    as_index: number
-    asn: number
-  }>
 ): void {
+  const row = batch.rows++
+  const c = batch.columns
+  c.id.set(row, id)
+  c.message_id.set(row, messageId)
+  c.prefix.set(row, prefix.prefix)
+  c.prefix_length.set(row, prefix.length)
+  c.prefix_bits.set(row, bgpPrefixBitKey(prefix))
+  c.afi.set(row, afi)
+  c.safi.set(row, safi)
+  const evpn = prefix.evpn
+  if (evpn) {
+    c.evpn_route_type.set(row, evpn.routeType)
+    c.evpn_type_name.set(row, evpn.routeTypeName)
+    c.evpn_rd.set(row, evpn.rd)
+    c.evpn_mac.set(row, evpn.macAddress)
+    c.evpn_ip.set(row, evpn.ipAddress)
+    c.evpn_vni.set(row, evpn.label)
+    c.evpn_vni2.set(row, evpn.label2)
+    c.evpn_esi.set(row, evpn.esi)
+    c.evpn_eth_tag.set(row, evpn.ethernetTag)
+  }
+}
+
+/** One `path_attributes` row, with the value of the attributes simple enough to have a column. */
+function flattenPathAttribute(batch: Batches['pathAttributes'], attr: BgpPathAttribute, messageId: number): void {
+  const row = batch.rows++
+  const c = batch.columns
+  c.id.set(row, ++pathAttrIdCounter)
+  c.message_id.set(row, messageId)
+  c.type_code.set(row, attr.typeCode)
+  c.type_name.set(row, attr.typeName)
+  c.flags_optional.set(row, attr.flags.optional)
+  c.flags_transitive.set(row, attr.flags.transitive)
+  c.flags_partial.set(row, attr.flags.partial)
+  c.flags_extended.set(row, attr.flags.extendedLength)
+
+  switch (attr.parsed?.type) {
+    case 'ORIGIN':
+      c.origin_value.set(row, attr.parsed.value)
+      break
+    case 'NEXT_HOP':
+      c.next_hop.set(row, attr.parsed.address)
+      break
+    case 'MULTI_EXIT_DISC':
+      c.med_value.set(row, attr.parsed.value)
+      break
+    case 'LOCAL_PREF':
+      c.local_pref.set(row, attr.parsed.value)
+      break
+    case 'AGGREGATOR':
+      c.aggregator_as.set(row, attr.parsed.asNumber)
+      c.aggregator_addr.set(row, attr.parsed.address)
+      break
+  }
+}
+
+/** An AS_PATH's `as_path` rows, one per AS number. */
+function flattenAsPath(batch: Batches['asPath'], asPath: AsPathAttribute, messageId: number): void {
+  const c = batch.columns
   for (let segIdx = 0; segIdx < asPath.segments.length; segIdx++) {
     const segment = asPath.segments[segIdx]
     for (let asIdx = 0; asIdx < segment.asNumbers.length; asIdx++) {
-      asPathData.push({
-        id: ++asPathIdCounter,
-        message_id: messageId,
-        segment_type: segment.type,
-        segment_index: segIdx,
-        as_index: asIdx,
-        asn: segment.asNumbers[asIdx],
-      })
+      const row = batch.rows++
+      c.id.set(row, ++asPathIdCounter)
+      c.message_id.set(row, messageId)
+      c.segment_type.set(row, segment.type)
+      c.segment_index.set(row, segIdx)
+      c.as_index.set(row, asIdx)
+      c.asn.set(row, segment.asNumbers[asIdx])
     }
   }
 }
 
-/**
- * Extract communities
- */
-function extractCommunities(
-  communities: CommunitiesAttribute,
-  messageId: number,
-  communitiesData: Array<{
-    id: number
-    message_id: number
-    asn: number
-    value: number
-    formatted: string
-  }>
-): void {
+/** A COMMUNITIES attribute's rows; anything not shaped `ASN:VALUE` is skipped, as it always was. */
+function flattenCommunities(batch: Batches['communities'], communities: CommunitiesAttribute, messageId: number): void {
+  const c = batch.columns
   for (const community of communities.communities) {
-    // Parse "ASN:VALUE" format
     const parts = community.split(':')
-    if (parts.length === 2) {
-      communitiesData.push({
-        id: ++communityIdCounter,
-        message_id: messageId,
-        asn: parseInt(parts[0], 10),
-        value: parseInt(parts[1], 10),
-        formatted: community,
-      })
-    }
+    if (parts.length !== 2) continue
+    const row = batch.rows++
+    c.id.set(row, ++communityIdCounter)
+    c.message_id.set(row, messageId)
+    c.asn.set(row, parseInt(parts[0], 10))
+    c.value.set(row, parseInt(parts[1], 10))
+    c.formatted.set(row, community)
   }
 }
 
-/**
- * Extract large communities
- */
-function extractLargeCommunities(
+function flattenLargeCommunities(
+  batch: Batches['largeCommunities'],
   largeCommunities: LargeCommunitiesAttribute,
-  messageId: number,
-  largeCommunitiesData: Array<{
-    id: number
-    message_id: number
-    global_admin: number
-    local_data1: number
-    local_data2: number
-    formatted: string
-  }>
+  messageId: number
 ): void {
+  const c = batch.columns
   for (const lc of largeCommunities.communities) {
-    largeCommunitiesData.push({
-      id: ++largeCommunityIdCounter,
-      message_id: messageId,
-      global_admin: lc.globalAdmin,
-      local_data1: lc.localData1,
-      local_data2: lc.localData2,
-      formatted: `${lc.globalAdmin}:${lc.localData1}:${lc.localData2}`,
-    })
+    const row = batch.rows++
+    c.id.set(row, ++largeCommunityIdCounter)
+    c.message_id.set(row, messageId)
+    c.global_admin.set(row, lc.globalAdmin)
+    c.local_data1.set(row, lc.localData1)
+    c.local_data2.set(row, lc.localData2)
+    c.formatted.set(row, `${lc.globalAdmin}:${lc.localData1}:${lc.localData2}`)
   }
 }

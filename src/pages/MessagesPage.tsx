@@ -506,114 +506,28 @@ function MessagesView({ linked }: { linked: boolean }) {
     [packets, displayPackets, selectPacket]
   )
 
-  // Extract all dynamic values from packets for filter dropdowns
+  /**
+   * The values seen in the capture for each field, for the + Filter popover —
+   * collected the first time the popover asks, and sorted one field at a time
+   * as it asks for that field.
+   *
+   * This used to be collected and sorted for every field on the first render,
+   * before the packet list could appear. On a capture where every UPDATE has a
+   * prefix of its own that is millions of strings through a locale-aware sort:
+   * eight seconds of frozen page at 50MB, a minute and a half at 200MB, for a
+   * popover most loads never open.
+   */
   const dynamicValues = useMemo(() => {
-    const values = {
-      src_ip: new Set<string>(),
-      dst_ip: new Set<string>(),
-      src_as: new Set<string>(),
-      router_id: new Set<string>(),
-      asn: new Set<string>(),
-      next_hop: new Set<string>(),
-      prefix: new Set<string>(),
-      withdrawn: new Set<string>(),
-      community: new Set<string>(),
-      capability: new Set<string>(),
-    }
-
-    for (const packet of packets) {
-      values.src_ip.add(packet.srcIp)
-      values.dst_ip.add(packet.dstIp)
-
-      for (const msg of packet.messages) {
-        if (msg.type === 'OPEN') {
-          const open = msg as BgpOpenMessage
-          values.src_as.add(String(open.fourByteAs ?? open.myAs))
-          values.router_id.add(open.bgpIdentifier)
-          for (const cap of open.capabilities) {
-            values.capability.add(cap.name)
-          }
-        }
-
-        if (msg.type === 'UPDATE') {
-          const update = msg as BgpUpdateMessage
-
-          // NLRI prefixes (add to both prefix and withdrawn for unified view)
-          for (const p of update.nlri) {
-            const prefixStr = `${p.prefix}/${p.length}`
-            values.prefix.add(prefixStr)
-          }
-          // Withdrawn prefixes (add to both prefix and withdrawn)
-          for (const p of update.withdrawnRoutes) {
-            const prefixStr = `${p.prefix}/${p.length}`
-            values.prefix.add(prefixStr)
-            values.withdrawn.add(prefixStr)
-          }
-
-          // Path attributes
-          for (const attr of update.pathAttributes) {
-            if (attr.parsed?.type === 'AS_PATH') {
-              const asPath = attr.parsed as AsPathAttribute
-              for (const seg of asPath.segments) {
-                for (const asn of seg.asNumbers) {
-                  values.asn.add(String(asn))
-                }
-              }
-            }
-            if (attr.parsed?.type === 'NEXT_HOP') {
-              values.next_hop.add((attr.parsed as NextHopAttribute).address)
-            }
-            if (attr.parsed?.type === 'MP_REACH_NLRI') {
-              const mpReach = attr.parsed as MpReachNlriAttribute
-              values.next_hop.add(mpReach.nextHop)
-              for (const p of mpReach.nlri) {
-                values.prefix.add(`${p.prefix}/${p.length}`)
-              }
-            }
-            if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
-              const mpUnreach = attr.parsed as MpUnreachNlriAttribute
-              for (const p of mpUnreach.withdrawnRoutes) {
-                const prefixStr = `${p.prefix}/${p.length}`
-                values.prefix.add(prefixStr)
-                values.withdrawn.add(prefixStr)
-              }
-            }
-            if (attr.parsed?.type === 'COMMUNITIES') {
-              const comm = attr.parsed as CommunitiesAttribute
-              for (const c of comm.communities) {
-                values.community.add(c)
-              }
-            }
-            if (attr.parsed?.type === 'LARGE_COMMUNITIES') {
-              const lcomm = attr.parsed as LargeCommunitiesAttribute
-              for (const c of lcomm.communities) {
-                values.community.add(`${c.globalAdmin}:${c.localData1}:${c.localData2}`)
-              }
-            }
-          }
-        }
+    let collected: ReturnType<typeof collectFieldValues> | null = null
+    const sorted = new Map<keyof ReturnType<typeof collectFieldValues>, string[]>()
+    return (field: keyof ReturnType<typeof collectFieldValues>): string[] => {
+      collected ??= collectFieldValues(packets)
+      let values = sorted.get(field)
+      if (!values) {
+        values = Array.from(collected[field]).sort(FIELD_VALUE_ORDER[field])
+        sorted.set(field, values)
       }
-    }
-
-    // Convert to sorted arrays
-    const sortIp = (a: string, b: string) => {
-      const aIsV6 = a.includes(':')
-      const bIsV6 = b.includes(':')
-      if (aIsV6 !== bIsV6) return aIsV6 ? 1 : -1
-      return a.localeCompare(b)
-    }
-
-    return {
-      src_ip: Array.from(values.src_ip).sort(sortIp),
-      dst_ip: Array.from(values.dst_ip).sort(sortIp),
-      src_as: Array.from(values.src_as).sort((a, b) => Number(a) - Number(b)),
-      router_id: Array.from(values.router_id).sort(),
-      asn: Array.from(values.asn).sort((a, b) => Number(a) - Number(b)),
-      next_hop: Array.from(values.next_hop).sort(sortIp),
-      prefix: Array.from(values.prefix).sort(sortIp),
-      withdrawn: Array.from(values.withdrawn).sort(sortIp),
-      community: Array.from(values.community).sort(),
-      capability: Array.from(values.capability).sort(),
+      return values
     }
   }, [packets])
 
@@ -621,11 +535,11 @@ function MessagesView({ linked }: { linked: boolean }) {
   const valuesFor = useCallback(
     (field: FilterFieldName | 'ip'): string[] => {
       if (field === 'ip') {
-        return Array.from(new Set([...dynamicValues.src_ip, ...dynamicValues.dst_ip]))
+        return Array.from(new Set([...dynamicValues('src_ip'), ...dynamicValues('dst_ip')]))
       }
       const fieldDef = FILTER_FIELDS[field]
       if (fieldDef.values.length > 0) return fieldDef.values as string[]
-      return dynamicValues[field as keyof typeof dynamicValues] ?? []
+      return field in FIELD_VALUE_ORDER ? dynamicValues(field as keyof typeof FIELD_VALUE_ORDER) : []
     },
     [dynamicValues]
   )
@@ -956,4 +870,118 @@ function GenericPacketDetail({ packet }: { packet: GenericPacket }) {
       </div>
     </div>
   )
+}
+
+/** How each field's values are ordered in the + Filter popover. */
+const sortIp = (a: string, b: string) => {
+  const aIsV6 = a.includes(':')
+  const bIsV6 = b.includes(':')
+  if (aIsV6 !== bIsV6) return aIsV6 ? 1 : -1
+  return a.localeCompare(b)
+}
+const byNumber = (a: string, b: string) => Number(a) - Number(b)
+/** Default `sort()` order — UTF-16 code units — as these fields have always had. */
+const byCodeUnit = undefined
+const FIELD_VALUE_ORDER = {
+  src_ip: sortIp,
+  dst_ip: sortIp,
+  src_as: byNumber,
+  router_id: byCodeUnit,
+  asn: byNumber,
+  next_hop: sortIp,
+  prefix: sortIp,
+  withdrawn: sortIp,
+  community: byCodeUnit,
+  capability: byCodeUnit,
+} as const
+
+/** Every value each field takes in `packets`. */
+function collectFieldValues(packets: BgpPacket[]) {
+  const values = {
+    src_ip: new Set<string>(),
+    dst_ip: new Set<string>(),
+    src_as: new Set<string>(),
+    router_id: new Set<string>(),
+    asn: new Set<string>(),
+    next_hop: new Set<string>(),
+    prefix: new Set<string>(),
+    withdrawn: new Set<string>(),
+    community: new Set<string>(),
+    capability: new Set<string>(),
+  }
+
+  for (const packet of packets) {
+    values.src_ip.add(packet.srcIp)
+    values.dst_ip.add(packet.dstIp)
+
+    for (const msg of packet.messages) {
+      if (msg.type === 'OPEN') {
+        const open = msg as BgpOpenMessage
+        values.src_as.add(String(open.fourByteAs ?? open.myAs))
+        values.router_id.add(open.bgpIdentifier)
+        for (const cap of open.capabilities) {
+          values.capability.add(cap.name)
+        }
+      }
+
+      if (msg.type === 'UPDATE') {
+        const update = msg as BgpUpdateMessage
+
+        // NLRI prefixes (add to both prefix and withdrawn for unified view)
+        for (const p of update.nlri) {
+          const prefixStr = `${p.prefix}/${p.length}`
+          values.prefix.add(prefixStr)
+        }
+        // Withdrawn prefixes (add to both prefix and withdrawn)
+        for (const p of update.withdrawnRoutes) {
+          const prefixStr = `${p.prefix}/${p.length}`
+          values.prefix.add(prefixStr)
+          values.withdrawn.add(prefixStr)
+        }
+
+        // Path attributes
+        for (const attr of update.pathAttributes) {
+          if (attr.parsed?.type === 'AS_PATH') {
+            const asPath = attr.parsed as AsPathAttribute
+            for (const seg of asPath.segments) {
+              for (const asn of seg.asNumbers) {
+                values.asn.add(String(asn))
+              }
+            }
+          }
+          if (attr.parsed?.type === 'NEXT_HOP') {
+            values.next_hop.add((attr.parsed as NextHopAttribute).address)
+          }
+          if (attr.parsed?.type === 'MP_REACH_NLRI') {
+            const mpReach = attr.parsed as MpReachNlriAttribute
+            values.next_hop.add(mpReach.nextHop)
+            for (const p of mpReach.nlri) {
+              values.prefix.add(`${p.prefix}/${p.length}`)
+            }
+          }
+          if (attr.parsed?.type === 'MP_UNREACH_NLRI') {
+            const mpUnreach = attr.parsed as MpUnreachNlriAttribute
+            for (const p of mpUnreach.withdrawnRoutes) {
+              const prefixStr = `${p.prefix}/${p.length}`
+              values.prefix.add(prefixStr)
+              values.withdrawn.add(prefixStr)
+            }
+          }
+          if (attr.parsed?.type === 'COMMUNITIES') {
+            const comm = attr.parsed as CommunitiesAttribute
+            for (const c of comm.communities) {
+              values.community.add(c)
+            }
+          }
+          if (attr.parsed?.type === 'LARGE_COMMUNITIES') {
+            const lcomm = attr.parsed as LargeCommunitiesAttribute
+            for (const c of lcomm.communities) {
+              values.community.add(`${c.globalAdmin}:${c.localData1}:${c.localData2}`)
+            }
+          }
+        }
+      }
+    }
+  }
+  return values
 }

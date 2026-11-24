@@ -1,3 +1,4 @@
+import { yieldToPage } from '../yield-to-page'
 import { BinaryReader } from '../pcap/reader'
 import type { RawPacket } from '../pcap/types'
 import {
@@ -13,6 +14,7 @@ import { parseNotificationMessage } from './notification'
 import { parseUpdateMessage } from './update'
 import { BgpSessionTracker, endpointKey, type UpdateDecoding } from './session'
 import { getAfiName, getSafiName } from './constants'
+import { NO_WARNINGS, SharedDecodedValues } from './shared-decode'
 
 const BGP_HEADER_LENGTH = 19
 const BGP_MIN_MESSAGE_LENGTH = 19
@@ -72,6 +74,72 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
  * multiple TCP segments of the same flow.
  */
 export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
+  const decoder = createBgpDecoder()
+  for (let i = 0; i < rawPackets.length; i++) decoder.addPacket(rawPackets[i], i)
+  return decoder.finish()
+}
+
+/**
+ * How long one slice of `parseBgpFromPacketsAsync` may run before it hands
+ * the page back — the same budget as the route statistics' slices.
+ */
+const DECODE_SLICE_MS = 12
+
+/**
+ * How many packets are decoded between looks at the clock. A dense frame —
+ * a full segment of small UPDATEs — is a few tens of microseconds, so this
+ * keeps a slice within a fraction of a millisecond of its budget without
+ * paying for a clock read per packet.
+ */
+const DECODE_CLOCK_EVERY = 16
+
+export interface DecodeSliceOptions {
+  /** Called after each slice with the packets decoded so far. */
+  onProgress?: (done: number, total: number) => void
+  /** Checked after each slice; true abandons the decode and resolves to null. */
+  shouldStop?: () => boolean
+  /** Budget per slice in milliseconds. Tests set 0 to slice as finely as possible. */
+  sliceMs?: number
+}
+
+/**
+ * `parseBgpFromPackets`, in slices that return to the event loop between
+ * them, so the page can repaint the load gauge while a large capture decodes.
+ *
+ * Decoding a 100MB capture in one go held the page for about seven seconds
+ * with the gauge frozen at the start of the stage, which reads as a hang. The
+ * work and its result are identical: every bit of state that carries from one
+ * packet to the next — each flow's reassembly buffer, each session's
+ * negotiated decoding — lives in the decoder, not the loop, so a slice
+ * boundary between two segments of one message is no different from the gap
+ * between two loop iterations.
+ */
+export async function parseBgpFromPacketsAsync(
+  rawPackets: RawPacket[],
+  options: DecodeSliceOptions = {}
+): Promise<BgpParseResult | null> {
+  const { onProgress, shouldStop, sliceMs = DECODE_SLICE_MS } = options
+  const decoder = createBgpDecoder()
+  const total = rawPackets.length
+  let sliceStart = performance.now()
+  for (let i = 0; i < total; i++) {
+    decoder.addPacket(rawPackets[i], i)
+    if (i % DECODE_CLOCK_EVERY === DECODE_CLOCK_EVERY - 1 && performance.now() - sliceStart >= sliceMs) {
+      onProgress?.(i + 1, total)
+      await yieldToPage()
+      if (shouldStop?.()) return null
+      sliceStart = performance.now()
+    }
+  }
+  onProgress?.(total, total)
+  return decoder.finish()
+}
+
+/**
+ * The decoder behind both entry points: packets go in one at a time, in
+ * capture order, and `finish` returns what they decoded to.
+ */
+function createBgpDecoder() {
   const packets: BgpPacket[] = []
   const warnings: string[] = []
   const flowBuffers = new Map<string, Uint8Array>()
@@ -79,9 +147,11 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
   // order, so by the time UPDATEs arrive the OPENs that govern how to read
   // them have already been seen.
   const sessions = new BgpSessionTracker()
+  // One copy of each value the capture repeats; see shared-decode.ts.
+  const shared = new SharedDecodedValues()
 
-  for (let i = 0; i < rawPackets.length; i++) {
-    const raw = rawPackets[i]
+  /** Decode one packet; `i` is its position in the capture's TCP packets. */
+  function addPacket(raw: RawPacket, i: number): void {
     const packetWarnings: string[] = []
     const key = flowKey(raw)
 
@@ -95,6 +165,7 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
       const { messages, remainder } = parseBgpMessages(payload, packetWarnings, i + 1, {
         decoding: () => sessions.decodingFor(from, to),
         observeOpen: (open) => sessions.observeOpen(from, open),
+        shared,
       })
 
       if (remainder.length > BGP_MAX_MESSAGE_LENGTH) {
@@ -120,7 +191,7 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
           dstPort: raw.dstPort,
           messages,
           rawData: raw.tcpPayload,
-          parseWarnings: [...packetWarnings],
+          parseWarnings: packetWarnings.length > 0 ? [...packetWarnings] : NO_WARNINGS,
         })
       }
 
@@ -132,18 +203,21 @@ export function parseBgpFromPackets(rawPackets: RawPacket[]): BgpParseResult {
     }
   }
 
-  // Flag any flow that still has an incomplete message buffered once the
-  // capture ends, rather than silently discarding it.
-  for (const [key, remainder] of flowBuffers) {
-    if (remainder.length > 0) {
-      warnings.push(
-        `Flow ${key}: capture ended with ${remainder.length} incomplete byte(s) buffered ` +
-          `(partial BGP message never completed).`
-      )
+  function finish(): BgpParseResult {
+    // Flag any flow that still has an incomplete message buffered once the
+    // capture ends, rather than silently discarding it.
+    for (const [key, remainder] of flowBuffers) {
+      if (remainder.length > 0) {
+        warnings.push(
+          `Flow ${key}: capture ended with ${remainder.length} incomplete byte(s) buffered ` +
+            `(partial BGP message never completed).`
+        )
+      }
     }
+    return { packets, warnings }
   }
 
-  return { packets, warnings }
+  return { addPacket, finish }
 }
 
 /**
@@ -167,6 +241,8 @@ interface BgpMessagesResult {
 interface SessionContext {
   decoding: () => UpdateDecoding
   observeOpen: (open: BgpOpenMessage) => void
+  /** The capture's shared decoded values, when decoding a whole capture. */
+  shared?: SharedDecodedValues
 }
 
 function parseBgpMessages(
@@ -224,7 +300,8 @@ function parseBgpMessages(
         messageReader,
         session.decoding(),
         warnings,
-        packetIndex
+        packetIndex,
+        session.shared
       )
       if (message) {
         // Registered as it is read, so an OPEN and an UPDATE arriving in the
@@ -284,7 +361,8 @@ function parseBgpMessageBody(
   reader: BinaryReader,
   decoding: UpdateDecoding,
   warnings: string[],
-  packetIndex: number
+  packetIndex: number,
+  shared?: SharedDecodedValues
 ): BgpMessage | null {
   switch (type) {
     case BgpMessageType.OPEN:
@@ -299,7 +377,7 @@ function parseBgpMessageBody(
       // the family maximum, an NLRI block that decodes two different ways —
       // were collected and then dropped. The parser was talking to no one.
       const before = warnings.length
-      const message = parseUpdateMessage(updateData, warnings, decoding)
+      const message = parseUpdateMessage(updateData, warnings, decoding, shared)
       for (let i = before; i < warnings.length; i++) {
         warnings[i] = `Packet ${packetIndex}: ${warnings[i]}`
       }
