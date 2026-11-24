@@ -8,6 +8,7 @@
  * Kept out of the page so the counting rules — the flap definition especially —
  * can be tested without a browser.
  */
+import { yieldToPage } from '../yield-to-page'
 import type { BgpPacket, BgpPrefix, BgpUpdateMessage } from './types'
 import { formatEvpnIdentity } from './evpn'
 import { formatPrefix, parseBgpPrefix, type ParsedPrefix } from '../net/prefix'
@@ -132,7 +133,7 @@ export async function prefixStatsForAsync(
     // The clock is read every so often rather than per packet: a packet is a
     // few microseconds of work, the clock a noticeable fraction of that.
     if ((packetIndex & 0xff) === 0xff && performance.now() - sliceStart > SLICE_MS) {
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      await yieldToPage()
       // Nobody is waiting any more — another capture, another scope — so stop
       // rather than finish statistics nothing will read.
       if (signal?.aborted) return null

@@ -1,6 +1,7 @@
 /**
  * Data Loader - Load BgpPacket[] into DuckDB
  */
+import { yieldToPage } from '../yield-to-page'
 import type { AsyncDuckDBConnection } from '@duckdb/duckdb-wasm'
 import { getConnection, resetDatabase, markDataLoaded } from './database'
 import { addressBitKey, bgpPrefixBitKey } from '../net/prefix'
@@ -324,7 +325,7 @@ async function insertPackets(
     } else if ((index & 0x3f) === 0x3f && performance.now() - sliceStart > FLATTEN_SLICE_MS) {
       // While the worker is busy with the chunk in flight there is nothing to
       // wait for, so the page would otherwise be held for the whole chunk.
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      await yieldToPage()
       sliceStart = performance.now()
     }
   }

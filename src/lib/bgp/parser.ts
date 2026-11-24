@@ -1,3 +1,4 @@
+import { yieldToPage } from '../yield-to-page'
 import { BinaryReader } from '../pcap/reader'
 import type { RawPacket } from '../pcap/types'
 import {
@@ -124,7 +125,7 @@ export async function parseBgpFromPacketsAsync(
     decoder.addPacket(rawPackets[i], i)
     if (i % DECODE_CLOCK_EVERY === DECODE_CLOCK_EVERY - 1 && performance.now() - sliceStart >= sliceMs) {
       onProgress?.(i + 1, total)
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      await yieldToPage()
       if (shouldStop?.()) return null
       sliceStart = performance.now()
     }
