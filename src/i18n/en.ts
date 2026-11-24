@@ -72,7 +72,7 @@ export const en = {
       `${count} warning${count > 1 ? 's' : ''} loading this capture`,
     more: (count: number) => `…and ${count} more`,
     duckdbFailed:
-      'Packets could not be loaded into DuckDB. Filtering works in-memory; the SQL console is unavailable for this capture.',
+      'Packets could not be loaded into DuckDB, so the SQL console is unavailable for this capture. Every other screen, filtering included, works without it.',
     noIpPackets: 'No IP packets found in the pcap file.',
     unknownError: 'Unknown error occurred',
   },
@@ -604,8 +604,8 @@ export const en = {
 
   sql: {
     title: 'SQL Console',
-    duckdbNotInitialized: '⚠ DuckDB not initialized. Load a pcap file first.',
-    duckdbLoading: 'This capture is still loading into DuckDB. SQL becomes available when it finishes.',
+    duckdbNotInitialized: '⚠ DuckDB could not be started, so SQL is unavailable. Every other screen works without it; reopen this screen to try again.',
+    duckdbLoading: 'Loading this capture into DuckDB. SQL becomes available when it finishes.',
     duckdbUnavailable:
       '⚠ This capture could not be loaded into DuckDB, so SQL is unavailable. Filtering on the other screens still works in-memory.',
     queryHeading: 'Query',

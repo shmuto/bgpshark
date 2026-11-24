@@ -18,21 +18,22 @@ export async function loadSample(page: Page) {
 
 /**
  * Waits for a freshly loaded capture to land on Messages, where it opens and
- * where most specs work — and for its DuckDB insert to finish.
- *
- * The insert runs after the list is on screen, so landing is not the end of
- * the load: until the header's database gauge is gone, filters run in memory
- * and the SQL console refuses queries. Specs assert on both, so they start from
- * the settled state rather than racing the insert.
+ * where most specs work. Nothing else is still loading by then: DuckDB takes
+ * the capture only once the SQL console asks for it (see `waitForDatabase`).
  */
 export async function openMessagesAfterLoad(page: Page, timeout = 30_000) {
   await page.waitForURL('**/messages', { timeout })
   await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
-  await waitForDatabase(page, timeout)
 }
 
-/** Waits until the capture's background DuckDB insert has finished. */
+/**
+ * On the SQL console, waits until DuckDB holds the capture: the console
+ * inserts it on arrival, and its editor is enabled once the insert is done.
+ * Waiting for the header's gauge to go would race the request that puts it up.
+ */
 export async function waitForDatabase(page: Page, timeout = 30_000) {
+  await expect(page.getByRole('heading', { name: 'SQL Console' })).toBeVisible()
+  await expect(page.locator('textarea').first()).toBeEnabled({ timeout })
   await expect(page.getByTestId('db-load-status')).toHaveCount(0, { timeout })
 }
 
@@ -97,6 +98,7 @@ export async function applyFilter(page: Page, expression: string) {
  * digits would answer assertions about the result table.
  */
 export async function runSql(page: Page, sql: string): Promise<string> {
+  await waitForDatabase(page)
   const editor = page.locator('textarea').first()
   await editor.click()
   await editor.fill(sql)

@@ -78,7 +78,7 @@ export const ja: Messages = {
     bannerCount: (count: number) => `キャプチャの読み込み中に ${count} 件の警告がありました`,
     more: (count: number) => `…他 ${count} 件`,
     duckdbFailed:
-      'パケットを DuckDB に読み込めませんでした。フィルタはメモリ上で動作しますが、このキャプチャでは SQL コンソールを利用できません。',
+      'パケットを DuckDB に読み込めなかったため、このキャプチャでは SQL コンソールを利用できません。フィルタを含む他の画面は DuckDB なしで動作します。',
     noIpPackets: 'pcap ファイル内に IP パケットが見つかりませんでした。',
     unknownError: '不明なエラーが発生しました',
   },
@@ -604,7 +604,7 @@ export const ja: Messages = {
 
   sql: {
     title: 'SQL コンソール',
-    duckdbNotInitialized: '⚠ DuckDB が初期化されていません。先に pcap ファイルを読み込んでください。',
+    duckdbNotInitialized: '⚠ DuckDB を起動できなかったため SQL は利用できません。他の画面は DuckDB なしで動作します。この画面を開き直すと再試行します。',
     duckdbLoading: 'このキャプチャを DuckDB に読み込んでいます。完了すると SQL を利用できます。',
     duckdbUnavailable:
       '⚠ このキャプチャを DuckDB に読み込めなかったため SQL は利用できません。他の画面のフィルタはメモリ上で動作します。',

@@ -20,7 +20,12 @@
  * and queried as a whole, which DuckDB's columnar scans (with the min/max
  * zone maps it keeps per row group) answer without help; an index pays off
  * for point lookups into a table that outlives many of them, which these do
- * not. The primary keys stay, as the constraint they state.
+ * not.
+ *
+ * Nor primary keys, for the same reason. The ids are numbered by the loader,
+ * one after another, so the constraint had nothing to catch, and its index
+ * was half of the tables' memory: a 94MB capture of table transfers went from
+ * 277MB to 139MB without it, and its SQL console was ready 10 seconds sooner.
  *
  * Nor do packets carry their raw bytes. A Base64 copy of every frame was
  * stored and read by nothing — the app reads frames from the parsed packets,
@@ -31,7 +36,7 @@
 export const SCHEMA_SQL = `
 -- Main packets table
 CREATE TABLE IF NOT EXISTS packets (
-  frame_index     INTEGER PRIMARY KEY,
+  frame_index     INTEGER,
   timestamp       TIMESTAMP,
   src_ip          VARCHAR,
   dst_ip          VARCHAR,
@@ -48,7 +53,7 @@ CREATE TABLE IF NOT EXISTS packets (
 
 -- BGP messages table
 CREATE TABLE IF NOT EXISTS messages (
-  id              INTEGER PRIMARY KEY,
+  id              INTEGER,
   frame_index     INTEGER NOT NULL,
   message_index   INTEGER NOT NULL,
   type            VARCHAR NOT NULL,
@@ -74,7 +79,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 -- Capabilities table (for OPEN messages)
 CREATE TABLE IF NOT EXISTS capabilities (
-  id              INTEGER PRIMARY KEY,
+  id              INTEGER,
   message_id      INTEGER NOT NULL,
   code            INTEGER,
   name            VARCHAR,
@@ -90,7 +95,7 @@ CREATE TABLE IF NOT EXISTS capabilities (
 
 -- Path attributes table (for UPDATE messages)
 CREATE TABLE IF NOT EXISTS path_attributes (
-  id              INTEGER PRIMARY KEY,
+  id              INTEGER,
   message_id      INTEGER NOT NULL,
   type_code       INTEGER,
   type_name       VARCHAR,
@@ -110,7 +115,7 @@ CREATE TABLE IF NOT EXISTS path_attributes (
 
 -- AS_PATH expanded table
 CREATE TABLE IF NOT EXISTS as_path (
-  id              INTEGER PRIMARY KEY,
+  id              INTEGER,
   message_id      INTEGER NOT NULL,
   segment_type    VARCHAR,
   segment_index   INTEGER,
@@ -120,7 +125,7 @@ CREATE TABLE IF NOT EXISTS as_path (
 
 -- NLRI table (announced prefixes)
 CREATE TABLE IF NOT EXISTS nlri (
-  id              INTEGER PRIMARY KEY,
+  id              INTEGER,
   message_id      INTEGER NOT NULL,
   prefix          VARCHAR,
   prefix_length   INTEGER,
@@ -148,7 +153,7 @@ CREATE TABLE IF NOT EXISTS nlri (
 
 -- Withdrawn routes table
 CREATE TABLE IF NOT EXISTS withdrawn (
-  id              INTEGER PRIMARY KEY,
+  id              INTEGER,
   message_id      INTEGER NOT NULL,
   prefix          VARCHAR,
   prefix_length   INTEGER,
@@ -172,7 +177,7 @@ CREATE TABLE IF NOT EXISTS withdrawn (
 
 -- Communities table
 CREATE TABLE IF NOT EXISTS communities (
-  id              INTEGER PRIMARY KEY,
+  id              INTEGER,
   message_id      INTEGER NOT NULL,
   asn             INTEGER,
   value           INTEGER,
@@ -183,7 +188,7 @@ CREATE TABLE IF NOT EXISTS communities (
 -- halves — 'Route Target' and '65001:100' — and \`formatted\` is the two joined,
 -- so a search can be as loose or as exact as the question being asked.
 CREATE TABLE IF NOT EXISTS extended_communities (
-  id              INTEGER PRIMARY KEY,
+  id              INTEGER,
   message_id      INTEGER NOT NULL,
   kind            VARCHAR,
   value           VARCHAR,
@@ -195,7 +200,7 @@ CREATE TABLE IF NOT EXISTS extended_communities (
 
 -- Large communities table
 CREATE TABLE IF NOT EXISTS large_communities (
-  id              INTEGER PRIMARY KEY,
+  id              INTEGER,
   message_id      INTEGER NOT NULL,
   global_admin    BIGINT,
   local_data1     BIGINT,

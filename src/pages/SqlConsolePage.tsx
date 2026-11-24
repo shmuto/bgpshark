@@ -1,7 +1,7 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
-import { executeRawSql, isInitialized, isDataLoaded } from '../lib/db'
+import { executeRawSql, isDataLoaded } from '../lib/db'
 import { describeSchema, type SchemaTableInfo } from '../lib/db/schema'
 import { useI18n, type Messages } from '../i18n'
 
@@ -140,7 +140,7 @@ ORDER BY count DESC`,
 ]
 
 export function SqlConsolePage() {
-  const { dbStatus } = useApp()
+  const { dbStatus, packets, requestDatabase } = useApp()
   const { t } = useI18n()
   const st = t.sql
   const [query, setQuery] = useState(QUERY_TEMPLATES[0].query)
@@ -170,16 +170,24 @@ export function SqlConsolePage() {
     })
   }, [])
 
-  // Three states besides "ready": the database never came up; the capture is
-  // still on its way in (the insert runs after the list is on screen); or it
-  // is up but the capture's packets never made it in. Querying in either of the
-  // last two "works" and returns zero rows for everything, so both are blocked
-  // too — each with its own explanation. `dbStatus` is state, so this screen
-  // re-renders the moment the insert finishes.
-  const dbReady = isInitialized() && dbStatus !== 'unavailable'
-  const dataLoading = dbReady && dbStatus === 'loading'
+  // The capture goes into DuckDB only when this screen asks for it, so ask
+  // on arrival and whenever another capture is opened. Asking again for the
+  // same capture does nothing.
+  useEffect(() => {
+    void requestDatabase()
+  }, [requestDatabase, packets])
+
+  // Three states besides "ready": the database did not start; the capture is
+  // still on its way in; or the database is up but the capture's packets
+  // never made it in. Querying in either of the last two "works" and returns
+  // zero rows for everything, so both are blocked too — each with its own
+  // explanation. `dbStatus` is state, so this screen re-renders the moment the
+  // insert finishes. `idle` is the moment between arriving and the request
+  // above taking effect.
+  const dbReady = dbStatus !== 'unavailable'
+  const dataLoading = dbStatus === 'loading' || dbStatus === 'idle'
   const dataLoaded = dbStatus === 'loaded' && isDataLoaded()
-  const sqlUsable = dbReady && dataLoaded
+  const sqlUsable = dataLoaded
 
   const handleExecute = useCallback(async () => {
     if (!query.trim() || !sqlUsable) return
