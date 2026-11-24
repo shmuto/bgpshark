@@ -206,7 +206,8 @@ function flagText(flags: TcpFlags | undefined): string {
 
 function listed(prefixes: Array<{ prefix: string; length: number; pathId?: number }>): string {
   const shown = prefixes.slice(0, 3).map((p) => {
-    const text = p.prefix.includes('/') ? p.prefix : `${p.prefix}/${p.length}`
+    // EVPN routes come formatted ("[2] 00:0c:…"), with no length to add.
+    const text = p.prefix.includes('/') || p.prefix.startsWith('[') ? p.prefix : `${p.prefix}/${p.length}`
     return p.pathId === undefined ? text : `${text}#${p.pathId}`
   })
   return prefixes.length > 3 ? `${shown.join(' ')} …(${prefixes.length})` : shown.join(' ')

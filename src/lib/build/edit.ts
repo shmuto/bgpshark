@@ -295,7 +295,7 @@ export function editFrame(
     capture,
     entriesOf(capture).map(({ frame, sender, number: n }) => {
       if (n !== number) return { frame, sender }
-      const frameBytes = edit(frame.frameBytes.slice())
+      const frameBytes = edit(new Uint8Array(frame.frameBytes))
       return {
         sender,
         frame: { ...frame, frameBytes, originalLength: Math.max(frame.originalLength, frameBytes.length) },
@@ -342,40 +342,133 @@ export function snapFrames(capture: BuiltCapture, length: number): BuiltCapture 
 // File edits
 // ---------------------------------------------------------------------------
 
+/** A new value for a record header field, or how to work it out from the old one. */
+export type RecordField = number | ((current: number) => number)
+
+export interface RecordPatch {
+  capturedLength?: RecordField
+  originalLength?: RecordField
+  timestamp?: Date
+}
+
+/** Where one packet record's header fields sit, and how to write them. */
+interface RecordLocation {
+  little: boolean
+  capturedLength?: number
+  originalLength: number
+  /** Writes a timestamp; absent for a pcapng Simple Packet Block, which has none. */
+  setTime?: (view: DataView, time: Date) => void
+}
+
 /**
- * A pcap file whose record header for one frame says something other than the
- * truth. This works on the file's bytes, not on a `BuiltCapture`, because the
- * whole point is a file the readers here would refuse — so it comes last, and
- * its result is written out as it is rather than merged.
+ * A capture file whose record headers say something other than the truth.
  *
- * `capturedLength` larger than the frame makes the file read as truncated from
- * that record on; `originalLength` smaller than the frame is a contradiction
- * some tools reject; `timestamp` can go backwards.
+ * This works on a file's bytes, not on a `BuiltCapture`, because the whole
+ * point is a file the readers here would refuse — so it comes last, and its
+ * result is written out as it is rather than merged. Both formats are taken,
+ * because they fail differently: a classic pcap record has nothing but its
+ * own length to say where the next one starts, so a captured length that is
+ * too large reads as the file ending there; a pcapng block states its own
+ * total length, so the same lie costs only that one packet.
+ *
+ * `numbers` are 1-based packet numbers, and all of them are located before any
+ * is changed — patching a classic pcap's lengths one call at a time would move
+ * the records after it.
  */
-export function patchRecord(
-  pcap: Uint8Array,
-  number: number,
-  patch: { capturedLength?: number; originalLength?: number; timestamp?: Date }
-): Uint8Array {
-  const out = pcap.slice()
+export function patchRecord(file: Uint8Array, numbers: number | number[], patch: RecordPatch): Uint8Array {
+  // A copy, never `file.slice()`: on a Node Buffer that is a view of the same
+  // memory, and the caller's file would be damaged along with the result.
+  const out = new Uint8Array(file)
   const view = new DataView(out.buffer)
-  if (out.length < PCAP_GLOBAL_HEADER || view.getUint32(0, true) !== 0xa1b2c3d4) {
-    throw new Error('patchRecord works on the little-endian microsecond pcap that writePcap produces')
-  }
+  const wanted = Array.isArray(numbers) ? numbers : [numbers]
+  const records =
+    out.length >= 4 && view.getUint32(0, true) === BLOCK_SECTION_HEADER
+      ? pcapngRecords(view)
+      : pcapRecords(view)
 
-  let offset = PCAP_GLOBAL_HEADER
-  for (let n = 1; n < number; n++) {
-    if (offset + PCAP_RECORD_HEADER > out.length) throw new Error(`No frame ${number}`)
-    offset += PCAP_RECORD_HEADER + view.getUint32(offset + 8, true)
-  }
-  if (number < 1 || offset + PCAP_RECORD_HEADER > out.length) throw new Error(`No frame ${number}`)
+  for (const number of wanted) {
+    const record = records[number - 1]
+    if (!record) throw new Error(`No frame ${number}: the file has ${records.length}`)
 
-  if (patch.timestamp) {
-    const ms = patch.timestamp.getTime()
-    view.setUint32(offset, Math.floor(ms / 1000), true)
-    view.setUint32(offset + 4, (ms % 1000) * 1000, true)
+    const apply = (field: RecordField | undefined, at: number | undefined) => {
+      if (field === undefined) return
+      if (at === undefined) throw new Error(`Frame ${number} has no captured length field to patch`)
+      const current = view.getUint32(at, record.little)
+      view.setUint32(at, typeof field === 'function' ? field(current) : field, record.little)
+    }
+    apply(patch.capturedLength, record.capturedLength)
+    apply(patch.originalLength, record.originalLength)
+    if (patch.timestamp) {
+      if (!record.setTime) throw new Error(`Frame ${number} is a Simple Packet Block, which has no timestamp`)
+      record.setTime(view, patch.timestamp)
+    }
   }
-  if (patch.capturedLength !== undefined) view.setUint32(offset + 8, patch.capturedLength, true)
-  if (patch.originalLength !== undefined) view.setUint32(offset + 12, patch.originalLength, true)
   return out
+}
+
+function pcapRecords(view: DataView): RecordLocation[] {
+  if (view.byteLength < PCAP_GLOBAL_HEADER) throw new Error('Not a pcap file: too short')
+  const magic = view.getUint32(0, true)
+  const little = magic === 0xa1b2c3d4 || magic === 0xa1b23c4d
+  if (!little && magic !== 0xd4c3b2a1 && magic !== 0x4d3cb2a1) {
+    throw new Error('Not a pcap or pcapng file: unrecognised magic number')
+  }
+  const perSecond = view.getUint32(0, little) === 0xa1b23c4d ? 1e9 : 1e6
+
+  const records: RecordLocation[] = []
+  for (let at = PCAP_GLOBAL_HEADER; at + PCAP_RECORD_HEADER <= view.byteLength; ) {
+    const header = at
+    records.push({
+      little,
+      capturedLength: header + 8,
+      originalLength: header + 12,
+      setTime: (v, time) => {
+        const ms = time.getTime()
+        v.setUint32(header, Math.floor(ms / 1000), little)
+        v.setUint32(header + 4, ((ms % 1000) * perSecond) / 1000, little)
+      },
+    })
+    at += PCAP_RECORD_HEADER + view.getUint32(header + 8, little)
+  }
+  return records
+}
+
+function pcapngRecords(view: DataView): RecordLocation[] {
+  const records: RecordLocation[] = []
+  let little = true
+  let resolutions: number[] = []
+
+  for (let at = 0; at + 12 <= view.byteLength; ) {
+    const type = view.getUint32(at, little)
+    if (type === BLOCK_SECTION_HEADER) {
+      little = view.getUint32(at + 8, true) === PCAPNG_BYTE_ORDER
+      resolutions = []
+    }
+    const length = view.getUint32(at + 4, little)
+    if (length < 12 || at + length > view.byteLength) {
+      throw new Error(`Block at byte ${at} has an impossible length (${length})`)
+    }
+    const body = at + 8
+    const blockLittle = little
+
+    if (type === BLOCK_INTERFACE) {
+      resolutions.push(interfaceResolution(view, body + 8, at + length - 4, little))
+    } else if (type === BLOCK_ENHANCED_PACKET) {
+      const ticksPerSecond = resolutions[view.getUint32(body, little)] ?? 1e6
+      records.push({
+        little: blockLittle,
+        capturedLength: body + 12,
+        originalLength: body + 16,
+        setTime: (v, time) => {
+          const ticks = Math.round((time.getTime() / 1000) * ticksPerSecond)
+          v.setUint32(body + 4, Math.floor(ticks / 0x100000000), blockLittle)
+          v.setUint32(body + 8, ticks % 0x100000000, blockLittle)
+        },
+      })
+    } else if (type === BLOCK_SIMPLE_PACKET) {
+      records.push({ little: blockLittle, originalLength: body })
+    }
+    at += length
+  }
+  return records
 }

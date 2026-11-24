@@ -131,6 +131,35 @@ describe('patchRecord', () => {
     expect(result.allPackets).toHaveLength(2)
   })
 
+  test('on a pcapng, costs only the packets it touches', () => {
+    // The same lie as above, but each block states its own length, so the
+    // parser skips the damaged packets and reads on.
+    const raw = readFileSync(resolve(import.meta.dir, '../../../public/sample.pcapng'))
+    const before = parsePcapng(buffer(raw)).allPackets.length
+    const file = patchRecord(raw, [1, 2, 3], { capturedLength: (n) => n + 40 })
+    const result = parsePcapng(buffer(file))
+    expect(result.warnings.filter((w) => /block skipped/.test(w))).toHaveLength(3)
+    expect(result.allPackets).toHaveLength(before - 3)
+    // A Buffer's slice() shares memory; the file handed in must come out untouched.
+    expect(parsePcapng(buffer(raw)).allPackets).toHaveLength(before)
+  })
+
+  test('moves a pcapng timestamp in the interface\'s own resolution', () => {
+    const raw = readFileSync(resolve(import.meta.dir, '../../../public/sample.pcapng'))
+    const file = patchRecord(raw, 5, { timestamp: new Date('2030-01-01T00:00:00.250Z') })
+    expect(readCapture(file).frames[4].timestamp.toISOString()).toBe('2030-01-01T00:00:00.250Z')
+  })
+
+  test('locates every record before changing any, so lengths can be patched together', () => {
+    const built = session()
+    const file = patchRecord(built.bytes, [2, 3], { originalLength: 9000 })
+    const packets = parsePcap(buffer(file)).allPackets
+    expect(packets.map((p) => p.originalLength)).toEqual(
+      built.frames.map((f, i) => (i === 1 || i === 2 ? 9000 : f.originalLength))
+    )
+    expect(() => patchRecord(built.bytes, 99, { originalLength: 1 })).toThrow(/No frame 99/)
+  })
+
   test('rewrites a timestamp in place', () => {
     const file = patchRecord(session().bytes, 2, { timestamp: new Date('2025-12-31T23:59:59Z') })
     const packets = parsePcap(buffer(file)).allPackets
