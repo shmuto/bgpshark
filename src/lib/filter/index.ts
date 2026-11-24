@@ -1,4 +1,4 @@
-export { parseQuery, matchPacket, matchTransportFrame, getSuggestions, FILTER_FIELDS, tokenize, describeParseError } from './parser'
+export { parseQuery, matchPacket, filterPacketsWork, matchTransportFrame, getSuggestions, FILTER_FIELDS, tokenize, describeParseError } from './parser'
 export type {
   Expression,
   Comparison,

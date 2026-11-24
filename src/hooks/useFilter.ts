@@ -1,19 +1,18 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import type { BgpPacket } from '../lib/bgp/types'
-import { parseQuery, matchPacket } from '../lib/filter'
-import { isDataLoaded, getMatchingFrameIndexes } from '../lib/db'
+import { parseQuery, matchPacket, filterPacketsWork } from '../lib/filter'
+import { runInSlices } from '../lib/sliced'
 
 interface UseFilterOptions {
-  useDuckDB?: boolean
   initialQuery?: string
 }
 
 /**
- * How long the query must stay unchanged before it is sent to DuckDB.
+ * How long the query must stay unchanged before a large capture is filtered.
  * The query updates on every keystroke, so without this each character would
- * issue its own SQL query.
+ * start a pass of its own over every packet.
  */
-const DUCKDB_DEBOUNCE_MS = 200
+const LARGE_FILTER_DEBOUNCE_MS = 200
 
 /**
  * How long a query has to stay broken before we say so.
@@ -26,24 +25,31 @@ const DUCKDB_DEBOUNCE_MS = 200
 const PARSE_ERROR_GRACE_MS = 600
 
 /**
- * From how many packets the in-memory pass is skipped once DuckDB holds the
- * capture.
+ * From how many packets the filter stops running on every keystroke.
  *
- * The in-memory pass runs synchronously on every keystroke, and on a large
- * capture one pass is long enough to freeze typing — about a second for a
- * 50MB capture, so a filter typed a character at a time froze the page for
- * eight. Below this size a pass takes a few milliseconds and keeps the list
- * exact while typing; above it, the list keeps showing the last result, with
- * "Filtering…" beside it, until DuckDB answers.
+ * Below this a pass takes a few milliseconds, so it runs synchronously and the
+ * list is exact for the query as it is typed. Above it one pass is long enough
+ * to freeze typing — about a second for a 50MB capture, so a filter typed a
+ * character at a time froze the page for eight — so the pass waits for typing
+ * to pause and then runs in slices (`runInSlices`), leaving the page
+ * responsive. Meanwhile the list keeps showing the last result, with
+ * "Filtering…" beside it.
+ *
+ * Filtering is always the in-memory evaluator. Large captures used to be
+ * filtered by DuckDB instead, once the capture had been inserted into it; the
+ * insert took longer than the list to arrive, held the main thread while it
+ * ran, and on a dense capture ran the worker out of memory, while a sliced
+ * pass in memory answers a 100MB capture in well under a second. The database
+ * now only serves the SQL console.
  */
 export const SYNC_FILTER_MAX_PACKETS = 20_000
 
 export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) {
-  const { useDuckDB = true, initialQuery = '' } = options
+  const { initialQuery = '' } = options
   const [query, setQuery] = useState(initialQuery)
-  // The DuckDB answer, tagged with the packets it was resolved against: a
-  // result for another scope must never be shown as this one's.
-  const [asyncResult, setAsyncResult] = useState<{ packets: BgpPacket[]; matched: BgpPacket[] } | null>(null)
+  // The sliced pass's answer, tagged with the packets it was worked out from:
+  // a result for another scope must never be shown as this one's.
+  const [slicedResult, setSlicedResult] = useState<{ packets: BgpPacket[]; matched: BgpPacket[] } | null>(null)
   const [isFiltering, setIsFiltering] = useState(false)
 
   // Parse query as DSL for validation and error display
@@ -53,86 +59,48 @@ export function useFilter(packets: BgpPacket[], options: UseFilterOptions = {}) 
   }, [query])
 
   const hasQuery = query.trim().length > 0 && parsedQuery.errors.length === 0
-  // Gated on the data being loaded, not on the database existing: querying a
-  // healthy connection whose load failed returns zero rows for everything,
-  // and that empty answer would replace the correct in-memory result below.
-  const sqlAvailable = useDuckDB && isDataLoaded()
-  const deferToDuckDB = sqlAvailable && packets.length > SYNC_FILTER_MAX_PACKETS
+  const large = packets.length > SYNC_FILTER_MAX_PACKETS
 
-  // Filtering runs on two paths on purpose. The in-memory pass below is
-  // synchronous, so the list stays correct for the query being typed; the DuckDB
-  // pass replaces it once the debounced SQL query resolves, which is what keeps
-  // large captures usable. Whenever the query changes the async result is dropped
-  // immediately, so results for a previous query are never displayed — except
-  // on a capture large enough to defer to DuckDB, where the in-memory pass is
-  // what made typing freeze, and the previous result stays up, marked as
-  // filtering, until the new one arrives.
   const syncFilteredPackets = useMemo(() => {
-    if (!hasQuery) return packets
-    if (deferToDuckDB) return null
+    if (!hasQuery || large) return null
     return packets.filter((packet) => matchPacket(packet, parsedQuery))
-  }, [packets, hasQuery, deferToDuckDB, parsedQuery])
+  }, [packets, hasQuery, large, parsedQuery])
 
-  // Async DuckDB filtering, debounced
+  // A large capture: debounced, then in slices. The previous result stays up
+  // until the new one is in, so the list does not flash back to unfiltered
+  // between keystrokes.
   useEffect(() => {
-    // Any results still held belong to the previous query, so drop them now and
-    // fall back to the synchronous pass until the new SQL query resolves.
-    if (!deferToDuckDB) setAsyncResult(null)
-
-    if (!sqlAvailable || !hasQuery) {
+    if (!large || !hasQuery) {
       setIsFiltering(false)
       return
     }
 
-    let cancelled = false
+    const controller = new AbortController()
     setIsFiltering(true)
-
     const timer = setTimeout(() => {
-      getMatchingFrameIndexes(query)
-        .then((frameIndexes) => {
-          if (cancelled) return
-          // DuckDB only says which frames matched. The packets themselves come
-          // from the parsed objects we already hold, so nothing the SQL schema
-          // cannot represent gets lost on the way to the UI.
-          const matched = new Set(frameIndexes)
-          setAsyncResult({ packets, matched: packets.filter((p) => matched.has(p.frameIndex)) })
-          setIsFiltering(false)
-        })
-        .catch((err) => {
-          console.error('DuckDB filter error:', err)
-          if (cancelled) return
-          // The in-memory evaluator is the fallback either way; on a deferred
-          // capture there is no synchronous result to fall back to, so run it
-          // once here instead.
-          setAsyncResult(
-            deferToDuckDB ? { packets, matched: packets.filter((p) => matchPacket(p, parsedQuery)) } : null
-          )
-          setIsFiltering(false)
-        })
-    }, DUCKDB_DEBOUNCE_MS)
+      void runInSlices(filterPacketsWork(packets, parsedQuery), controller.signal).then((matched) => {
+        // Null when aborted: a newer query or another scope has taken over.
+        if (!matched) return
+        setSlicedResult({ packets, matched })
+        setIsFiltering(false)
+      })
+    }, LARGE_FILTER_DEBOUNCE_MS)
 
     return () => {
-      cancelled = true
+      controller.abort()
       clearTimeout(timer)
       setIsFiltering(false)
     }
-    // packets is a dependency because the matched frame indexes are resolved
-    // against it; loading a different capture must re-run the query rather than
-    // resolve against the previous file's packets. `sqlAvailable` follows
-    // `useDuckDB`, which callers flip when the background insert finishes.
-  }, [query, hasQuery, sqlAvailable, deferToDuckDB, parsedQuery, packets])
+  }, [large, hasQuery, parsedQuery, packets])
 
-  // Use DuckDB results if available, otherwise fallback to sync filtering. A
-  // deferred capture with no answer yet for these packets shows them unfiltered
-  // rather than another scope's matches.
-  const asyncFilteredPackets = asyncResult && asyncResult.packets === packets ? asyncResult.matched : null
-  const filteredPackets = !hasQuery
-    ? packets
-    : (asyncFilteredPackets ?? syncFilteredPackets ?? packets)
+  // A large capture with no answer yet for these packets shows them
+  // unfiltered rather than another scope's matches.
+  const slicedFilteredPackets = slicedResult && slicedResult.packets === packets ? slicedResult.matched : null
+  const filteredPackets = !hasQuery ? packets : (syncFilteredPackets ?? slicedFilteredPackets ?? packets)
 
   const clearQuery = useCallback(() => {
     setQuery('')
-    setAsyncResult(null)
+    setSlicedResult(null)
   }, [])
 
   const hasActiveFilter = query.trim().length > 0

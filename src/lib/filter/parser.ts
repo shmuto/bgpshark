@@ -815,6 +815,20 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
     return evaluateOrderedComparison(field, operator, value, packet)
   }
 
+  // `!=` and `not contains` are the complement of `=` and `contains`, as in
+  // Wireshark: `prefix != 10.0.0.0/8` is every packet that `prefix =
+  // 10.0.0.0/8` is not, OPENs and KEEPALIVEs included. Asked field by field
+  // instead, a negation matched any UPDATE with one route outside the block —
+  // and only UPDATEs — so a filter and its negation together did not cover the
+  // capture. The SQL backend that used to answer large captures already read
+  // it this way, which made the answer depend on the capture's size.
+  if (operator === '!=') return !evaluateMatch(field, '=', value, packet)
+  if (operator === 'not contains') return !evaluateMatch(field, 'contains', value, packet)
+  return evaluateMatch(field, operator, value, packet)
+}
+
+/** A `=` or `contains` comparison; the negated operators are its complement. */
+function evaluateMatch(field: string, operator: '=' | 'contains', value: FilterValue, packet: BgpPacket): boolean {
   switch (field) {
     case 'type':
       // Match if any message matches the type
@@ -1406,6 +1420,21 @@ export function parseQuery(query: string): ParsedQuery {
 
 export function matchPacket(packet: BgpPacket, query: ParsedQuery): boolean {
   return evaluate(query.expression, packet)
+}
+
+/**
+ * The packets matching `query`, as a loop that pauses now and then (see
+ * `lib/sliced.ts`), so a large capture can be filtered in slices that leave
+ * typing and scrolling responsive between them.
+ */
+export function* filterPacketsWork(packets: BgpPacket[], query: ParsedQuery): Sliced<BgpPacket[]> {
+  const matched: BgpPacket[] = []
+  for (let index = 0; index < packets.length; index++) {
+    if (pauseAt(index)) yield
+    const packet = packets[index]
+    if (evaluate(query.expression, packet)) matched.push(packet)
+  }
+  return matched
 }
 
 /**

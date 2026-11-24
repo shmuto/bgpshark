@@ -7,7 +7,6 @@ import {
   getSuggestions,
   FILTER_FIELDS,
 } from '../../../src/lib/filter/parser'
-import { expressionToSql } from '../../../src/lib/db/filter-to-sql'
 import type {
   BgpPacket,
   BgpOpenMessage,
@@ -129,136 +128,6 @@ describe('in-memory evaluation', () => {
   })
 })
 
-/**
- * Remove every single-quoted literal from a SQL string, treating '' as an escaped
- * quote. Returns null if a literal is left unterminated, which is what a successful
- * injection looks like.
- */
-function stripSqlLiterals(sql: string): string | null {
-  let out = ''
-  let i = 0
-  while (i < sql.length) {
-    if (sql[i] !== "'") {
-      out += sql[i]
-      i++
-      continue
-    }
-    // Entered a literal: scan to its close, skipping '' escapes
-    i++
-    let closed = false
-    while (i < sql.length) {
-      if (sql[i] === "'") {
-        if (sql[i + 1] === "'") {
-          i += 2
-          continue
-        }
-        i++
-        closed = true
-        break
-      }
-      i++
-    }
-    if (!closed) return null
-  }
-  return out
-}
-
-describe('SQL compilation', () => {
-  test('src_as and its aliases compile to a my_as lookup', () => {
-    for (const expr of ['src_as = 65001', 'as = 65001', 'my_as = 65001']) {
-      const sql = expressionToSql(parseQuery(expr).expression)
-      expect(sql).toContain('m.my_as')
-      expect(sql).not.toBe('1=0')
-    }
-  })
-
-  test('asn and aspath compile to an as_path lookup', () => {
-    for (const expr of ['asn = 65001', 'aspath = 65001']) {
-      const sql = expressionToSql(parseQuery(expr).expression)
-      expect(sql).toContain('as_path')
-      expect(sql).not.toBe('1=0')
-    }
-  })
-
-  test('quoted numeric values compile the same as bare ones', () => {
-    expect(expressionToSql(parseQuery('asn = "65001"').expression)).toBe(
-      expressionToSql(parseQuery('asn = 65001').expression)
-    )
-    expect(expressionToSql(parseQuery('src_as = "65001"').expression)).toBe(
-      expressionToSql(parseQuery('src_as = 65001').expression)
-    )
-  })
-
-  test('single quotes cannot break out of a string literal', () => {
-    // Filters are reachable from the ?filter= URL parameter, so a crafted link must
-    // not be able to inject SQL into the user's DuckDB instance.
-    const payloads = [
-      `src_ip = "10' OR 1=1--/8"`,
-      `dst_ip = "10' OR 1=1--/8"`,
-      `prefix contains "10' OR 1=1--/8"`,
-      `withdrawn contains "10' OR 1=1--/8"`,
-      `prefix = "10' OR 1=1--/8"`,
-      `router_id = "x' OR 1=1--"`,
-      `community = "x' OR 1=1--"`,
-      `rt = "x' OR 1=1--"`,
-      `ext_community = "x' OR 1=1--"`,
-      `mac = "x' OR 1=1--"`,
-      `rd = "x' OR 1=1--"`,
-      `capability = "x' OR 1=1--"`,
-      `next_hop = "x' OR 1=1--"`,
-      `origin = "x' OR 1=1--"`,
-      `type = "x' OR 1=1--"`,
-      `src_as = "x' OR 1=1--"`,
-    ]
-
-    for (const payload of payloads) {
-      const sql = expressionToSql(parseQuery(payload).expression)
-      const outside = stripSqlLiterals(sql)
-      // The injected fragment must stay inside a string literal, never become SQL
-      expect(outside).not.toContain('OR 1=1')
-      expect(outside).not.toContain('--')
-      // And every literal must be closed
-      expect(outside).not.toBeNull()
-    }
-  })
-
-  test('every filter field compiles to something other than a no-match', () => {
-    const sample: Record<string, string> = {
-      type: 'OPEN',
-      src_ip: '10.0.0.1',
-      dst_ip: '10.0.0.2',
-      router_id: '10.0.0.1',
-      src_as: '65001',
-      asn: '65001',
-      origin: 'IGP',
-      med: '100',
-      local_pref: '200',
-      next_hop: '10.0.0.1',
-      prefix: '10.0.0.0/8',
-      nlri: '10.0.0.0/8',
-      withdrawn: '10.0.0.0/8',
-      community: '65000:100',
-      rt: '65000:100',
-      ext_community: 'Route Target 65000:100',
-      mac: '00:0c:29:aa:bb:cc',
-      vni: '10100',
-      rd: '10.0.0.1:100',
-      evpn_type: '2',
-      capability: 'Route Refresh',
-      src_port: '179',
-      dst_port: '50000',
-      frame: '3',
-    }
-
-    for (const field of Object.keys(FILTER_FIELDS)) {
-      const value = sample[field]
-      expect(value).toBeDefined()
-      const parsed = parseQuery(`${field} = "${value}"`)
-      expect(parsed.errors).toHaveLength(0)
-      expect(expressionToSql(parsed.expression)).not.toBe('1=0')
-    }
-  })
-})
 
 /**
  * UPDATE announcing 10.0.12.0/24 and withdrawing 10.9.0.0/16, from 192.168.1.5.
@@ -321,6 +190,23 @@ describe('prefix matching', () => {
   test('negation is the inverse', () => {
     expect(matches('prefix != 10.0.0.0/8')).toBe(false)
     expect(matches('prefix != 172.16.0.0/12')).toBe(true)
+  })
+
+  test('negation is the complement, so a packet with no routes matches it', () => {
+    // A filter and its negation together cover the whole capture: an OPEN has
+    // no route in 10.0.0.0/8, so it is one of the packets `!=` selects.
+    const open = createOpenPacket()
+    for (const [positive, negative] of [
+      ['prefix = 10.0.0.0/8', 'prefix != 10.0.0.0/8'],
+      ['type = UPDATE', 'type != UPDATE'],
+      ['asn = 65002', 'asn != 65002'],
+      ['community contains "65000"', 'community not contains "65000"'],
+    ]) {
+      for (const p of [open, packet]) {
+        expect(matchPacket(p, parseQuery(negative))).toBe(!matchPacket(p, parseQuery(positive)))
+      }
+    }
+    expect(matchPacket(open, parseQuery('prefix != 10.0.0.0/8'))).toBe(true)
   })
 
   test('text that is not an address stays a substring search', () => {
@@ -452,66 +338,15 @@ describe('ordered operators are numeric-only', () => {
     expect(parsed.errors[0].message).toContain('Expected a number')
   })
 
-  test('rejected combinations match nothing on both paths', () => {
+  test('rejected combinations match nothing', () => {
     const parsed = parseQuery('src_ip > 10')
     expect(matchPacket(createOpenPacket(), parsed)).toBe(false)
-    expect(expressionToSql(parsed.expression)).toBe('1=0')
   })
 
   test('= and != keep working on the new fields', () => {
     for (const expr of ['src_port = 179', 'dst_port != 179', 'frame = 1']) {
       expect(parseQuery(expr).errors).toHaveLength(0)
     }
-  })
-})
-
-describe('port and frame SQL', () => {
-  const sql = (expr: string) => {
-    const parsed = parseQuery(expr)
-    expect(parsed.errors).toHaveLength(0)
-    return expressionToSql(parsed.expression)
-  }
-
-  test('equality compiles to the packets table columns', () => {
-    expect(sql('src_port = 179')).toBe('p.src_port = 179')
-    expect(sql('dst_port = 50000')).toBe('p.dst_port = 50000')
-    expect(sql('frame = 12')).toBe('p.frame_index = 12')
-    expect(sql('src_port != 179')).toBe('p.src_port != 179')
-  })
-
-  test('ordered comparisons compile to the same comparison in SQL', () => {
-    expect(sql('frame > 100')).toBe('p.frame_index > 100')
-    expect(sql('frame >= 100')).toBe('p.frame_index >= 100')
-    expect(sql('frame < 100')).toBe('p.frame_index < 100')
-    expect(sql('frame <= 100')).toBe('p.frame_index <= 100')
-    expect(sql('src_port > 1024')).toBe('p.src_port > 1024')
-    expect(sql('dst_port <= 1024')).toBe('p.dst_port <= 1024')
-  })
-
-  test('a frame range compiles to a bounded AND', () => {
-    expect(sql('frame >= 100 and frame < 200')).toBe('(p.frame_index >= 100 AND p.frame_index < 200)')
-  })
-
-  test('both sessions of a collision compile to an OR over the ports', () => {
-    expect(sql('src_port = 179 or dst_port = 179')).toBe('(p.src_port = 179 OR p.dst_port = 179)')
-  })
-
-  test('quoted numbers compile the same as bare ones', () => {
-    expect(sql('frame > "100"')).toBe(sql('frame > 100'))
-    expect(sql('src_port = "179"')).toBe(sql('src_port = 179'))
-  })
-
-  test('ordered comparisons on the existing numeric fields stay EXISTS lookups', () => {
-    expect(sql('src_as > 65000')).toContain('m.my_as > 65000')
-    expect(sql('asn <= 65000')).toContain('ap.asn <= 65000')
-  })
-
-  test('a non-numeric port value stays escaped text, never bare SQL', () => {
-    const injected = expressionToSql(parseQuery(`src_port = "179' OR 1=1--"`).expression)
-    const outside = stripSqlLiterals(injected)
-    expect(outside).not.toBeNull()
-    expect(outside).not.toContain('OR 1=1')
-    expect(outside).toContain('CAST(p.src_port AS VARCHAR)')
   })
 })
 
@@ -556,36 +391,6 @@ describe('value suggestions are worked out once per set of packets', () => {
     const second = [{ ...createOpenPacket(), srcIp: '192.0.2.1', dstIp: '192.0.2.2' }]
     expect(values(first)).toEqual(['10.0.0.1'])
     expect(values(second)).toEqual(['192.0.2.1'])
-  })
-})
-
-describe('SQL and in-memory paths ask the same question', () => {
-  test('a CIDR prefix search compiles to a containment test, not string equality', () => {
-    const sql = expressionToSql(parseQuery('prefix = 10.0.0.0/8').expression)
-    // 10.0.0.0/8 -> bits 00001010
-    expect(sql).toContain("prefix_bits LIKE '4:00001010%'")
-    expect(sql).not.toContain("prefix_length = ")
-  })
-
-  test('a bare address compiles to a covering-route test', () => {
-    const sql = expressionToSql(parseQuery('prefix = 10.0.12.7').expression)
-    expect(sql).toContain("LIKE t.prefix_bits || '%'")
-  })
-
-  test('an IP field CIDR compiles to a bit-key test', () => {
-    const sql = expressionToSql(parseQuery('src_ip = 192.168.0.0/23').expression)
-    // 192.168.0.0/23 -> 11000000 10101000 0000000, exactly 23 bits
-    expect(sql).toContain("src_ip_bits LIKE '4:11000000101010000000000%'")
-  })
-
-  test('IPv6 compiles too', () => {
-    const sql = expressionToSql(parseQuery('prefix = "2001:db8::/32"').expression)
-    expect(sql).toContain("prefix_bits LIKE '6:")
-  })
-
-  test('a value that is not an address stays escaped text', () => {
-    const sql = expressionToSql(parseQuery(`prefix = "10' OR 1=1--"`).expression)
-    expect(stripSqlLiterals(sql)).not.toContain('OR 1=1')
   })
 })
 
@@ -698,47 +503,9 @@ describe('EVPN and extended community filters', () => {
   })
 })
 
-describe('EVPN filters compile to SQL that asks the same question', () => {
-  test('a MAC search reaches announced and withdrawn routes both', () => {
-    const sql = expressionToSql(parseQuery('mac = 00:0c:29:aa:bb:cc').expression)
-    expect(sql).toContain('FROM nlri')
-    expect(sql).toContain('FROM withdrawn')
-    expect(sql).toContain('evpn_mac')
-  })
-
-  test('rt restricts to Route Targets rather than matching any extended community', () => {
-    const sql = expressionToSql(parseQuery('rt = 65002:100').expression)
-    expect(sql).toContain('extended_communities')
-    expect(sql).toContain("ec.kind = 'Route Target'")
-  })
-
-  test('a VNI search considers the second label too', () => {
-    const sql = expressionToSql(parseQuery('vni = 10100').expression)
-    expect(sql).toContain('evpn_vni = 10100')
-    expect(sql).toContain('evpn_vni2 = 10100')
-  })
-
-  test('the negated forms are NOT EXISTS, matching "no route says so"', () => {
-    expect(expressionToSql(parseQuery('mac != 00:0c:29:aa:bb:cc').expression)).toContain('NOT EXISTS')
-    expect(expressionToSql(parseQuery('rt != 65002:100').expression)).toContain('NOT EXISTS')
-  })
-
-  test('ordered comparisons work on vni and evpn_type', () => {
-    expect(expressionToSql(parseQuery('vni > 10000').expression)).toContain('evpn_vni > 10000')
-    expect(expressionToSql(parseQuery('evpn_type <= 3').expression)).toContain(
-      'evpn_route_type <= 3'
-    )
-  })
-})
-
 /**
- * `med` and `local_pref`, in both backends.
- *
- * A filter expression is evaluated in memory or compiled to SQL depending on
- * whether DuckDB came up, so a field that exists in one and not the other is a
- * field whose answer depends on the weather. These tests pin the in-memory
- * semantics and check the SQL side compiles to something that can select rows;
- * `tests/e2e` runs the SQL path against the real database.
+ * `med` and `local_pref`: what the filter matches, and what it must not sweep
+ * in when the attribute was never sent.
  */
 describe('best-path attribute fields', () => {
   function routeWith(attrs: ParsedPathAttribute[]): BgpPacket {
@@ -822,21 +589,6 @@ describe('best-path attribute fields', () => {
     expect(matches(withZeroMed, 'med = 0')).toBe(true)
     expect(matches(withZeroMed, 'med < 100')).toBe(true)
   })
-
-  test('both fields compile to SQL that can select rows', () => {
-    for (const expr of ['med = 100', 'med > 100', 'local_pref = 200', 'local_pref >= 200']) {
-      const sql = expressionToSql(parseQuery(expr).expression)
-      expect(sql).not.toBe('1=0')
-      expect(sql).toContain('path_attributes')
-    }
-  })
-
-  test('the SQL side reads the columns the loader writes', () => {
-    // Named explicitly because a typo here compiles fine and returns nothing,
-    // which reads as "no routes matched" rather than as a broken filter.
-    expect(expressionToSql(parseQuery('med = 100').expression)).toContain('med_value')
-    expect(expressionToSql(parseQuery('local_pref = 200').expression)).toContain('local_pref')
-  })
 })
 
 describe('filters applied to frames that carry no BGP', () => {
@@ -896,15 +648,6 @@ describe('what people type out of habit', () => {
     expect(matches('ip != 10.0.13.1', elsewhere)).toBe(true)
   })
 
-  test('ip compiles to SQL that asks the same question', () => {
-    expect(expressionToSql(parseQuery('ip = 10.0.13.1').expression)).toBe(
-      expressionToSql(parseQuery('src_ip = 10.0.13.1 or dst_ip = 10.0.13.1').expression)
-    )
-    expect(expressionToSql(parseQuery('peer != 10.0.13.1').expression)).toBe(
-      expressionToSql(parseQuery('src_ip != 10.0.13.1 and dst_ip != 10.0.13.1').expression)
-    )
-  })
-
   test('ip takes no ordering', () => {
     expect(parseQuery('ip > 10.0.0.1').errors.length).toBeGreaterThan(0)
   })
@@ -958,13 +701,6 @@ describe('prefix follows a route through its withdrawal', () => {
     expect(matches('nlri = 1.1.1.1/32', withdraw)).toBe(false)
     expect(matches('withdrawn = 1.1.1.1/32', withdraw)).toBe(true)
     expect(matches('withdrawn = 1.1.1.1/32', announce)).toBe(false)
-  })
-
-  test('the SQL backend asks both tables for prefix, and one each for the others', () => {
-    const sql = (q: string) => expressionToSql(parseQuery(q).expression)
-    expect(sql('prefix = 1.1.1.1/32')).toMatch(/FROM nlri[\s\S]*FROM withdrawn/)
-    expect(sql('nlri = 1.1.1.1/32')).not.toContain('withdrawn')
-    expect(sql('withdrawn = 1.1.1.1/32')).not.toMatch(/FROM nlri/)
   })
 })
 
