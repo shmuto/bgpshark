@@ -67,3 +67,21 @@ test('a large capture shows its findings once the background analysis is done', 
   await expect(rail).not.toContainText('No issues detected')
   await expect(rail).toContainText('10.0.0.0/24')
 })
+
+/**
+ * The filter box's value suggestions are gathered in the background on a
+ * capture this size, from its first focus, so that focus does not freeze the
+ * page. What that owes the reader: fields at once, and the values once they
+ * are in.
+ */
+test('a large capture offers its filter values once they are gathered', async ({ page }) => {
+  await loadCapture(page, 'busy-session.pcap', busySession(25_000))
+  await openMessagesAfterLoad(page, 60_000)
+
+  const input = page.getByRole('textbox', { name: 'Filter' })
+  await input.click()
+  await expect(page.getByRole('button', { name: /^prefix/ }).first()).toBeVisible()
+
+  await input.fill('prefix = 10.0.0.')
+  await expect(page.getByRole('button', { name: /^10\.0\.0\.0\/24/ })).toBeVisible({ timeout: 15_000 })
+})

@@ -330,7 +330,7 @@ A healthy bidirectional session produces two rows of comparable size; a single r
 
 ## Filters
 
-The filter bar is a single query box with autocomplete. Press `/` or `Ctrl+K` (`⌘K`) to jump to it. **+ Filter** builds one condition from menus and appends it with `and`. Choosing a session or a time window narrows the list as well, on top of the filter.
+The filter bar is a single query box with autocomplete. Press `/` or `Ctrl+K` (`⌘K`) to jump to it. On a large capture, the values it suggests (addresses, prefixes, AS numbers) are collected after you first focus the box and join the list a few seconds later; field names and operators are offered straight away. **+ Filter** builds one condition from menus and appends it with `and`. Choosing a session or a time window narrows the list as well, on top of the filter.
 
 In the packet detail, values that can become a filter have a dotted underline. Hover an address, prefix, AS number, next hop or community and click **＋** to narrow the current filter by it, or **=** to filter on it alone.
 
