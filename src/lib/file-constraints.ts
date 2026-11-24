@@ -12,9 +12,10 @@ import { getMessages, type Locale } from '../i18n/locale'
  * is set by memory, not parse time: parsing even 100MB takes under a second,
  * but the decoded packets weigh 1–1.5KB per BGP message in the tab's JS heap
  * (about 4GB at most), and DuckDB WASM holds its own copy beside them. In
- * headless Chromium a 50MB capture opens its list in about 10s with the whole
- * browser at 3.5–5GB; 100MB opens in about 20s at 6–6.5GB, and 200MB runs the
- * tab out of heap while decoding. See docs/design.md §3.1.
+ * headless Chromium a 50MB capture opens its list in about 4s with the whole
+ * browser at 3.5–4.5GB; 100MB opens in about 9s at 5.5–6.5GB, 150MB in about
+ * 13s at 6.5–7.5GB, and 200MB runs the tab out of heap shortly after its list
+ * opens. See docs/design.md §3.1.
  */
 export const MAX_FILE_SIZE = 50 * 1024 * 1024
 
