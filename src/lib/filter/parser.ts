@@ -21,6 +21,7 @@ import { formatExtendedCommunity } from '../bgp/extended-communities'
 import { compilePrefixQuery, contains, formatPrefix, parsePrefix } from '../net/prefix'
 import { getMessages, type Locale } from '../../i18n/locale'
 import { pauseAt, runInSlices, runToEnd, type Sliced } from '../sliced'
+import { Ipv4PrefixIndex, ipv4PrefixAddress } from '../net/ipv4-index'
 
 // =============================================================================
 // Token Types
@@ -814,6 +815,20 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
     return evaluateOrderedComparison(field, operator, value, packet)
   }
 
+  // `!=` and `not contains` are the complement of `=` and `contains`, as in
+  // Wireshark: `prefix != 10.0.0.0/8` is every packet that `prefix =
+  // 10.0.0.0/8` is not, OPENs and KEEPALIVEs included. Asked field by field
+  // instead, a negation matched any UPDATE with one route outside the block —
+  // and only UPDATEs — so a filter and its negation together did not cover the
+  // capture. The SQL backend that used to answer large captures already read
+  // it this way, which made the answer depend on the capture's size.
+  if (operator === '!=') return !evaluateMatch(field, '=', value, packet)
+  if (operator === 'not contains') return !evaluateMatch(field, 'contains', value, packet)
+  return evaluateMatch(field, operator, value, packet)
+}
+
+/** A `=` or `contains` comparison; the negated operators are its complement. */
+function evaluateMatch(field: string, operator: '=' | 'contains', value: FilterValue, packet: BgpPacket): boolean {
   switch (field) {
     case 'type':
       // Match if any message matches the type
@@ -991,7 +1006,7 @@ function evaluateComparison(expr: Comparison, packet: BgpPacket): boolean {
  * Evaluates `<`, `<=`, `>`, `>=`, which only apply to the integer fields.
  *
  * Kept apart from the equality path so the field-by-field matchers keep their
- * four-operator shape, and so the SQL compiler has a single mirror to follow.
+ * equality shape.
  */
 function evaluateOrderedComparison(
   field: string,
@@ -1033,8 +1048,7 @@ function evaluateOrderedComparison(
 
     // Absent is not zero and not a match: an UPDATE with no MED must not be
     // swept in by `med < 100`, which would otherwise select most of an eBGP
-    // capture. The SQL side gets this for free, since NULL fails every
-    // comparison.
+    // capture.
     case 'med':
       for (const msg of packet.messages) {
         if (msg.type !== 'UPDATE') continue
@@ -1408,6 +1422,21 @@ export function matchPacket(packet: BgpPacket, query: ParsedQuery): boolean {
 }
 
 /**
+ * The packets matching `query`, as a loop that pauses now and then (see
+ * `lib/sliced.ts`), so a large capture can be filtered in slices that leave
+ * typing and scrolling responsive between them.
+ */
+export function* filterPacketsWork(packets: BgpPacket[], query: ParsedQuery): Sliced<BgpPacket[]> {
+  const matched: BgpPacket[] = []
+  for (let index = 0; index < packets.length; index++) {
+    if (pauseAt(index)) yield
+    const packet = packets[index]
+    if (evaluate(query.expression, packet)) matched.push(packet)
+  }
+  return matched
+}
+
+/**
  * The transport-level view of a frame, which is all a non-BGP frame (a SYN, a
  * bare ACK, an RST) has to be filtered on.
  */
@@ -1762,6 +1791,19 @@ function* extractDynamicValues(packets: BgpPacket[]): Sliced<Record<string, Set<
     seen.add(value)
     return true
   }
+  // IPv4 prefixes, nearly all of them, are recognised by address instead:
+  // remembered without limit and without building their text, which on a
+  // table transfer of a million routes the sets above could not hold — each
+  // repeat was formatted and added again.
+  const listedAnnounced = new Ipv4PrefixIndex()
+  const listedWithdrawn = new Ipv4PrefixIndex()
+  const firstListing = (listed: Ipv4PrefixIndex, seen: Set<BgpPrefix>, prefix: BgpPrefix): boolean => {
+    const address = ipv4PrefixAddress(prefix)
+    if (address < 0) return firstTime(seen, prefix)
+    if (listed.get(address | 0, prefix.length) >= 0) return false
+    listed.add(address | 0, prefix.length, 0)
+    return true
+  }
   const addEvpn = (prefix: BgpPrefix) => {
     const route = prefix.evpn
     if (!route) return
@@ -1812,14 +1854,14 @@ function* extractDynamicValues(packets: BgpPacket[]): Sliced<Record<string, Set<
         // Announced and withdrawn are remembered apart: a prefix seen
         // announced still has to land among the withdrawn when it goes.
         for (const p of getNlriPrefixes(updateMsg)) {
-          if (!firstTime(readAnnounced, p)) continue
+          if (!firstListing(listedAnnounced, readAnnounced, p)) continue
           const text = formatPrefix(p)
           values.prefix.add(text)
           values.nlri.add(text)
           addEvpn(p)
         }
         for (const p of getWithdrawnPrefixes(updateMsg)) {
-          if (!firstTime(readWithdrawn, p)) continue
+          if (!firstListing(listedWithdrawn, readWithdrawn, p)) continue
           const text = formatPrefix(p)
           values.prefix.add(text)
           values.withdrawn.add(text)

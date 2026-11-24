@@ -29,21 +29,22 @@ export async function loadSample(page: Page) {
 
 /**
  * Waits for a freshly loaded capture to land on Messages, where it opens and
- * where most specs work — and for its DuckDB insert to finish.
- *
- * The insert runs after the list is on screen, so landing is not the end of
- * the load: until the header's database gauge is gone, filters run in memory
- * and the SQL console refuses queries. Specs assert on both, so they start from
- * the settled state rather than racing the insert.
+ * where most specs work. Nothing else is still loading by then: DuckDB takes
+ * the capture only once the SQL console asks for it (see `waitForDatabase`).
  */
 export async function openMessagesAfterLoad(page: Page, timeout = 30_000) {
   await page.waitForURL('**/messages', { timeout })
   await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
-  await waitForDatabase(page, timeout)
 }
 
-/** Waits until the capture's background DuckDB insert has finished. */
+/**
+ * On the SQL console, waits until DuckDB holds the capture: the console
+ * inserts it on arrival, and its editor is enabled once the insert is done.
+ * Waiting for the header's gauge to go would race the request that puts it up.
+ */
 export async function waitForDatabase(page: Page, timeout = 30_000) {
+  await expect(page.getByRole('heading', { name: 'SQL Console' })).toBeVisible()
+  await expect(page.locator('textarea').first()).toBeEnabled({ timeout })
   await expect(page.getByTestId('db-load-status')).toHaveCount(0, { timeout })
 }
 
@@ -90,16 +91,37 @@ export async function prefixCount(page: Page): Promise<number> {
 }
 
 /**
- * Types a filter expression and waits past the DuckDB debounce, so what the
- * assertion reads is the database's answer rather than the in-memory one that
- * appears first.
+ * Waits until the packet list shows the filter's answer: no sliced pass in
+ * flight (a capture over 20,000 packets filters after a pause), and the count
+ * the same on two looks in a row. A capture below that size is filtered in the
+ * render that takes the keystroke, so this usually returns at once — where a
+ * fixed wait, long enough for the DuckDB debounce this used to sit out, cost
+ * over a second per filter across the whole suite.
  */
+export async function listSettled(page: Page) {
+  await expect(page.getByText('filtering...')).toHaveCount(0)
+  const counter = page.getByText(/Showing \d+ of \d+ packets/).first()
+  let last = await counter.textContent()
+  await expect
+    .poll(
+      async () => {
+        const now = await counter.textContent()
+        const same = now === last
+        last = now
+        return same
+      },
+      { intervals: [50] }
+    )
+    .toBe(true)
+}
+
+/** Types a filter expression and waits until the list shows its answer. */
 export async function applyFilter(page: Page, expression: string) {
   const input = page.locator('input[type="text"]').first()
   await input.click()
   await input.fill(expression)
   await page.keyboard.press('Escape')
-  await page.waitForTimeout(1200)
+  await listSettled(page)
 }
 
 /**
@@ -108,12 +130,15 @@ export async function applyFilter(page: Page, expression: string) {
  * digits would answer assertions about the result table.
  */
 export async function runSql(page: Page, sql: string): Promise<string> {
+  await waitForDatabase(page)
   const editor = page.locator('textarea').first()
   await editor.click()
   await editor.fill(sql)
   await page.keyboard.press('Control+Enter')
   await expect(page.getByText(/Results \(|Error:/).first()).toBeVisible()
-  await page.waitForTimeout(600)
+  // The result and its table land in one render; the button says Run again
+  // once the query has finished.
+  await expect(page.getByRole('button', { name: /Running/ })).toHaveCount(0)
   return page.getByRole('main').innerText()
 }
 

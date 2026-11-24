@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
-import { applyFilter, loadSample } from './helpers'
+import { applyFilter, listSettled, loadSample } from './helpers'
 
 /** The Relative cell of the list row for a frame, as shown. */
 async function relativeOf(page: Page, frame: string): Promise<string> {
@@ -22,9 +22,9 @@ test.describe('one time axis across filters and screens', () => {
     expect(filtered).not.toBe('0.000')
 
     await page.getByRole('button', { name: 'Clear filter', exact: true }).click()
-    await page.waitForTimeout(400)
+    await listSettled(page)
     await page.locator('input[type="text"]').first().fill(`frame = ${frame}`)
-    await page.waitForTimeout(1200)
+    await listSettled(page)
     expect(await relativeOf(page, frame)).toBe(filtered)
   })
 

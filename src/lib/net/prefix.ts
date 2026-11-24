@@ -181,7 +181,7 @@ function ipv4Mask(length: number): number {
  * not one — an IPv6 address, an EVPN route's description. Accepts exactly what
  * `parseIpv4` does: four parts of one to three digits, each at most 255.
  */
-function ipv4Bits(text: string): number {
+export function ipv4Bits(text: string): number {
   let bits = 0
   let octet = 0
   let digits = 0

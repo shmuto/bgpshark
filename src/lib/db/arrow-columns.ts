@@ -12,14 +12,23 @@
  * per-column passes over them.
  *
  * Every column has a fixed Arrow type here rather than one guessed from the
- * values in the batch. The guess was only ever a means to an end: the batch
- * lands in a staging table and reaches the real one through
- * `INSERT ... SELECT`, which casts each column to what the schema declares (see
- * `insertChunk` in the loader). So numbers travel as Float64 — every value the
- * parsers emit fits one exactly, and an out-of-range one fails the cast loudly
- * instead of wrapping in a narrower typed array — and a column that is NULL in
- * every row of a batch is a Float64 of NULLs rather than a Utf8 of them, which
- * casts the same way.
+ * values in the batch. The batch lands in a staging table and reaches the real
+ * one through `INSERT ... SELECT`, which casts each column to what the schema
+ * declares (see `insertChunk` in the loader). So a number that may not fit 32
+ * bits travels as Float64 — every value the parsers emit fits one exactly, and
+ * an out-of-range one fails the cast loudly instead of wrapping — and one that
+ * always fits travels as Int32, which refuses anything that does not rather
+ * than wrapping it. A column that is NULL in every row of a batch casts the
+ * same whatever its transport type.
+ *
+ * Text that repeats — addresses, type names, the prefixes of a table transfer
+ * that come and go — is dictionary-encoded: each distinct value is written
+ * once per batch and every row holds its index (`DictionaryKeys`). On a 94MB
+ * capture of 22 million announced routes, writing every row's prefix and
+ * prefix bit string out in full was more than half of the load: 7 seconds in
+ * the text writer and 5 more working out bit strings for prefixes the decoder
+ * hands over as the same object again and again. DuckDB reads a dictionary
+ * column as the VARCHAR it stands for.
  *
  * Nothing here may use Arrow's builders (`vectorFromArray`, `makeBuilder`,
  * `tableFromArrays`, …): they compile code with `new Function`, which the
@@ -30,14 +39,23 @@
 type Arrow = typeof import('apache-arrow')
 type ArrowData = import('apache-arrow').Data
 
-/** Grow `array` to hold at least `needed` elements, doubling. */
-function grown<T extends Uint8Array | Int32Array | Float64Array>(array: T, needed: number): T {
-  if (needed <= array.length) return array
-  let size = array.length * 2
+/**
+ * `array` grown to hold at least `needed` elements, doubling. Only called once
+ * a write has found the array full: the check itself is inlined at each write,
+ * because a call per value — on every column of every row — was a noticeable
+ * part of the load on its own.
+ */
+function grow<T extends Uint8Array | Int32Array | Float64Array>(array: T, needed: number): T {
+  let size = Math.max(array.length * 2, 16)
   while (size < needed) size *= 2
   const next = new (array.constructor as new (length: number) => T)(size)
   next.set(array)
   return next
+}
+
+/** `array` itself if it holds `needed` elements, else a grown copy. */
+function atLeast<T extends Uint8Array | Int32Array | Float64Array>(array: T, needed: number): T {
+  return needed <= array.length ? array : grow(array, needed)
 }
 
 const INITIAL_ROWS = 1024
@@ -53,15 +71,16 @@ class Validity {
   private present = 0
 
   set(row: number): void {
-    this.bitmap = grown(this.bitmap, (row >> 3) + 1)
-    this.bitmap[row >> 3] |= 1 << (row & 7)
+    const byte = row >> 3
+    if (byte >= this.bitmap.length) this.bitmap = grow(this.bitmap, byte + 1)
+    this.bitmap[byte] |= 1 << (row & 7)
     this.present++
   }
 
   /** The bitmap for `length` rows, and how many of them are NULL. */
   take(length: number): { nullBitmap: Uint8Array; nullCount: number } {
     const bytes = (length + 7) >> 3
-    return { nullBitmap: grown(this.bitmap, bytes).subarray(0, bytes), nullCount: length - this.present }
+    return { nullBitmap: atLeast(this.bitmap, bytes).subarray(0, bytes), nullCount: length - this.present }
   }
 }
 
@@ -77,7 +96,7 @@ export class NumberColumn {
 
   set(row: number, value: number | null | undefined): void {
     if (typeof value !== 'number' || !Number.isFinite(value)) return
-    this.data = grown(this.data, row + 1)
+    if (row >= this.data.length) this.data = grow(this.data, row + 1)
     this.data[row] = value
     this.validity.set(row)
   }
@@ -87,7 +106,68 @@ export class NumberColumn {
       type: new arrow.Float64(),
       length,
       ...this.validity.take(length),
-      data: grown(this.data, length).subarray(0, length),
+      data: atLeast(this.data, length).subarray(0, length),
+    })
+  }
+}
+
+/**
+ * A column of values that always fit a signed 32-bit integer: ids, indexes,
+ * lengths, ports, codes. Half the bytes of `NumberColumn` to build and send.
+ * A value that does not fit is a bug in the caller's choice of column, so it
+ * fails the load rather than wrapping into a wrong number.
+ */
+export class Int32Column {
+  private data = new Int32Array(INITIAL_ROWS)
+  private validity = new Validity()
+
+  set(row: number, value: number | null | undefined): void {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return
+    if ((value | 0) !== value) throw new RangeError(`${value} does not fit a 32-bit integer column`)
+    if (row >= this.data.length) this.data = grow(this.data, row + 1)
+    this.data[row] = value
+    this.validity.set(row)
+  }
+
+  toData(arrow: Arrow, length: number): ArrowData {
+    return arrow.makeData({
+      type: new arrow.Int32(),
+      length,
+      ...this.validity.take(length),
+      data: atLeast(this.data, length).subarray(0, length),
+    })
+  }
+}
+
+/**
+ * A point in time to the millisecond, which is what a parsed packet keeps
+ * (`timestamp` is a `Date`), sent as Arrow's millisecond timestamp so DuckDB
+ * reads it as a TIMESTAMP with no text in between. It used to be an ISO string
+ * per packet, formatted here and parsed again in the worker.
+ *
+ * Arrow stores it as a 64-bit integer; it is written as two 32-bit halves so
+ * that no BigInt is made per row.
+ */
+export class TimestampColumn {
+  private halves = new Int32Array(INITIAL_ROWS * 2)
+  private validity = new Validity()
+
+  set(row: number, ms: number | null | undefined): void {
+    if (typeof ms !== 'number' || !Number.isFinite(ms)) return
+    if (2 * row + 1 >= this.halves.length) this.halves = grow(this.halves, 2 * row + 2)
+    const high = Math.floor(ms / 4294967296)
+    this.halves[2 * row] = ms - high * 4294967296
+    this.halves[2 * row + 1] = high
+    this.validity.set(row)
+  }
+
+  toData(arrow: Arrow, length: number): ArrowData {
+    const halves = atLeast(this.halves, 2 * length)
+    return arrow.makeData({
+      type: new arrow.TimestampMillisecond(),
+      length,
+      ...this.validity.take(length),
+      data: new BigInt64Array(halves.buffer, halves.byteOffset, length),
     })
   }
 }
@@ -98,8 +178,9 @@ export class BoolColumn {
 
   set(row: number, value: boolean | null | undefined): void {
     if (typeof value !== 'boolean') return
-    this.bits = grown(this.bits, (row >> 3) + 1)
-    if (value) this.bits[row >> 3] |= 1 << (row & 7)
+    const byte = row >> 3
+    if (byte >= this.bits.length) this.bits = grow(this.bits, byte + 1)
+    if (value) this.bits[byte] |= 1 << (row & 7)
     this.validity.set(row)
   }
 
@@ -109,7 +190,7 @@ export class BoolColumn {
       type: new arrow.Bool(),
       length,
       ...this.validity.take(length),
-      data: grown(this.bits, bytes).subarray(0, bytes),
+      data: atLeast(this.bits, bytes).subarray(0, bytes),
     })
   }
 }
@@ -124,10 +205,11 @@ class Offsets {
 
   /** Mark rows up to and including `row` as ending at `end`. */
   end(row: number, end: number): void {
-    this.offsets = grown(this.offsets, row + 2)
-    const previous = this.offsets[this.filled]
-    for (let r = this.filled; r < row; r++) this.offsets[r + 1] = previous
-    this.offsets[row + 1] = end
+    if (row + 2 > this.offsets.length) this.offsets = grow(this.offsets, row + 2)
+    const offsets = this.offsets
+    const previous = offsets[this.filled]
+    for (let r = this.filled; r < row; r++) offsets[r + 1] = previous
+    offsets[row + 1] = end
     this.filled = row + 1
   }
 
@@ -139,9 +221,9 @@ class Offsets {
 
 /**
  * A text column: every string back to back as UTF-8, with offsets marking
- * where each ends. Nearly all of it is ASCII — addresses, prefixes, names,
- * base64 — so bytes are written directly and only a string that needs it goes
- * through the encoder.
+ * where each ends. Nearly all of it is ASCII — addresses, prefixes, names —
+ * so bytes are written directly and only a string that needs it goes through
+ * the encoder.
  */
 export class TextColumn {
   private offsets = new Offsets()
@@ -153,7 +235,8 @@ export class TextColumn {
   set(row: number, value: string | null | undefined): void {
     if (typeof value !== 'string') return
     // UTF-8 never needs more than three bytes per UTF-16 unit.
-    this.bytes = grown(this.bytes, this.used + value.length * 3)
+    const needed = this.used + value.length * 3
+    if (needed > this.bytes.length) this.bytes = grow(this.bytes, needed)
     const { bytes, used } = this
     let ascii = true
     for (let j = 0; j < value.length; j++) {
@@ -177,6 +260,95 @@ export class TextColumn {
       valueOffsets: this.offsets.take(length),
       data: this.bytes.subarray(0, this.used),
     })
+  }
+}
+
+/**
+ * Which dictionary entry each row of a batch holds, for one or more
+ * `DictionaryColumn`s that share it.
+ *
+ * Keyed by whatever the text is a function of: the string itself for a plain
+ * repeated value, or an object — a decoded prefix — when several columns are
+ * read off the same one. The decoder hands over one prefix object for every
+ * repeat of a route (`shared-decode.ts`), so its text and bit string are
+ * worked out once per batch rather than once per row, and both columns share
+ * one lookup.
+ */
+export class DictionaryKeys<K> {
+  private indices = new Int32Array(INITIAL_ROWS)
+  private validity = new Validity()
+  private entries = new Map<K, number>()
+
+  /**
+   * Point `row` at `key`'s entry. Returns the entry's index when the key is
+   * new to this batch — the caller then adds its value to each column, in
+   * this order — and -1 when it is already there.
+   */
+  set(row: number, key: K): number {
+    let entry = this.entries.get(key)
+    let added = -1
+    if (entry === undefined) {
+      entry = this.entries.size
+      this.entries.set(key, entry)
+      added = entry
+    }
+    if (row >= this.indices.length) this.indices = grow(this.indices, row + 1)
+    this.indices[row] = entry
+    this.validity.set(row)
+    return added
+  }
+
+  get size(): number {
+    return this.entries.size
+  }
+
+  take(length: number): { nullBitmap: Uint8Array; nullCount: number; data: Int32Array } {
+    return { ...this.validity.take(length), data: atLeast(this.indices, length).subarray(0, length) }
+  }
+}
+
+/** Unique within a batch's schema, as Arrow requires of dictionary ids. */
+let nextDictionaryId = 0
+
+/**
+ * A dictionary-encoded text column: its distinct values, and per row an index
+ * into them (`keys`, which other columns may share). A value may be NULL, in
+ * which case every row pointing at it is.
+ */
+export class DictionaryColumn<K = string> {
+  readonly keys: DictionaryKeys<K>
+  private values = new TextColumn()
+  private readonly id = nextDictionaryId++
+
+  constructor(keys: DictionaryKeys<K> = new DictionaryKeys<K>()) {
+    this.keys = keys
+  }
+
+  /** The value of dictionary entry `entry`, as returned by `keys.set`. */
+  add(entry: number, value: string | null | undefined): void {
+    this.values.set(entry, value)
+  }
+
+  toData(arrow: Arrow, length: number): ArrowData {
+    const dictionary = arrow.makeVector(this.values.toData(arrow, this.keys.size))
+    return arrow.makeData({
+      type: new arrow.Dictionary(new arrow.Utf8(), new arrow.Int32(), this.id, false),
+      length,
+      ...this.keys.take(length),
+      dictionary,
+    })
+  }
+}
+
+/**
+ * A dictionary column keyed by its own text, for values that repeat from row
+ * to row: an address, a message type, an attribute name.
+ */
+export class StringDictionaryColumn extends DictionaryColumn<string> {
+  set(row: number, value: string | null | undefined): void {
+    if (typeof value !== 'string') return
+    const entry = this.keys.set(row, value)
+    if (entry >= 0) this.add(entry, value)
   }
 }
 
@@ -209,7 +381,14 @@ export class TextListColumn {
   }
 }
 
-export type Column = NumberColumn | BoolColumn | TextColumn | TextListColumn
+export type Column =
+  | NumberColumn
+  | Int32Column
+  | TimestampColumn
+  | BoolColumn
+  | TextColumn
+  | DictionaryColumn<unknown>
+  | TextListColumn
 
 /**
  * One table's columns for the batch being built. `columns` is in the order the

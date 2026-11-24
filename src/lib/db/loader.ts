@@ -3,7 +3,7 @@
  */
 import { yieldToPage } from '../yield-to-page'
 import type { AsyncDuckDBConnection } from '@duckdb/duckdb-wasm'
-import { getConnection, resetDatabase, markDataLoaded } from './database'
+import { getConnection, resetDatabase, markDataLoaded, CAPTURE_CATALOG } from './database'
 import { addressBitKey, bgpPrefixBitKey } from '../net/prefix'
 import type {
   BgpPacket,
@@ -22,16 +22,8 @@ import type {
   MpUnreachNlriAttribute,
 } from '../bgp/types'
 import { formatExtendedCommunity } from '../bgp/extended-communities'
-import {
-  BoolColumn,
-  NumberColumn,
-  TextColumn,
-  TextListColumn,
-  batchToIpc,
-  tableBatch,
-  type Column,
-  type TableBatch,
-} from './arrow-columns'
+import { StringDictionaryColumn, batchToIpc, type Column, type TableBatch } from './arrow-columns'
+import { createBatches, type Batches } from './load-batches'
 
 // ID counters for auto-increment
 let messageIdCounter = 0
@@ -81,6 +73,19 @@ export async function loadPackets(
 }
 
 /**
+ * Drop the capture's tables, once the app has moved on to another capture or
+ * none. Queued behind any load in flight, for the reasons `loadQueue` gives.
+ */
+export async function unloadPackets(): Promise<void> {
+  const run = loadQueue.catch(() => {}).then(async () => {
+    markDataLoaded(false)
+    await resetDatabase()
+  })
+  loadQueue = run.catch(() => {})
+  return run
+}
+
+/**
  * Packets inserted so far, out of the capture's BGP packets.
  *
  * Packets rather than rows because the load flattens and inserts a chunk at a
@@ -115,133 +120,6 @@ async function runLoad(packets: BgpPacket[], onProgress?: LoadProgressCallback):
   markDataLoaded(true)
 }
 
-/**
- * The ten tables' columns for one chunk, by the names the schema gives them.
- *
- * A column's kind is its Arrow transport type, not its declared SQL type: see
- * `arrow-columns.ts`. Listing them here, once, is what replaced the row
- * object types the extract functions used to build — a column added to the
- * schema and not here is caught by the named-column `INSERT ... SELECT`.
- */
-function createBatches() {
-  const n = () => new NumberColumn()
-  const b = () => new BoolColumn()
-  const t = () => new TextColumn()
-  const prefixColumns = () => ({
-    id: n(),
-    message_id: n(),
-    prefix: t(),
-    prefix_length: n(),
-    prefix_bits: t(),
-    afi: n(),
-    safi: n(),
-    evpn_route_type: n(),
-    evpn_type_name: t(),
-    evpn_rd: t(),
-    evpn_mac: t(),
-    evpn_ip: t(),
-    evpn_vni: n(),
-    evpn_vni2: n(),
-    evpn_esi: t(),
-    evpn_eth_tag: n(),
-  })
-  return {
-    packets: tableBatch('packets', () => ({
-      frame_index: n(),
-      timestamp: t(),
-      src_ip: t(),
-      dst_ip: t(),
-      src_ip_bits: t(),
-      dst_ip_bits: t(),
-      src_port: n(),
-      dst_port: n(),
-      parse_warnings: new TextListColumn(),
-    })),
-    messages: tableBatch('messages', () => ({
-      id: n(),
-      frame_index: n(),
-      message_index: n(),
-      type: t(),
-      version: n(),
-      my_as: n(),
-      hold_time: n(),
-      router_id: t(),
-      error_code: n(),
-      error_subcode: n(),
-      error_code_name: t(),
-      error_subcode_name: t(),
-      afi: n(),
-      safi: n(),
-      afi_name: t(),
-      safi_name: t(),
-    })),
-    capabilities: tableBatch('capabilities', () => ({
-      id: n(),
-      message_id: n(),
-      code: n(),
-      name: t(),
-      cap_type: t(),
-      cap_afi: n(),
-      cap_afi_name: t(),
-      cap_safi: n(),
-      cap_safi_name: t(),
-      cap_as_number: n(),
-    })),
-    pathAttributes: tableBatch('path_attributes', () => ({
-      id: n(),
-      message_id: n(),
-      type_code: n(),
-      type_name: t(),
-      flags_optional: b(),
-      flags_transitive: b(),
-      flags_partial: b(),
-      flags_extended: b(),
-      origin_value: t(),
-      next_hop: t(),
-      med_value: n(),
-      local_pref: n(),
-      aggregator_as: n(),
-      aggregator_addr: t(),
-    })),
-    asPath: tableBatch('as_path', () => ({
-      id: n(),
-      message_id: n(),
-      segment_type: t(),
-      segment_index: n(),
-      as_index: n(),
-      asn: n(),
-    })),
-    nlri: tableBatch('nlri', prefixColumns),
-    withdrawn: tableBatch('withdrawn', prefixColumns),
-    communities: tableBatch('communities', () => ({
-      id: n(),
-      message_id: n(),
-      asn: n(),
-      value: n(),
-      formatted: t(),
-    })),
-    largeCommunities: tableBatch('large_communities', () => ({
-      id: n(),
-      message_id: n(),
-      global_admin: n(),
-      local_data1: n(),
-      local_data2: n(),
-      formatted: t(),
-    })),
-    extCommunities: tableBatch('extended_communities', () => ({
-      id: n(),
-      message_id: n(),
-      kind: t(),
-      value: t(),
-      formatted: t(),
-      transitive: b(),
-      type_code: n(),
-      subtype: n(),
-    })),
-  }
-}
-
-type Batches = ReturnType<typeof createBatches>
 type PrefixBatch = Batches['nlri']
 
 /**
@@ -278,6 +156,7 @@ async function insertPackets(
   const arrow = await import('apache-arrow')
   const batches = createBatches()
   const tables: Array<TableBatch<Record<string, Column>> & { reset(): void }> = Object.values(batches)
+  await checkColumnOrder(conn, tables)
   const pendingRows = () => tables.reduce((sum, table) => sum + table.rows, 0)
 
   let inFlight: Promise<void> = Promise.resolve()
@@ -286,7 +165,7 @@ async function insertPackets(
   const flush = async (done: number) => {
     const chunk = tables
       .filter((table) => table.rows > 0)
-      .map((table) => ({ name: table.name, columns: Object.keys(table.columns), ipc: batchToIpc(arrow, table) }))
+      .map((table) => ({ name: table.name, ipc: batchToIpc(arrow, table) }))
     for (const table of tables) table.reset()
     // The previous chunk must be in before this one goes: that bounds memory,
     // and is where its failure, if any, surfaces.
@@ -321,17 +200,23 @@ async function insertPackets(
   onProgress?.(total, total)
 }
 
+/** An address's bit string, worked out once per address per batch. */
+function setAddressBits(column: StringDictionaryColumn, row: number, address: string): void {
+  const entry = column.keys.set(row, address)
+  if (entry >= 0) column.add(entry, addressBitKey(address))
+}
+
 /** One packet's rows, appended to the batches. */
 function flattenPacket(batches: Batches, packet: BgpPacket): void {
   const p = batches.packets
   const row = p.rows++
   const c = p.columns
   c.frame_index.set(row, packet.frameIndex)
-  c.timestamp.set(row, packet.timestamp.toISOString())
+  c.timestamp.set(row, packet.timestamp.getTime())
   c.src_ip.set(row, packet.srcIp)
   c.dst_ip.set(row, packet.dstIp)
-  c.src_ip_bits.set(row, addressBitKey(packet.srcIp))
-  c.dst_ip_bits.set(row, addressBitKey(packet.dstIp))
+  setAddressBits(c.src_ip_bits, row, packet.srcIp)
+  setAddressBits(c.dst_ip_bits, row, packet.dstIp)
   c.src_port.set(row, packet.srcPort)
   c.dst_port.set(row, packet.dstPort)
   c.parse_warnings.set(row, packet.parseWarnings)
@@ -349,22 +234,21 @@ function flattenPacket(batches: Batches, packet: BgpPacket): void {
 }
 
 /**
- * Send one chunk: every table into a staging table of its own, then a single
- * statement that moves each into its real table and drops the staging.
+ * Send one chunk: each table's rows appended straight from Arrow.
  *
- * The staging tables are sent together and awaited together — the order they
- * arrive in does not matter — so a chunk costs the worker two round trips
- * rather than three per table. That matters now that the page is busy
- * flattening the next chunk in between: each round trip waits for the page to
- * yield before the next request goes out.
+ * The tables are sent together and awaited together — the order they arrive
+ * in does not matter — so the page is not held to one round trip per table
+ * while it flattens the next chunk.
  *
- * The rows go through a staging table and a named-column `INSERT ... SELECT`
- * rather than straight into the target, for two reasons. Inserting into an
- * existing table binds Arrow columns by *position*, so a column added to the
- * schema but not to `createBatches` — or in a different order — would land
- * silently in the wrong place; naming them means each value can only reach the
- * column it was meant for. And the SELECT is where DuckDB casts each column to
- * its declared type, see `arrow-columns.ts`.
+ * Each batch used to land in a staging table first and reach its table
+ * through a named-column `INSERT ... SELECT`, because an append binds columns
+ * by *position*: a column out of place in `createBatches` would land silently
+ * in its neighbour's. That wrote every row twice, and the second write was
+ * most of the worker's time — on a 94MB capture of 22 million routes, about
+ * 5 of the 22 seconds the SQL console waited. The order is now checked
+ * instead (`checkColumnOrder`, and tests/lib/db/load-batches.test.ts against
+ * the schema), and the append casts each Arrow column to the type the table
+ * declares just as the SELECT did, see `arrow-columns.ts`.
  *
  * Arrow IPC itself is the third transport this loader has had; both earlier
  * ones failed in ways worth remembering.
@@ -384,23 +268,34 @@ function flattenPacket(batches: Batches, packet: BgpPacket): void {
  * extension, so it keeps the promise that loading a capture touches no network
  * (`offline.e2e.ts` holds it to that).
  */
-async function insertChunk(
+async function insertChunk(conn: AsyncDuckDBConnection, chunk: Array<{ name: string; ipc: Uint8Array }>): Promise<void> {
+  await Promise.all(chunk.map(({ name, ipc }) => conn.insertArrowFromIPCStream(ipc, { name, create: false })))
+}
+
+/**
+ * Refuse to load if any table's columns, as `createBatches` lists them, are
+ * not the live table's columns in the same order — the one mistake a
+ * positional append would otherwise make silently. One small query per load.
+ */
+async function checkColumnOrder(
   conn: AsyncDuckDBConnection,
-  chunk: Array<{ name: string; columns: string[]; ipc: Uint8Array }>
+  tables: Array<TableBatch<Record<string, Column>>>
 ): Promise<void> {
-  if (chunk.length === 0) return
-  const staging = (name: string) => `__load_${name}`
-  await Promise.all(
-    chunk.map(({ name, ipc }) => conn.insertArrowFromIPCStream(ipc, { name: staging(name), create: true }))
+  const result = await conn.query(
+    `SELECT table_name, column_name FROM duckdb_columns() WHERE database_name = '${CAPTURE_CATALOG}' AND schema_name = 'main' ORDER BY table_name, column_index`
   )
-  const statements = chunk.flatMap(({ name, columns }) => {
-    const list = columns.map((column) => `"${column}"`).join(', ')
-    return [`INSERT INTO ${name} (${list}) SELECT ${list} FROM ${staging(name)}`]
-  })
-  try {
-    await conn.query(statements.join(';\n'))
-  } finally {
-    await conn.query(chunk.map(({ name }) => `DROP TABLE IF EXISTS ${staging(name)}`).join(';\n'))
+  const live = new Map<string, string[]>()
+  for (const row of result.toArray() as Array<{ table_name: string; column_name: string }>) {
+    const columns = live.get(row.table_name) ?? []
+    columns.push(row.column_name)
+    live.set(row.table_name, columns)
+  }
+  for (const table of tables) {
+    const expected = Object.keys(table.columns).join(', ')
+    const actual = (live.get(table.name) ?? []).join(', ')
+    if (expected !== actual) {
+      throw new Error(`The loader's columns for ${table.name} (${expected}) are not the table's (${actual})`)
+    }
   }
 }
 
@@ -539,9 +434,12 @@ function flattenPrefix(
   const c = batch.columns
   c.id.set(row, id)
   c.message_id.set(row, messageId)
-  c.prefix.set(row, prefix.prefix)
+  const entry = c.prefix.keys.set(row, prefix)
+  if (entry >= 0) {
+    c.prefix.add(entry, prefix.prefix)
+    c.prefix_bits.add(entry, bgpPrefixBitKey(prefix))
+  }
   c.prefix_length.set(row, prefix.length)
-  c.prefix_bits.set(row, bgpPrefixBitKey(prefix))
   c.afi.set(row, afi)
   c.safi.set(row, safi)
   const evpn = prefix.evpn

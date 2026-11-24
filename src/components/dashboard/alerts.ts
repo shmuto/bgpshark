@@ -164,17 +164,46 @@ interface PathChange {
  * several paths from one peer is what ADD-PATH is for.
  */
 function* asPathChange(stat: PrefixStats): Sliced<PathChange | null> {
-  const bySource = new Map<string, PathChange>()
   // Read off the history's columns rather than its events: this runs over
   // every announcement in the capture.
   const history = stat.history
+
+  // Nearly every route is announced by one peer with one path, or by several
+  // that each keep to theirs. Settle the commonest case — every announcement
+  // the same peer, path and AS_PATH — without building a key per event. The
+  // decoder shares AS_PATH text between repeats, so the comparison is almost
+  // always of one string with itself.
+  let firstAt = -1
+  let mixed = false
   for (let index = 0; index < history.length; index++) {
+    if (pauseAt(index)) yield
+    const asPath = history.asPath(index)
+    if (asPath === undefined) continue
+    if (firstAt < 0) {
+      firstAt = index
+      continue
+    }
+    if (
+      asPath !== history.asPath(firstAt) ||
+      history.source(index) !== history.source(firstAt) ||
+      history.pathId(index) !== history.pathId(firstAt)
+    ) {
+      mixed = true
+      break
+    }
+  }
+  if (!mixed) return null
+
+  const bySource = new Map<string, PathChange>()
+  for (let index = firstAt; index < history.length; index++) {
     if (pauseAt(index)) yield
     const asPath = history.asPath(index)
     if (asPath === undefined) continue
     const source = history.source(index)
     const pathId = history.pathId(index)
-    const key = `${source}|${pathId ?? ''}`
+    // An address never contains `|`, so the bare address cannot collide with
+    // an address-and-path-identifier key.
+    const key = pathId === undefined ? source : `${source}|${pathId}`
     let entry = bySource.get(key)
     if (!entry) {
       entry = { source, pathId, paths: [] }

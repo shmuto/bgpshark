@@ -52,10 +52,11 @@ jobs:
   # the deploy. If it ever turns flaky, drop it from the checks rather than
   # letting a red run become something to ignore.
   e2e:
-    # Split across three runners. The suite is CPU-bound — each spec starts
-    # its own DuckDB — so more workers on one 4-core runner mostly make every
-    # spec slower, while another runner really does divide the wall clock.
-    # Each shard pays ~30s of setup and build, which is why it stops at three.
+    # Split across three runners, each running one Playwright worker per core
+    # (playwright.config.ts). Specs used to start DuckDB on every load and keep
+    # a core busy each, so the runners ran two workers; DuckDB now starts only
+    # on the SQL console, and four workers halve a runner's share. Each shard
+    # pays ~20s of setup and a build, which is why it stops at three.
     strategy:
       # One failing shard should not cancel the others: the report of the
       # whole suite is what tells a flake from a regression.
@@ -81,11 +82,14 @@ jobs:
       # cache on that and let a version bump be the only run that pays.
       # Caches reach a branch from the default branch and not the other way
       # round, so it is the run on main whose download pull requests restore.
+      # Read from package.json, where it is pinned, rather than by starting
+      # Playwright to ask it — which took up to five seconds.
       - name: Note the Playwright version
         id: playwright
-        run: echo "version=$(bunx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test']")" >> "$GITHUB_OUTPUT"
 
       - name: Restore the browser
+        id: browser-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
@@ -94,10 +98,12 @@ jobs:
       # --only-shell skips the full Chrome build (177MB) and takes the headless
       # shell (114MB) on its own, which is what a headless run launches anyway.
       # A `--headed` or `--ui` run needs the full browser, so those stay local.
-      # The install is a no-op once the cache has restored the browser; the apt
-      # side of --with-deps still runs, and is fast and off the Playwright CDN.
+      # No --with-deps: the runner image ships Google Chrome, so the shared
+      # libraries the headless shell needs are already there, and the apt pass
+      # cost 8-20s per shard. Skipped altogether when the cache had the browser.
       - name: Install Chromium
-        run: bunx playwright install --with-deps --only-shell chromium
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        run: bunx playwright install --only-shell chromium
 
       # E2E_PREVIEW builds the app and tests the production bundle, CSP and
       # all, rather than the dev server — see playwright.config.ts.

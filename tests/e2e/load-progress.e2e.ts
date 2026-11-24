@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { announce, buildScenario, type BgpMessageSpec } from '../../src/lib/build'
-import { loadCapture, openMessagesAfterLoad } from './helpers'
+import { loadCapture, openMessagesAfterLoad, waitForDatabase } from './helpers'
 
 /**
  * A capture big enough to take more than one database chunk — the loader
@@ -42,7 +42,8 @@ function tableTransfer(updates: number): Buffer {
  * moves, that it moves forwards, and that it says what it is doing.
  *
  * There are two: the load gauge in front of the packet list, and the header's
- * gauge for the DuckDB insert that runs once the list is up. Each is read with
+ * gauge for the DuckDB insert that runs once the SQL console asks for the
+ * capture. Each is read with
  * a MutationObserver installed before the app loads, rather than polled from
  * the test, which is what makes this deterministic: every value React commits
  * is recorded, however quickly the load runs on the machine at hand.
@@ -66,6 +67,8 @@ test('loading a capture shows gauges that only move forwards', async ({ page }) 
 
   await loadCapture(page, 'table-transfer.pcap', tableTransfer(40_000))
   await openMessagesAfterLoad(page, 60_000)
+  await page.getByRole('link', { name: 'SQL', exact: true }).click()
+  await waitForDatabase(page, 60_000)
   await expect(page.getByRole('progressbar')).toHaveCount(0)
 
   const seen = await page.evaluate(

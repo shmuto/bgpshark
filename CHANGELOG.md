@@ -6,6 +6,24 @@ Each version's section here becomes the top of its GitHub Release notes (`.githu
 
 ## [Unreleased]
 
+### Changed
+
+- **DuckDB is loaded only for the SQL console.** It is no longer started at page load or filled in the background; the capture is inserted when the SQL console opens. Every other screen, filtering included, works without it.
+- **Filtering always runs in memory.** On captures over 20,000 packets it waits for typing to pause and runs in slices, so typing never freezes.
+- **`!=` and `not contains` are the complement of `=` and `contains`**, as in Wireshark: `prefix != 10.0.0.0/8` now also matches OPENs and KEEPALIVEs on small captures, as it already did on large ones.
+
+### Fixed
+
+- A dense capture under the 100 MB limit (22 million announced routes) ran DuckDB out of memory and lost its SQL console. The tables are now compressed and have no primary keys: that capture takes 139 MB instead of failing at 3.1 GB.
+
+### Performance
+
+Measured on synthetic ~95 MB captures in headless Chromium:
+
+- Findings appear in 3–11 s instead of 5–40 s, and the heap peaks at 0.65–1.8 GB instead of 0.9–3.7 GB. The worst case was a table transfer cycling through 1.2 million routes.
+- Decoding shares repeated prefixes across a full table (up to about a million). Route statistics find IPv4 routes without building a text key per announcement.
+- The SQL console's insert is dictionary-encoded and written once per row instead of twice.
+
 ### Development
 
 - `bun run pcap` builds a capture file from a preset or a capture description (`.ts` / `.json`), writes it to `testlab/out/`, and with `--dump` lists every frame as the app's parsers decode it. `bun run pcap --new <file>` writes a starter description.

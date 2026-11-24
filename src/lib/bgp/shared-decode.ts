@@ -121,8 +121,8 @@ export class SharedDecodedValues {
 
 /**
  * IPv4 prefixes without a Path Identifier — nearly every prefix in a capture —
- * in a fixed number of slots. Each prefix may sit in one of two, and the two
- * most recent prefixes hashing there are the ones kept.
+ * in a table of slots. Each prefix may sit in one of two, and the two most
+ * recent prefixes hashing there are the ones kept.
  *
  * Not a `Map`, and never resting, unlike the tables above. A prefix is looked
  * up for every route, so the lookup has to cost almost nothing even when it
@@ -134,14 +134,27 @@ export class SharedDecodedValues {
  * churn over the same prefixes. Resting through the transfer meant sharing
  * nothing once they started to repeat.
  *
+ * It grows, doubling, while it is more than half full, up to `MAX_BITS`. It
+ * used to stop at 2¹⁷ slots, which holds a few tens of thousands of prefixes
+ * well — and a full IPv4 table is about a million. A capture that cycled
+ * through 1.2 million routes shared almost none of its repeats: every
+ * announcement decoded a prefix object and string of its own, and the route
+ * statistics, the filter's suggestions and the garbage collector all paid for
+ * it again. At its largest the table is about 20MB, against prefixes that the
+ * packets would otherwise hold millions of copies of.
+ *
  * Collisions just replace the slot's prefix; the cost is a prefix decoded
  * twice, never a wrong one, because the slot's address and length are compared.
  */
 class Ipv4PrefixCache {
-  private static readonly BITS = 17
-  private lengths = new Uint8Array(1 << Ipv4PrefixCache.BITS)
-  private addresses = new Int32Array(1 << Ipv4PrefixCache.BITS)
-  private values: Array<BgpPrefix | undefined> = new Array(1 << Ipv4PrefixCache.BITS)
+  private static readonly INITIAL_BITS = 14
+  private static readonly MAX_BITS = 21
+  private bits = Ipv4PrefixCache.INITIAL_BITS
+  private lengths = new Uint8Array(1 << Ipv4PrefixCache.INITIAL_BITS)
+  private addresses = new Int32Array(1 << Ipv4PrefixCache.INITIAL_BITS)
+  private values: Array<BgpPrefix | undefined> = new Array(1 << Ipv4PrefixCache.INITIAL_BITS)
+  /** Slots holding a prefix. */
+  private filled = 0
 
   /**
    * The first of the two slots a prefix may occupy; the other is the one
@@ -156,7 +169,7 @@ class Ipv4PrefixCache {
     h ^= h >>> 13
     h = Math.imul(h, 0xc2b2ae35)
     h ^= h >>> 16
-    return h & ((1 << Ipv4PrefixCache.BITS) - 2)
+    return h & ((1 << this.bits) - 2)
   }
 
   private matches(slot: number, address: number, length: number): boolean {
@@ -174,7 +187,10 @@ class Ipv4PrefixCache {
 
   /** Store in the first slot, moving what was there to the second: the older of the two is the one dropped. */
   set(address: number, length: number, prefix: BgpPrefix): BgpPrefix {
+    if (this.filled * 2 > this.lengths.length && this.bits < Ipv4PrefixCache.MAX_BITS) this.grow()
     const slot = this.slot(address, length)
+    // The second slot's prefix, if any, is the one pushed out.
+    if (this.lengths[slot + 1] === 0) this.filled++
     this.lengths[slot + 1] = this.lengths[slot]
     this.addresses[slot + 1] = this.addresses[slot]
     this.values[slot + 1] = this.values[slot]
@@ -182,6 +198,21 @@ class Ipv4PrefixCache {
     this.addresses[slot] = address
     this.values[slot] = prefix
     return prefix
+  }
+
+  /** Twice the slots, with every prefix held moved over, older before newer. */
+  private grow(): void {
+    const { lengths, addresses, values } = this
+    this.bits++
+    this.lengths = new Uint8Array(1 << this.bits)
+    this.addresses = new Int32Array(1 << this.bits)
+    this.values = new Array(1 << this.bits)
+    this.filled = 0
+    for (let slot = 0; slot < lengths.length; slot += 2) {
+      for (const at of [slot + 1, slot]) {
+        if (lengths[at] !== 0) this.set(addresses[at], lengths[at] - 1, values[at]!)
+      }
+    }
   }
 }
 

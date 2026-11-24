@@ -8,7 +8,7 @@ All processing runs locally in your browser. Captures are never uploaded, no ext
 
 Drop a file anywhere in the window, or select one from the start screen. `.pcap`, `.pcapng`, and `.cap` files up to 100 MB are supported, and the format is detected automatically.
 
-Large captures take a few seconds to load while a progress bar tracks each stage. The packet list opens as soon as the capture is decoded; the capture is then imported into DuckDB in the background, with a small **DuckDB** gauge in the header until it finishes. Until then, filters run in memory and the SQL console waits for the import, which for a large table transfer can take a while longer than the list.
+Large captures take a few seconds to load while a progress bar tracks each stage. The packet list opens as soon as the capture is decoded. The capture is imported into DuckDB only when you open **SQL**, with a small **DuckDB** gauge in the header until it finishes; for a large table transfer that can take several seconds. Every other screen, filtering included, works without it.
 
 If you do not have a capture handy, click **Try with sample.pcapng** to explore a sample session, or open **Build** (in the **⋯** menu at the top right) to generate a synthetic capture.
 
@@ -342,7 +342,7 @@ prefix = 10.0.0.0/8 and not (type = KEEPALIVE)
 capability contains "Route Refresh"
 ```
 
-Combine conditions with `and`, `or`, `not`, and parentheses. Supported operators are `=` (or `==`), `!=`, `contains`, and `not contains`; numeric fields also accept `<`, `<=`, `>`, and `>=`.
+Combine conditions with `and`, `or`, `not`, and parentheses. Supported operators are `=` (or `==`), `!=`, `contains`, and `not contains`; numeric fields also accept `<`, `<=`, `>`, and `>=`. `!=` and `not contains` match every packet the positive form does not, so `prefix != 10.0.0.0/8` also lists OPENs and KEEPALIVEs; add `type = UPDATE` to keep to routes. On a large capture the list updates once you pause typing, with *filtering...* beside the count meanwhile.
 
 A value typed on its own is read as the comparison it most likely means: an address (`10.0.13.1`) as `ip = 10.0.13.1`, a CIDR block (`10.0.0.0/8`) as `prefix = 10.0.0.0/8`, `AS65001` as `asn = 65001`, a MAC as `mac = …`, and a message type (`update`) as `type = UPDATE`.
 
