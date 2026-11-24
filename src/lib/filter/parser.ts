@@ -1006,7 +1006,7 @@ function evaluateMatch(field: string, operator: '=' | 'contains', value: FilterV
  * Evaluates `<`, `<=`, `>`, `>=`, which only apply to the integer fields.
  *
  * Kept apart from the equality path so the field-by-field matchers keep their
- * four-operator shape, and so the SQL compiler has a single mirror to follow.
+ * equality shape.
  */
 function evaluateOrderedComparison(
   field: string,
@@ -1048,8 +1048,7 @@ function evaluateOrderedComparison(
 
     // Absent is not zero and not a match: an UPDATE with no MED must not be
     // swept in by `med < 100`, which would otherwise select most of an eBGP
-    // capture. The SQL side gets this for free, since NULL fails every
-    // comparison.
+    // capture.
     case 'med':
       for (const msg of packet.messages) {
         if (msg.type !== 'UPDATE') continue

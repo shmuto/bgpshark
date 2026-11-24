@@ -210,8 +210,7 @@ function MessagesView({ linked }: { linked: boolean }) {
   // reachable; after that the user's own clicks own the selection.
   const selectionAppliedRef = useRef(false)
 
-  // SQL filtering waits for the background insert; until then, and if it
-  // fails, the filter runs in memory.
+  // In memory, and in slices on a large capture; see `useFilter`.
   const {
     query,
     setQuery,

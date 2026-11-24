@@ -15,7 +15,7 @@ English | [日本語](architecture.ja.md)
 5. [Decoding: from frame to BGP message](#5-decoding-from-frame-to-bgp-message)
 6. [Load and database states](#6-load-and-database-states)
 7. [Workspace: scope, time window and filter](#7-workspace-scope-time-window-and-filter)
-8. [Filtering on two backends](#8-filtering-on-two-backends)
+8. [Filtering](#8-filtering)
 9. [DuckDB tables](#9-duckdb-tables)
 10. [Findings pipeline](#10-findings-pipeline)
 11. [Screens and routes](#11-screens-and-routes)
@@ -68,7 +68,7 @@ flowchart LR
 
 - **Nothing is uploaded.** The capture file goes from disk into the tab's memory, and into IndexedDB so a reload can restore it.
 - **Everything is self-hosted.** DuckDB's `.wasm` and worker files, fonts and manual images are built into `dist/assets/`. `tests/e2e/offline.e2e.ts` fails if any request leaves the origin.
-- **DuckDB is optional.** If its worker does not start, every screen except the SQL Console keeps working (see [§6](#6-load-and-database-states)).
+- **DuckDB is optional.** It is started only when the SQL Console is opened; if its worker does not start, every other screen is unaffected (see [§6](#6-load-and-database-states)).
 
 ---
 
@@ -113,11 +113,11 @@ flowchart TB
     ui --> domain
     appctx --> pcap & bgp & db & storage
     wsctx --> rules & bgp
-    usefilter --> filter & db
+    usefilter --> filter & sliced
     rules --> bgp & sliced
     bgp --> pcap & net
     filter --> net
-    db --> filter & net
+    db --> net
     build --> pcap & bgp & net
     pcap --> sliced
 ```
@@ -135,7 +135,7 @@ The alert rules sit under `src/components/dashboard/` because the dashboard scre
 
 ## 4. Loading a capture
 
-The load is ordered so that the packet list appears as early as possible. Reading, parsing and decoding sit in front of the list; storing to IndexedDB and inserting into DuckDB happen after it, in the background.
+The load is ordered so that the packet list appears as early as possible. Reading, parsing and decoding sit in front of the list; storing to IndexedDB happens after it, in the background. DuckDB is not involved: it receives the capture only when the SQL Console is opened.
 
 ```mermaid
 sequenceDiagram
@@ -158,24 +158,25 @@ sequenceDiagram
     A->>UI: status = ready → packet list rendered
     Note over UI: Findings: computed at once below 20,000 packets,<br/>otherwise in background slices
 
-    par not awaited
-        A-)S: savePcapFile(Blob)
-    and background insert
-        A-)L: loadPackets(packets)
-        loop chunk of ROWS_PER_FLUSH rows
-            L->>L: flatten into Arrow column buffers
-            L->>D: insertArrowFromIPCStream → INSERT … SELECT
-        end
-        L--)A: done → dbStatus = loaded
-        A->>UI: filter and SQL Console switch to DuckDB
+    A-)S: savePcapFile(Blob), not awaited
+
+    Note over U,D: later, only if the SQL Console is opened
+    UI->>A: requestDatabase()
+    A->>D: initDatabase (first time only)
+    A-)L: loadPackets(packets)
+    loop chunk of ROWS_PER_FLUSH rows
+        L->>L: flatten into Arrow column buffers<br/>(repeated text dictionary-encoded)
+        L->>D: insertArrowFromIPCStream (append)
     end
+    L--)A: done → dbStatus = loaded
+    A->>UI: SQL Console accepts queries
 ```
 
 **On reload** the same path runs from step 2, with the buffer read back from IndexedDB (`loadPcapFile`). Until that answer arrives the status is `initializing`, and `RequireCapture` waits instead of redirecting, so deep links survive a reload.
 
-**Overtaking loads.** Each load takes a new *generation* number. A slower load that notices a newer one has started stops, and a background DuckDB insert only reports progress while its generation is still on screen.
+**Overtaking loads.** Each load takes a new *generation* number. A slower load that notices a newer one has started stops, and a DuckDB insert only reports progress while its generation is still on screen. Opening another capture drops the previous one's tables (`unloadPackets`).
 
-Key files: `src/hooks/useBgpAnalyzer.ts`, `src/lib/sliced.ts`, `src/lib/db/loader.ts`, `src/lib/db/arrow-columns.ts`, `src/lib/storage.ts`. Measured timings for large captures are in [`design.md` §3.1](design.md#31-performance).
+Key files: `src/hooks/useBgpAnalyzer.ts`, `src/lib/sliced.ts`, `src/lib/db/loader.ts`, `src/lib/db/load-batches.ts`, `src/lib/db/arrow-columns.ts`, `src/lib/storage.ts`. Measured timings for large captures are in [`design.md` §3.1](design.md#31-performance).
 
 ---
 
@@ -219,7 +220,7 @@ flowchart TB
 
 ## 6. Load and database states
 
-Two independent state machines live in `useBgpAnalyzer`. `status` gates the analysis screens; `dbStatus` decides whether filtering and the SQL Console use DuckDB.
+Two independent state machines live in `useBgpAnalyzer`. `status` gates the analysis screens; `dbStatus` says whether the SQL Console can query the capture.
 
 ```mermaid
 stateDiagram-v2
@@ -239,20 +240,22 @@ stateDiagram-v2
 stateDiagram-v2
     direction LR
     [*] --> db_idle
-    db_idle --> db_loading: capture ready with BGP rows
+    db_idle --> db_loading: SQL Console opened (requestDatabase)
     db_loading --> loaded: insert finished
     db_loading --> failed: insert threw
-    db_loading --> unavailable: DuckDB never started
-    db_idle --> unavailable: capture ready, DuckDB init failed earlier
+    db_loading --> unavailable: DuckDB did not start
+    unavailable --> db_loading: SQL Console opened again
+    loaded --> db_idle: another capture opened
+    failed --> db_idle: another capture opened
 
-    loaded: loaded — SQL filter + SQL Console
-    failed: failed — in-memory filter, warning banner
-    unavailable: unavailable — in-memory filter, SQL Console explains why
+    loaded: loaded — SQL Console queries
+    failed: failed — warning banner, SQL Console explains why
+    unavailable: unavailable — SQL Console explains why
     db_idle: idle
     db_loading: loading
 ```
 
-`dbStatus` is React state, not a read of `isDataLoaded()` at render time. That is what makes the filter and SQL Console re-render when the background insert lands.
+`dbStatus` is React state, not a read of `isDataLoaded()` at render time. That is what makes the SQL Console re-render when the insert lands. No other screen reads it.
 
 ---
 
@@ -288,38 +291,33 @@ Scope and window are held by the workspace layout, so they survive tab changes a
 
 ---
 
-## 8. Filtering on two backends
+## 8. Filtering
 
-A filter expression is parsed **once** into an AST, then run on whichever backend fits. Both backends must give the same answer; this is a core invariant (see [`CLAUDE.md`](../CLAUDE.md)).
+A filter expression is parsed **once** into an AST and evaluated in memory, on the parsed packets. There is no second backend: DuckDB used to answer large captures, and was removed from filtering (see [`design-duckdb-wasm.md`](design-duckdb-wasm.md#revision-duckdb-serves-only-the-sql-console)).
 
 ```mermaid
 flowchart TB
     q["Query text<br/>e.g. type = UPDATE and asn = 65001"] --> parse["lib/filter/parser.ts<br/>tokenize → parse → AST<br/>rewrite ip / peer / bare values"]
     parse --> err{"Parse errors?"}
     err -- "yes" --> red["List stays unfiltered;<br/>red row after 600 ms pause"]
-    err -- "no" --> mem{"DuckDB loaded and<br/>> 20,000 packets?"}
+    err -- "no" --> size{"> 20,000 packets?"}
 
-    mem -- "no" --> sync["In-memory evaluator<br/>matchPacket (every keystroke)"]
+    size -- "no" --> sync["matchPacket over every packet<br/>(every keystroke)"]
     sync --> shown[["Shown immediately"]]
-    mem -- "yes" --> keep["Keep previous result,<br/>show Filtering…"]
-
-    err -- "no" --> sqlq{"DuckDB loaded?"}
-    sqlq -- "yes" --> deb["debounce 200 ms"] --> tosql["lib/db/filter-to-sql.ts<br/>AST → WHERE clause"]
-    tosql --> duck["SELECT frame_index FROM packets<br/>WHERE … ORDER BY frame_index"]
-    duck --> resolve["Map frame indexes back onto<br/>the parsed BgpPacket[]"]
-    resolve --> shown2[["Replaces the in-memory result"]]
-    duck -- "query fails" --> fallback["Fall back to matchPacket"]
+    size -- "yes" --> keep["Keep previous result,<br/>show filtering..."]
+    keep --> deb["debounce 200 ms"] --> sliced["filterPacketsWork<br/>via runInSlices (~12 ms slices)"]
+    sliced --> shown2[["Replaces the previous result"]]
+    sliced -- "query or scope changed" --> abort["Abandoned"]
 ```
 
-- **DuckDB selects; it never rebuilds packets.** Only `frame_index` crosses the boundary, so no nested field is lost on the way to the UI ([`design-duckdb-wasm.md`](design-duckdb-wasm.md)).
-- **CIDR matching** uses bit-string columns (`prefix_bits`, `src_ip_bits`) and `LIKE 'bits%'` on the SQL side, and `lib/net/prefix.ts` in memory.
-- **Known difference:** in memory, `prefix != X` matches only UPDATEs; SQL also returns OPENs and KEEPALIVEs (pinned by `tests/e2e/prefix-matching.e2e.ts`).
+- **Negation is the complement.** `!=` and `not contains` match every packet the positive form does not, OPENs and KEEPALIVEs included (pinned by `tests/e2e/prefix-matching.e2e.ts` and `tests/lib/filter`).
+- **CIDR matching** uses `lib/net/prefix.ts`, which compares IPv4 on 32-bit integers read straight off the prefix text.
 
 ---
 
 ## 9. DuckDB tables
 
-The tables are a flattened, query-friendly projection of `BgpPacket[]`, defined in `src/lib/db/schema.ts`. Every row leads back to a frame through `frame_index`. There are primary keys but no secondary indexes, and no raw frame bytes.
+The tables are a flattened, query-friendly projection of `BgpPacket[]`, defined in `src/lib/db/schema.ts`. Every row leads back to a frame through `frame_index`. They live in a compressed in-memory catalog (`capture`), with no indexes, no primary keys and no raw frame bytes. The `*_bits` columns hold address bits as text, so a CIDR question can be asked as `prefix_bits LIKE 'bits%'`.
 
 ```mermaid
 erDiagram
@@ -544,8 +542,9 @@ The e2e suite runs against the **production build** in CI, because the dev serve
 | Invariant | Enforced by | Where it matters |
 |-----------|-------------|------------------|
 | No off-origin requests, no `eval` / `new Function` | Production CSP, `tests/e2e/offline.e2e.ts` | Dependencies, DuckDB features, asset loading |
-| DuckDB selects frame indexes; it never rebuilds packets | `lib/db/queries.ts` API surface | Any new SQL-backed feature |
-| Filter semantics match on both backends | `tests/lib/filter`, `tests/e2e/*filter*`, `prefix-matching.e2e.ts` | Any change to filter fields or operators |
+| DuckDB serves only the SQL Console; it never rebuilds packets | `lib/db/queries.ts` API surface, `requestDatabase` | Any new SQL-backed feature |
+| Loader columns are in schema order | `checkColumnOrder`, `tests/lib/db/load-batches.test.ts` | Any change to `schema.ts` or `load-batches.ts` |
+| `!=` is the complement of `=` | `tests/lib/filter`, `prefix-matching.e2e.ts` | Any change to filter fields or operators |
 | Decoded messages are read-only | Convention (`shared-decode.ts`) | Any code that touches `BgpPacket` |
 | Findings work without DuckDB | Rules take `BgpPacket[]` only | New alert rules and aggregations |
 | Alert rules match the spec table | `design.md` §2.1.14 + `testlab/scenarios.ts` | Adding or changing a rule |

@@ -15,7 +15,7 @@
 5. [デコード: フレームから BGP メッセージまで](#5-デコード-フレームから-bgp-メッセージまで)
 6. [読み込みとデータベースの状態](#6-読み込みとデータベースの状態)
 7. [ワークスペース: セッション・時間範囲・フィルタ](#7-ワークスペース-セッション時間範囲フィルタ)
-8. [2 つの実行方式によるフィルタ](#8-2-つの実行方式によるフィルタ)
+8. [フィルタ](#8-フィルタ)
 9. [DuckDB のテーブル](#9-duckdb-のテーブル)
 10. [Findings の算出](#10-findings-の算出)
 11. [画面とルーティング](#11-画面とルーティング)
@@ -68,7 +68,7 @@ flowchart LR
 
 - **何もアップロードしません。** キャプチャはディスクからタブのメモリへ読み込みます。再読み込みで復元できるよう、IndexedDB にも保存します。
 - **すべて自前で配信します。** DuckDB の `.wasm` とワーカー、フォント、マニュアル画像は `dist/assets/` に含めます。外部へのリクエストが 1 件でもあると `tests/e2e/offline.e2e.ts` が失敗します。
-- **DuckDB はなくても動きます。** ワーカーが起動しなくても、SQL Console 以外の画面はすべて使えます（[§6](#6-読み込みとデータベースの状態) を参照）。
+- **DuckDB はなくても動きます。** DuckDB は SQL Console を開いたときにだけ起動します。ワーカーが起動しなくても、ほかの画面には影響しません（[§6](#6-読み込みとデータベースの状態) を参照）。
 
 ---
 
@@ -113,11 +113,11 @@ flowchart TB
     ui --> domain
     appctx --> pcap & bgp & db & storage
     wsctx --> rules & bgp
-    usefilter --> filter & db
+    usefilter --> filter & sliced
     rules --> bgp & sliced
     bgp --> pcap & net
     filter --> net
-    db --> filter & net
+    db --> net
     build --> pcap & bgp & net
     pcap --> sliced
 ```
@@ -135,7 +135,7 @@ flowchart TB
 
 ## 4. キャプチャの読み込み
 
-パケット一覧をできるだけ早く表示できる順序にしています。読み取り、解析、デコードは一覧の表示前に行います。IndexedDB への保存と DuckDB への投入は、表示後に裏で行います。
+パケット一覧をできるだけ早く表示できる順序にしています。読み取り、解析、デコードは一覧の表示前に行います。IndexedDB への保存は、表示後に裏で行います。DuckDB はここでは使いません。キャプチャを受け取るのは SQL Console を開いたときだけです。
 
 ```mermaid
 sequenceDiagram
@@ -158,24 +158,25 @@ sequenceDiagram
     A->>UI: status = ready → パケット一覧を表示
     Note over UI: Findings は 20,000 パケット以下なら即時に計算、<br/>それを超えると裏で分割して計算
 
-    par 完了を待たない
-        A-)S: savePcapFile(Blob)
-    and 裏で投入
-        A-)L: loadPackets(packets)
-        loop ROWS_PER_FLUSH 行ごと
-            L->>L: Arrow の列バッファへ平坦化
-            L->>D: insertArrowFromIPCStream → INSERT … SELECT
-        end
-        L--)A: 完了 → dbStatus = loaded
-        A->>UI: フィルタと SQL Console が DuckDB を使い始める
+    A-)S: savePcapFile(Blob)（完了を待たない）
+
+    Note over U,D: SQL Console を開いたときだけ
+    UI->>A: requestDatabase()
+    A->>D: initDatabase（初回のみ）
+    A-)L: loadPackets(packets)
+    loop ROWS_PER_FLUSH 行ごと
+        L->>L: Arrow の列バッファへ平坦化<br/>（繰り返す文字列は辞書エンコード）
+        L->>D: insertArrowFromIPCStream（追記）
     end
+    L--)A: 完了 → dbStatus = loaded
+    A->>UI: SQL Console でクエリを実行できる
 ```
 
 **再読み込み時**は、IndexedDB から読み戻したバッファ（`loadPcapFile`）で手順 2 から同じ処理を行います。結果が出るまで status は `initializing` です。この間 `RequireCapture` は別画面へ移動させずに待つので、ブックマークや直接リンクも再読み込み後にそのまま開けます。
 
-**後から始まった読み込みが優先されます。** 読み込みのたびに新しい世代番号を割り当てます。古い読み込みは、新しい読み込みが始まったことに気づくと処理をやめます。DuckDB への投入も、自分の世代が表示中のときだけ進み具合を反映します。
+**後から始まった読み込みが優先されます。** 読み込みのたびに新しい世代番号を割り当てます。古い読み込みは、新しい読み込みが始まったことに気づくと処理をやめます。DuckDB への投入も、自分の世代が表示中のときだけ進み具合を反映します。別のキャプチャを開くと、前のキャプチャのテーブルは削除します（`unloadPackets`）。
 
-主なファイル: `src/hooks/useBgpAnalyzer.ts`、`src/lib/sliced.ts`、`src/lib/db/loader.ts`、`src/lib/db/arrow-columns.ts`、`src/lib/storage.ts`。大きなキャプチャでの実測値は [`design.md` §3.1](design.md#31-performance) にあります。
+主なファイル: `src/hooks/useBgpAnalyzer.ts`、`src/lib/sliced.ts`、`src/lib/db/loader.ts`、`src/lib/db/load-batches.ts`、`src/lib/db/arrow-columns.ts`、`src/lib/storage.ts`。大きなキャプチャでの実測値は [`design.md` §3.1](design.md#31-performance) にあります。
 
 ---
 
@@ -219,7 +220,7 @@ flowchart TB
 
 ## 6. 読み込みとデータベースの状態
 
-`useBgpAnalyzer` には独立した 2 つの状態があります。`status` は分析画面を開けるかどうかを決めます。`dbStatus` はフィルタと SQL Console が DuckDB を使うかどうかを決めます。
+`useBgpAnalyzer` には独立した 2 つの状態があります。`status` は分析画面を開けるかどうかを決めます。`dbStatus` は SQL Console がキャプチャを照会できるかどうかを表します。
 
 ```mermaid
 stateDiagram-v2
@@ -239,20 +240,22 @@ stateDiagram-v2
 stateDiagram-v2
     direction LR
     [*] --> db_idle
-    db_idle --> db_loading: BGP の行があるキャプチャを表示
+    db_idle --> db_loading: SQL Console を開いた（requestDatabase）
     db_loading --> loaded: 投入完了
     db_loading --> failed: 投入中に例外
     db_loading --> unavailable: DuckDB が起動しなかった
-    db_idle --> unavailable: 表示時点で DuckDB の起動に失敗済み
+    unavailable --> db_loading: SQL Console をもう一度開いた
+    loaded --> db_idle: 別のキャプチャを開いた
+    failed --> db_idle: 別のキャプチャを開いた
 
-    loaded: loaded — SQL でフィルタ、SQL Console 利用可
-    failed: failed — メモリ上でフィルタ、警告を表示
-    unavailable: unavailable — メモリ上でフィルタ、SQL Console に理由を表示
+    loaded: loaded — SQL Console でクエリ可能
+    failed: failed — 警告を表示、SQL Console に理由を表示
+    unavailable: unavailable — SQL Console に理由を表示
     db_idle: idle
     db_loading: loading
 ```
 
-`dbStatus` は React の state として持ちます。描画のたびに `isDataLoaded()` を読むのではありません。そのため、裏での投入が終わった時点でフィルタと SQL Console が再描画されます。
+`dbStatus` は React の state として持ちます。描画のたびに `isDataLoaded()` を読むのではありません。そのため、投入が終わった時点で SQL Console が再描画されます。ほかの画面はこの値を読みません。
 
 ---
 
@@ -288,38 +291,33 @@ flowchart LR
 
 ---
 
-## 8. 2 つの実行方式によるフィルタ
+## 8. フィルタ
 
-フィルタ式は**一度だけ**構文木に変換し、状況に合う方式で実行します。どちらの方式でも同じ結果になることが、この設計の中心となる約束です（[`CLAUDE.md`](../CLAUDE.md) を参照）。
+フィルタ式は**一度だけ**構文木に変換し、解析済みのパケットに対してメモリ上で評価します。実行方式は 1 つだけです。以前は大きなキャプチャを DuckDB で処理していましたが、フィルタからは外しました（[`design-duckdb-wasm.md`](design-duckdb-wasm.md#revision-duckdb-serves-only-the-sql-console) を参照）。
 
 ```mermaid
 flowchart TB
     q["クエリ文字列<br/>例: type = UPDATE and asn = 65001"] --> parse["lib/filter/parser.ts<br/>字句解析 → 構文解析 → 構文木<br/>ip / peer / 値だけの入力を書き換え"]
     parse --> err{"構文エラー？"}
     err -- "あり" --> red["一覧は絞り込まない<br/>入力が 600 ms 止まると赤い行で表示"]
-    err -- "なし" --> mem{"DuckDB 投入済み かつ<br/>20,000 パケット超？"}
+    err -- "なし" --> size{"20,000 パケット超？"}
 
-    mem -- "いいえ" --> sync["メモリ上で評価<br/>matchPacket（キー入力ごと）"]
+    size -- "いいえ" --> sync["全パケットに matchPacket<br/>（キー入力ごと）"]
     sync --> shown[["すぐに表示"]]
-    mem -- "はい" --> keep["前回の結果を残し<br/>Filtering… を表示"]
-
-    err -- "なし" --> sqlq{"DuckDB 投入済み？"}
-    sqlq -- "はい" --> deb["200 ms 待つ"] --> tosql["lib/db/filter-to-sql.ts<br/>構文木 → WHERE 句"]
-    tosql --> duck["SELECT frame_index FROM packets<br/>WHERE … ORDER BY frame_index"]
-    duck --> resolve["フレーム番号を<br/>解析済みの BgpPacket[] に対応づけ"]
-    resolve --> shown2[["メモリ上の結果を置き換え"]]
-    duck -- "クエリ失敗" --> fallback["matchPacket に切り替え"]
+    size -- "はい" --> keep["前回の結果を残し<br/>フィルタ中... を表示"]
+    keep --> deb["200 ms 待つ"] --> sliced["filterPacketsWork を<br/>runInSlices で実行（約 12 ms ずつ）"]
+    sliced --> shown2[["前回の結果を置き換え"]]
+    sliced -- "クエリや範囲が変わった" --> abort["途中で打ち切り"]
 ```
 
-- **DuckDB は選ぶだけで、パケットを組み立て直しません。** 境界を越えるのは `frame_index` だけです。そのため、入れ子の項目が画面に届く途中で欠けることはありません（[`design-duckdb-wasm.md`](design-duckdb-wasm.md)）。
-- **CIDR の照合**は、SQL 側ではビット列の列（`prefix_bits`、`src_ip_bits`）と `LIKE 'bits%'` で行います。メモリ側では `lib/net/prefix.ts` を使います。
-- **既知の違い:** メモリ側の `prefix != X` は UPDATE だけに一致します。SQL 側は OPEN や KEEPALIVE も返します（`tests/e2e/prefix-matching.e2e.ts` で固定）。
+- **否定は補集合です。** `!=` と `not contains` は、肯定形に一致しないすべてのパケットに一致します。OPEN や KEEPALIVE も含みます（`tests/e2e/prefix-matching.e2e.ts` と `tests/lib/filter` で固定）。
+- **CIDR の照合**には `lib/net/prefix.ts` を使います。IPv4 はプレフィックスの文字列から直接 32 ビット整数を読んで比較します。
 
 ---
 
 ## 9. DuckDB のテーブル
 
-テーブルは `BgpPacket[]` を検索しやすく平坦にした写しで、`src/lib/db/schema.ts` で定義しています。どの行も `frame_index` を通じて元のフレームにたどれます。主キーはありますが、副次インデックスはありません。フレームの生バイトも保存しません。
+テーブルは `BgpPacket[]` を検索しやすく平坦にした写しで、`src/lib/db/schema.ts` で定義しています。どの行も `frame_index` を通じて元のフレームにたどれます。テーブルは圧縮付きのインメモリカタログ（`capture`）に置きます。インデックスも主キーもなく、フレームの生バイトも保存しません。`*_bits` 列はアドレスのビット列を文字列で持つので、CIDR の条件を `prefix_bits LIKE 'bits%'` の形で書けます。
 
 ```mermaid
 erDiagram
@@ -544,8 +542,9 @@ CI の e2e テストは**本番ビルド**に対して実行します。開発�
 | 不変条件 | 担保しているもの | 影響する変更 |
 |----------|------------------|--------------|
 | 外部オリジンへの通信なし、`eval` / `new Function` なし | 本番 CSP、`tests/e2e/offline.e2e.ts` | 依存ライブラリ、DuckDB の機能、アセットの読み込み |
-| DuckDB はフレーム番号を選ぶだけで、パケットを組み立て直さない | `lib/db/queries.ts` が公開する関数 | SQL を使う新機能 |
-| フィルタの意味が 2 つの方式で一致する | `tests/lib/filter`、`tests/e2e/*filter*`、`prefix-matching.e2e.ts` | フィルタの項目や演算子の変更 |
+| DuckDB は SQL Console だけに使い、パケットを組み立て直さない | `lib/db/queries.ts` が公開する関数、`requestDatabase` | SQL を使う新機能 |
+| ローダーの列がスキーマと同じ順序 | `checkColumnOrder`、`tests/lib/db/load-batches.test.ts` | `schema.ts` や `load-batches.ts` の変更 |
+| `!=` は `=` の補集合 | `tests/lib/filter`、`prefix-matching.e2e.ts` | フィルタの項目や演算子の変更 |
 | デコード済みのメッセージは読み取り専用 | 取り決め（`shared-decode.ts`） | `BgpPacket` に触れるすべてのコード |
 | Findings は DuckDB なしで動く | ルールは `BgpPacket[]` だけを受け取る | 新しいアラートルールや集計 |
 | アラートルールが仕様の表と一致する | `design.md` §2.1.14 と `testlab/scenarios.ts` | ルールの追加・変更 |

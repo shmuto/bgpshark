@@ -93,21 +93,20 @@ flowchart LR
     file[".pcap / .pcapng"] --> pcap["lib/pcap<br/>frames"] --> bgp["lib/bgp<br/>BGP messages"]
     bgp --> state["AppContext<br/>BgpPacket[]"]
     state --> views["Workspace<br/>Messages · Sessions · Routes<br/>Findings"]
-    state -. "background insert" .-> duck["DuckDB WASM<br/>SQL Console · fast filter"]
-    duck -- "matching frame indexes" --> views
+    views -. "SQL Console opened" .-> duck["DuckDB WASM<br/>SQL Console"]
     file -. "kept for reload" .-> idb[("IndexedDB")]
 ```
 
-Everything runs in the browser tab. The packet list appears as soon as decoding finishes; DuckDB is filled afterwards and only ever answers *which frames* match, so every screen except the SQL Console keeps working without it. Filter expressions parse once into an AST and run either against DuckDB WASM or in memory.
+Everything runs in the browser tab. The packet list appears as soon as decoding finishes. Filter expressions parse once into an AST and run in memory, in slices on large captures. DuckDB is started and filled only when the SQL Console is opened, so every other screen works without it.
 
-**See [docs/architecture.md](docs/architecture.md)** for diagrams of the load pipeline, decoding layers, state machines, filter backends, DuckDB tables, findings pipeline, routes, Capture Builder and CI.
+**See [docs/architecture.md](docs/architecture.md)** for diagrams of the load pipeline, decoding layers, state machines, filtering, DuckDB tables, findings pipeline, routes, Capture Builder and CI.
 
 | Path | Contents |
 |------|----------|
 | `src/lib/pcap/` | pcap and pcapng parsers, pcap writer, IPv6 & non-standard port detection |
 | `src/lib/bgp/` | BGP message and path attribute parsers, error hints, session & prefix analysis |
 | `src/lib/build/` | BGP message encoders, TCP/IP/Ethernet framing, scenario builder & presets |
-| `src/lib/db/` | DuckDB WASM setup, schema, Arrow IPC loader, query API, filter-to-SQL compiler |
+| `src/lib/db/` | DuckDB WASM setup, schema, Arrow IPC loader, query API for the SQL Console |
 | `src/lib/filter/` | Filter expression lexer, parser, and in-memory evaluator |
 | `src/lib/net/` | Prefix parsing and CIDR containment arithmetic |
 | `src/pages/` | Page components and the in-app manual (`manual/manual.md`, `manual/manual.ja.md`) |

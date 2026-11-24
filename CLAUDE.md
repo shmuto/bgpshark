@@ -1,6 +1,6 @@
 # Working on BGPShark
 
-Quick orientation and invariants for contributors and AI agents working in this repository. For product overview, see [`README.md`](README.md); for architecture diagrams (load pipeline, filter backends, findings, CI), see [`docs/architecture.md`](docs/architecture.md); for specifications, see [`docs/design.md`](docs/design.md) and [`docs/troubleshooting-scenarios.md`](docs/troubleshooting-scenarios.md).
+Quick orientation and invariants for contributors and AI agents working in this repository. For product overview, see [`README.md`](README.md); for architecture diagrams (load pipeline, filtering, findings, CI), see [`docs/architecture.md`](docs/architecture.md); for specifications, see [`docs/design.md`](docs/design.md) and [`docs/troubleshooting-scenarios.md`](docs/troubleshooting-scenarios.md).
 
 ## Commands
 
@@ -30,8 +30,9 @@ CHROMIUM_PATH=/path/to/chromium bun run test:e2e
   - Production forbids all off-origin fetches (`connect-src 'self' blob: data:`) and forbids dynamic code evaluation (`script-src 'self' 'wasm-unsafe-eval'`, no `eval` or `new Function`).
   - Never use DuckDB features that download remote extensions (e.g. `read_json_auto`) or libraries that rely on `new Function` (e.g. `apache-arrow` high-level builders—`src/lib/db/loader.ts` constructs Arrow IPC buffers manually for this reason).
   - Whenever touching asset loading, DuckDB queries, or dependencies, verify with `bun run build && bun run preview` and `tests/e2e/offline.e2e.ts`.
-- **Dual filter backends:** Filter expressions are parsed once into an AST (`src/lib/filter/parser.ts`) and executed either via DuckDB SQL (`src/lib/db/filter-to-sql.ts`) or in memory when DuckDB is unavailable. Any change to filter fields or semantics must be applied to **both** backends.
-  - *Known difference on negation:* In memory, `prefix != 10.0.0.0/8` matches only UPDATE packets, whereas the SQL backend also returns OPENs and KEEPALIVEs (pinned by `tests/e2e/prefix-matching.e2e.ts`).
+- **One filter backend, in memory:** Filter expressions are parsed once into an AST and evaluated in memory (`src/lib/filter/parser.ts`); above `SYNC_FILTER_MAX_PACKETS` the pass is debounced and run in slices (`src/hooks/useFilter.ts`). `!=` and `not contains` are the complement of `=` and `contains`, so `prefix != 10.0.0.0/8` includes OPENs and KEEPALIVEs (pinned by `tests/e2e/prefix-matching.e2e.ts`).
+- **DuckDB serves only the SQL console:** It is not started at page load. The SQL console asks for the capture when it opens (`requestDatabase` in `src/hooks/useBgpAnalyzer.ts`). The tables live in a compressed in-memory catalog with no primary keys (`src/lib/db/database.ts`, `schema.ts`).
+  - Chunks are appended straight from Arrow, which binds columns by **position**: the column order in `src/lib/db/load-batches.ts` must match `SCHEMA_SQL` (checked by `tests/lib/db/load-batches.test.ts` and at load time).
 - **Alert rules are specified:** [`docs/design.md`](docs/design.md) §2.1.14 defines every rule's trigger conditions and required false-positive exclusions. When adding or modifying an alert rule, update that table and test against the scenario corpus in `testlab/scenarios.ts`.
 - **Manual prose & screenshots:**
   - The user manual (`src/pages/manual/manual.md` and `manual.ja.md`) is converted to HTML at build time by `markdownPlugin` in `vite.config.ts`. Edit the Markdown files, not `ManualPage.tsx`.
