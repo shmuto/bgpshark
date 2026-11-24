@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "bun test",
     "test:e2e": "playwright test",
-    "screenshots": "bun run testlab/screenshots.ts"
+    "screenshots": "bun run testlab/screenshots.ts",
+    "og-image": "bun run testlab/og-image.ts"
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.33.1-dev5.0",
