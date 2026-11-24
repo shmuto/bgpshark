@@ -140,7 +140,7 @@ ORDER BY count DESC`,
 ]
 
 export function SqlConsolePage() {
-  useApp() // Ensure context is available
+  const { dbStatus } = useApp()
   const { t } = useI18n()
   const st = t.sql
   const [query, setQuery] = useState(QUERY_TEMPLATES[0].query)
@@ -170,12 +170,15 @@ export function SqlConsolePage() {
     })
   }, [])
 
-  // Two distinct failure states: the database never came up, or it is up but
-  // the capture's packets never made it in. Querying in the second state
-  // "works" and returns zero rows for everything, so it is blocked the same
-  // way — just with a different explanation.
-  const dbReady = isInitialized()
-  const dataLoaded = isDataLoaded()
+  // Three states besides "ready": the database never came up; the capture is
+  // still on its way in (the insert runs after the list is on screen); or it
+  // is up but the capture's packets never made it in. Querying in either of the
+  // last two "works" and returns zero rows for everything, so both are blocked
+  // too — each with its own explanation. `dbStatus` is state, so this screen
+  // re-renders the moment the insert finishes.
+  const dbReady = isInitialized() && dbStatus !== 'unavailable'
+  const dataLoading = dbReady && dbStatus === 'loading'
+  const dataLoaded = dbStatus === 'loaded' && isDataLoaded()
   const sqlUsable = dbReady && dataLoaded
 
   const handleExecute = useCallback(async () => {
@@ -265,7 +268,12 @@ export function SqlConsolePage() {
             {st.duckdbNotInitialized}
           </span>
         )}
-        {dbReady && !dataLoaded && (
+        {dataLoading && (
+          <span data-testid="sql-db-loading" className="text-xs text-muted">
+            {st.duckdbLoading}
+          </span>
+        )}
+        {dbReady && !dataLoading && !dataLoaded && (
           <span className="text-xs text-warning">
             {st.duckdbUnavailable}
           </span>

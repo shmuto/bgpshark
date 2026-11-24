@@ -1,5 +1,7 @@
 import { describe, test, expect } from 'bun:test'
+import type { BgpPrefix } from '../../../src/lib/bgp/types'
 import {
+  compilePrefixQuery,
   contains,
   equals,
   formatPrefix,
@@ -97,5 +99,54 @@ describe('parseBgpPrefix', () => {
 
   test('returns null for families the parser cannot render as an address', () => {
     expect(parseBgpPrefix({ prefix: '(AFI 25)', length: 24 })).toBeNull()
+  })
+})
+
+describe('compilePrefixQuery', () => {
+  // The general answer, which the prepared search must agree with exactly.
+  const reference = (queryText: string, route: BgpPrefix): boolean => {
+    const query = parsePrefix(queryText)!
+    const parsed = parseBgpPrefix(route)
+    if (!parsed) return false
+    return query.hasMask ? contains(query, parsed) : contains(parsed, query)
+  }
+
+  // A small deterministic generator, so a failure reproduces.
+  let seed = 42
+  const random = (n: number) => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff
+    return seed % n
+  }
+  const octet = () => [0, 10, 127, 128, 192, 255][random(6)] + random(2)
+  const address = () => `${octet()}.${octet()}.${random(3)}.${random(3)}`
+
+  test('agrees with contains() for IPv4 queries with and without a mask', () => {
+    const queries = ['10.0.0.0/8', '0.0.0.0/0', '192.168.1.0/24', '128.0.0.0/1', '10.1.2.3', '10.1.2.3/32', '255.255.255.255']
+    for (let i = 0; i < 60; i++) queries.push(random(2) ? `${address()}/${random(33)}` : address())
+    const routes: BgpPrefix[] = []
+    for (let i = 0; i < 300; i++) routes.push({ prefix: address(), length: random(33) })
+    for (const text of queries) {
+      const matches = compilePrefixQuery(parsePrefix(text)!)
+      for (const route of routes) {
+        expect(`${text} ? ${route.prefix}/${route.length} = ${matches(route)}`).toBe(
+          `${text} ? ${route.prefix}/${route.length} = ${reference(text, route)}`
+        )
+      }
+    }
+  })
+
+  test('never matches what is not an IPv4 route', () => {
+    const matches = compilePrefixQuery(parsePrefix('0.0.0.0/0')!)
+    for (const prefix of ['2001:db8::', '(AFI 25)', '10.0.0', '10.0.0.0.0', '10.0.0.256', '1.2.3.4x', '', '1..2.3']) {
+      expect(matches({ prefix, length: 8 })).toBe(reference('0.0.0.0/0', { prefix, length: 8 }))
+    }
+    expect(matches({ prefix: '10.0.0.0', length: 33 })).toBe(false)
+  })
+
+  test('takes the general path for IPv6 queries', () => {
+    const matches = compilePrefixQuery(parsePrefix('2001:db8::/32')!)
+    expect(matches({ prefix: '2001:db8:1::', length: 48 })).toBe(true)
+    expect(matches({ prefix: '2001:db9::', length: 48 })).toBe(false)
+    expect(matches({ prefix: '10.0.0.0', length: 8 })).toBe(false)
   })
 })

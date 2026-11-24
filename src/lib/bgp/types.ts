@@ -111,18 +111,25 @@ export interface BgpPrefix {
 
 /**
  * BGP Path Attribute
+ *
+ * A capture holds millions of these, so they are kept small. `flags` is one of
+ * sixteen shared, frozen objects rather than one per attribute. `rawValue` is
+ * kept only when the value could not be decoded — an unknown or malformed
+ * attribute, where the bytes are all there is — because a decoded attribute
+ * says everything its bytes do and nothing reads them; the view over the
+ * capture buffer cost more than most of the decoded attribute itself.
  */
 export interface BgpPathAttribute {
-  flags: {
+  flags: Readonly<{
     optional: boolean
     transitive: boolean
     partial: boolean
     extendedLength: boolean
-  }
+  }>
   typeCode: number
   typeName: string
   length: number
-  rawValue: Uint8Array
+  rawValue?: Uint8Array
   parsed?: ParsedPathAttribute
 }
 

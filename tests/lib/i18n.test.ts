@@ -167,13 +167,13 @@ describe('localized domain helpers', () => {
     expect(validateCaptureFile(tooBig, 'ja')).toMatch(HAS_JAPANESE)
   })
 
-  test('loadProgress formats stages and row counts in Japanese', () => {
+  test('loadProgress formats stages and packet counts in Japanese', () => {
     expect(loadProgress('parsing', undefined, undefined, 'ja').label).toBe('パケットを解析中')
     expect(loadProgress('database', undefined, undefined, 'ja').label).toBe(
-      'DuckDB へ読み込み中 — 行データを準備中'
+      'DuckDB へ読み込み中 — テーブルを準備中'
     )
     expect(formatLoadProgressLabel('database', 1200, 3400, 'ja')).toBe(
-      'DuckDB へ読み込み中 — 1,200 / 3,400 行'
+      'DuckDB へ読み込み中 — 1,200 / 3,400 パケット'
     )
   })
 

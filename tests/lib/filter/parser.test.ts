@@ -540,6 +540,25 @@ describe('autocomplete knows the new fields', () => {
   })
 })
 
+describe('value suggestions are worked out once per set of packets', () => {
+  const values = (packets: BgpPacket[]) => getSuggestions('src_ip = ', 9, packets).map((s) => s.text)
+
+  test('asking again gives the same values', () => {
+    const packets = [createOpenPacket()]
+    expect(values(packets)).toEqual(['10.0.0.1'])
+    expect(values(packets)).toEqual(['10.0.0.1'])
+  })
+
+  test('another set of packets is not answered from the first', () => {
+    // Remembered per array, not per capture: a session's packets are a new
+    // array, and must offer that session's values only.
+    const first = [createOpenPacket()]
+    const second = [{ ...createOpenPacket(), srcIp: '192.0.2.1', dstIp: '192.0.2.2' }]
+    expect(values(first)).toEqual(['10.0.0.1'])
+    expect(values(second)).toEqual(['192.0.2.1'])
+  })
+})
+
 describe('SQL and in-memory paths ask the same question', () => {
   test('a CIDR prefix search compiles to a containment test, not string equality', () => {
     const sql = expressionToSql(parseQuery('prefix = 10.0.0.0/8').expression)

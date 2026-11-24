@@ -20,7 +20,7 @@
 #### 2.1.1 Capture Loading
 - Drag & drop anywhere in the app or file picker on the upload screen
 - Supported formats: libpcap (`.pcap`, `.cap`) and pcapng (`.pcapng`), auto-detected by magic number, up to 50 MB (`src/lib/file-constraints.ts`)
-- Client-side parsing only; the loaded file is persisted in IndexedDB and restored on reload
+- Client-side parsing only; the loaded file is persisted in IndexedDB (as a Blob, saved after the list is shown and not awaited) and restored on reload
 
 #### 2.1.2 BGP Message Extraction
 - Extracts BGP sessions on TCP port 179 and detects BGP on non-standard ports by the 16-byte marker (`src/lib/pcap/bgp-detect.ts`)
@@ -167,6 +167,10 @@ When a capture contains **no BGP messages at all**, `computeTransportAlerts` run
 
 Key techniques: virtualized packet list (`useVirtualRows`), route-level `React.lazy` code splitting, dynamic DuckDB import, `useMemo` aggregations, debounced SQL filtering, and indexed bit-string columns (`prefix_bits`) for CIDR matching. Parsing currently runs on the main thread and can move to a Web Worker if needed.
 
+**Load pipeline.** Reading, parsing and decoding are in front of the packet list and drive the load gauge (`src/lib/load-progress.ts`). The DuckDB insert runs after the list is shown (`useBgpAnalyzer`), with its own gauge in the header; `dbStatus` is state, so the filter and the SQL console switch to SQL when it lands. The loader flattens and inserts a chunk of rows at a time (`ROWS_PER_FLUSH`) rather than holding every table's rows at once. Saving to IndexedDB is not awaited.
+
+**Large captures.** What limits capture size is the tab's JS heap (about 4 GB), not parse time: a decoded capture weighs roughly 1–1.5 KB per BGP message. Values repeated on nearly every frame are shared rather than copied (`src/lib/pcap/shared-values.ts`, shared attribute flags), and a decoded path attribute keeps no copy of its bytes. Above `SYNC_FILTER_MAX_PACKETS` (20,000) packets the per-keystroke in-memory filter pass is skipped once DuckDB holds the capture; filter suggestions and prefix statistics are computed once per packet array (`prefixStatsFor`). Above `BACKGROUND_FINDINGS_MIN_PACKETS` (20,000) the route statistics behind the findings are built in ~12 ms slices (`prefixStatsForAsync`) so the list is usable while they are; the findings column says so until they appear. Measured in headless Chromium on synthetic, UPDATE-heavy captures, the list opens in about 4–4.5 s for 50 MB, 9–10 s for 100 MB and 13–14 s for 150 MB, with findings after 9–11 s, 20–22 s and 27–35 s, and SQL ready after 26–32 s, 51–69 s and 85–98 s. 200 MB opens its list in about 17 s and then runs out of heap.
+
 ### 3.2 Browser Support
 Latest Chrome/Edge, Firefox, and Safari.
 
@@ -294,4 +298,4 @@ The app is an SPA with a thin header (capture name, language, theme, and a menu 
 - **TCP reassembly cap:** Reassembly buffers per directional flow are capped at `BGP_MAX_MESSAGE_LENGTH`; flows exceeding this limit are treated as desynced and dropped with a warning.
 - **Link layers:** Ethernet II (link type 1) and Linux cooked capture / SLL (113), with 802.1Q and QinQ VLAN tags stripped.
 - **Transport:** IPv4 and IPv6 over TCP (port 179, plus non-standard ports detected by BGP message marker).
-- **File size:** Capped at 50 MB per capture to stay within comfortable browser memory limits across React state, IndexedDB, and DuckDB WASM.
+- **File size:** Capped at 50 MB per capture (`src/lib/file-constraints.ts`). The binding constraint is memory — the parsed packets in the JS heap plus DuckDB WASM — not parse time; see §3.1 for what larger captures cost.

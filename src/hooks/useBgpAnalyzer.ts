@@ -7,6 +7,21 @@ import { formatLoadProgressLabel, loadProgress, type LoadProgress } from '../lib
 import { useI18n } from '../i18n'
 
 type AnalyzerWarning = { kind: 'duckdbFailed' } | { kind: 'raw'; message: string }
+
+/**
+ * Where the capture is on its way into DuckDB, which happens *after* the
+ * packet list is on screen.
+ *
+ * - `idle`: no capture.
+ * - `loading`: the insert is running, or waiting for the database to start.
+ * - `loaded`: SQL filtering and the SQL console can use it.
+ * - `failed`: the insert failed; filtering stays in memory.
+ * - `unavailable`: the database itself never started.
+ *
+ * Kept as state, not read from `isDataLoaded()` at render, so that the screens
+ * that switch on it — the filter, the SQL console — re-render when it changes.
+ */
+export type DbStatus = 'idle' | 'loading' | 'loaded' | 'failed' | 'unavailable'
 type AnalyzerError =
   | { kind: 'noIpPackets' }
   | { kind: 'unknownError' }
@@ -25,6 +40,9 @@ interface InternalAnalyzerState {
   dbReady: boolean
   /** How far the load in flight has got; null when nothing is loading. */
   progress: LoadProgress | null
+  dbStatus: DbStatus
+  /** How far the DuckDB insert has got; null unless `dbStatus` is `loading`. */
+  dbProgress: LoadProgress | null
 }
 
 export interface AnalyzerState {
@@ -40,6 +58,9 @@ export interface AnalyzerState {
   dbReady: boolean
   /** How far the load in flight has got; null when nothing is loading. */
   progress: LoadProgress | null
+  dbStatus: DbStatus
+  /** How far the DuckDB insert has got; null unless `dbStatus` is `loading`. */
+  dbProgress: LoadProgress | null
 }
 
 /**
@@ -61,6 +82,8 @@ const initialState: InternalAnalyzerState = {
   error: null,
   dbReady: false,
   progress: null,
+  dbStatus: 'idle',
+  dbProgress: null,
 }
 
 /**
@@ -95,13 +118,54 @@ export function useBgpAnalyzer() {
   // Latest parsed packets, for the backfill below — a capture dropped while
   // DuckDB was still initializing is parsed before the database can take it.
   const packetsRef = useRef<BgpPacket[]>([])
+  // Which capture the app is showing. A DuckDB insert runs after the list is
+  // up and can outlive its capture — the user drops another file, or resets —
+  // so its updates are applied only while it still belongs to the capture on
+  // screen.
+  const generationRef = useRef(0)
+  // Set once DuckDB has failed to start, so later captures say so instead of
+  // waiting for a database that is not coming.
+  const dbInitFailedRef = useRef(false)
+
+  /**
+   * Insert a capture's packets into DuckDB, in the background.
+   *
+   * Not awaited by the load: the packet list, the findings and in-memory
+   * filtering need only the parsed packets, and the insert used to be most of
+   * the wait in front of them. Until it finishes the filter stays in memory
+   * and the SQL console says the capture is still loading.
+   */
+  const loadIntoDatabase = useCallback(async (packets: BgpPacket[], generation: number) => {
+    const current = () => generation === generationRef.current
+    try {
+      await loadPackets(packets, (done, total) => {
+        if (!current()) return
+        setState((prev) => ({
+          ...prev,
+          dbProgress: loadProgress('database', done, total, localeRef.current),
+        }))
+      })
+      if (current()) setState((prev) => ({ ...prev, dbStatus: 'loaded', dbProgress: null }))
+    } catch (err) {
+      console.error('Failed to load packets into DuckDB:', err)
+      if (!current()) return
+      // Continue without DuckDB — but say so. Filtering falls back to the
+      // in-memory evaluator; only the SQL console is actually lost.
+      setState((prev) => ({
+        ...prev,
+        dbStatus: 'failed',
+        dbProgress: null,
+        warnings: [...prev.warnings, { kind: 'duckdbFailed' }],
+      }))
+    }
+  }, [])
 
   // Process buffer and update state (shared by loadFile and restore)
   const processBuffer = useCallback(
     async (
       buffer: ArrayBuffer,
       fileName: string,
-      options?: { saveToStorage?: boolean }
+      options?: { saveToStorage?: Blob }
     ): Promise<boolean> => {
       const report = async (progress: LoadProgress): Promise<void> => {
         setState((prev) => ({ ...prev, progress }))
@@ -138,39 +202,14 @@ export function useBgpAnalyzer() {
           return false
         }
 
-        // Load packets into DuckDB if available
-        const dbWarnings: AnalyzerWarning[] = []
-        if (isInitialized() && bgpResult.packets.length > 0) {
-          try {
-            await report(loadProgress('database', undefined, undefined, localeRef.current))
-            // Not `report`: batches arrive between worker round trips, which
-            // already give the browser its chance to paint.
-            await loadPackets(bgpResult.packets, (done, total) =>
-              setState((prev) => ({
-                ...prev,
-                progress: loadProgress('database', done, total, localeRef.current),
-              }))
-            )
-          } catch (err) {
-            console.error('Failed to load packets into DuckDB:', err)
-            // Continue without DuckDB — but say so. Filtering falls back to
-            // the in-memory evaluator; only the SQL console is actually lost.
-            dbWarnings.push({ kind: 'duckdbFailed' })
-          }
-        }
-
-        // Save to IndexedDB if requested
-        if (options?.saveToStorage) {
-          try {
-            await report(loadProgress('saving', undefined, undefined, localeRef.current))
-            await savePcapFile(fileName, buffer)
-          } catch (err) {
-            console.error('Failed to save file to storage:', err)
-            // Continue without persistence
-          }
-        }
-
+        const generation = ++generationRef.current
         packetsRef.current = bgpResult.packets
+        const hasRows = bgpResult.packets.length > 0
+        const dbStatus: DbStatus = !hasRows
+          ? 'idle'
+          : dbInitFailedRef.current
+            ? 'unavailable'
+            : 'loading'
         setState({
           status: 'ready',
           fileName,
@@ -181,12 +220,29 @@ export function useBgpAnalyzer() {
           warnings: [
             ...pcapResult.warnings.map((message): AnalyzerWarning => ({ kind: 'raw', message })),
             ...bgpResult.warnings.map((message): AnalyzerWarning => ({ kind: 'raw', message })),
-            ...dbWarnings,
           ],
           error: null,
           dbReady: isInitialized(),
           progress: null,
+          dbStatus,
+          dbProgress:
+            dbStatus === 'loading'
+              ? loadProgress('database', undefined, undefined, localeRef.current)
+              : null,
         })
+
+        // Neither of these is awaited. Saving keeps the capture for the next
+        // visit and has no bearing on this one; a failure only means a reload
+        // finds nothing to restore. A database that is still starting picks
+        // the packets up from `packetsRef` once it is ready.
+        if (options?.saveToStorage) {
+          savePcapFile(fileName, options.saveToStorage).catch((err) => {
+            console.error('Failed to save file to storage:', err)
+          })
+        }
+        if (hasRows && isInitialized()) {
+          void loadIntoDatabase(bgpResult.packets, generation)
+        }
         return true
       } catch (e) {
         setState((prev) => ({
@@ -201,7 +257,7 @@ export function useBgpAnalyzer() {
         return false
       }
     },
-    []
+    [loadIntoDatabase]
   )
 
   // Initialize DuckDB on mount and restore persisted data
@@ -217,15 +273,17 @@ export function useBgpAnalyzer() {
           // A capture uploaded while the database was still coming up was
           // parsed straight past the load step. Load it now.
           if (packetsRef.current.length > 0 && !isDataLoaded()) {
-            try {
-              await loadPackets(packetsRef.current)
-            } catch (err) {
-              console.error('Failed to load packets into DuckDB:', err)
-            }
+            void loadIntoDatabase(packetsRef.current, generationRef.current)
           }
         } catch (err) {
           console.error('Failed to initialize DuckDB:', err)
-          setState((prev) => ({ ...prev, dbReady: false }))
+          dbInitFailedRef.current = true
+          setState((prev) => ({
+            ...prev,
+            dbReady: false,
+            dbStatus: prev.dbStatus === 'loading' ? 'unavailable' : prev.dbStatus,
+            dbProgress: null,
+          }))
         }
       } else {
         setState((prev) => ({ ...prev, dbReady: true }))
@@ -243,7 +301,7 @@ export function useBgpAnalyzer() {
               fileName: stored.fileName,
               progress: loadProgress('reading', undefined, undefined, localeRef.current),
             }))
-            await processBuffer(stored.data, stored.fileName, { saveToStorage: false })
+            await processBuffer(stored.data, stored.fileName)
             return
           }
         } catch (err) {
@@ -261,7 +319,7 @@ export function useBgpAnalyzer() {
     }
 
     init()
-  }, [processBuffer])
+  }, [processBuffer, loadIntoDatabase])
 
   const loadFile = useCallback(
     async (file: File) => {
@@ -274,7 +332,7 @@ export function useBgpAnalyzer() {
       }))
 
       const buffer = await file.arrayBuffer()
-      await processBuffer(buffer, file.name, { saveToStorage: true })
+      await processBuffer(buffer, file.name, { saveToStorage: file })
     },
     [processBuffer]
   )
@@ -288,6 +346,7 @@ export function useBgpAnalyzer() {
 
   const reset = useCallback(() => {
     packetsRef.current = []
+    generationRef.current++
 
     // Clear stored data
     clearPcapFile().catch((err) => {
@@ -316,23 +375,20 @@ export function useBgpAnalyzer() {
           : internalState.error.kind === 'unknownError'
             ? t.warnings.unknownError
             : internalState.error.message
-    const progress = internalState.progress
-      ? {
-          ...internalState.progress,
-          label: formatLoadProgressLabel(
-            internalState.progress.stage,
-            internalState.progress.done,
-            internalState.progress.total,
-            locale
-          ),
-        }
-      : null
+    const localize = (progress: LoadProgress | null): LoadProgress | null =>
+      progress
+        ? {
+            ...progress,
+            label: formatLoadProgressLabel(progress.stage, progress.done, progress.total, locale),
+          }
+        : null
 
     return {
       ...internalState,
       warnings,
       error,
-      progress,
+      progress: localize(internalState.progress),
+      dbProgress: localize(internalState.dbProgress),
     }
   }, [internalState, locale, t])
 

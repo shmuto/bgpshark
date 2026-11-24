@@ -21,7 +21,7 @@ import type {
 import { endOfRibMarker } from '../../lib/bgp/update'
 import { peeringKey } from '../../lib/bgp/peering'
 import type { GenericPacket } from '../../lib/pcap'
-import { aggregatePrefixStats, type PrefixStats } from '../../lib/bgp/prefix-stats'
+import { prefixStatsFor, type PrefixStats } from '../../lib/bgp/prefix-stats'
 import type { DashboardAlert } from './types'
 import { formatAsPath } from '../../lib/bgp/as-path-display'
 import { getMessages, type Locale } from '../../i18n/locale'
@@ -1003,8 +1003,9 @@ function computeCaptureWideAlerts(packets: BgpPacket[], locale: Locale): Dashboa
   }
 
   // Route-level findings. aggregatePrefixStats walks every packet, so it is
-  // called once here and both route rules read the same result.
-  alerts.push(...computeRouteAlerts(aggregatePrefixStats(packets), locale))
+  // called once here and both route rules read the same result — as does the
+  // Routes screen, through the same cache.
+  alerts.push(...computeRouteAlerts(prefixStatsFor(packets), locale))
 
   return alerts
 }
@@ -1026,17 +1027,24 @@ export function scopeAlerts(
   alerts: DashboardAlert[],
   packets: BgpPacket[],
   scope: string | null,
-  locale: Locale = 'en'
+  locale: Locale = 'en',
+  /**
+   * The scope's packets, in capture order, when the caller already holds them.
+   * Route statistics are cached per packet array, so passing the array the
+   * workspace keeps lets them be worked out once — and ahead of time.
+   */
+  scopePackets?: BgpPacket[]
 ): DashboardAlert[] {
   if (!scope) return alerts
 
   const indices: number[] = []
-  const sessionPackets: BgpPacket[] = []
+  const collected: BgpPacket[] = []
   packets.forEach((packet, index) => {
     if (peeringKey(packet.srcIp, packet.dstIp) !== scope) return
     indices.push(index)
-    sessionPackets.push(packet)
+    collected.push(packet)
   })
+  const sessionPackets = scopePackets && scopePackets.length === collected.length ? scopePackets : collected
 
   const own = alerts.filter((alert) =>
     alert.peering ? alert.peering === scope : !CAPTURE_WIDE_RULES.has(alert.rule)

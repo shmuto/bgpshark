@@ -372,11 +372,13 @@ async function run(browser: Browser, shot: Shot): Promise<void> {
     })
     // A loaded capture lands on Messages; every shot starts there.
     await page.waitForURL('**/messages')
-    // The packet list is up as soon as the parser finishes; DuckDB takes longer,
-    // and a filtered shot taken before it is ready photographs the in-memory
-    // answer instead of the one the manual describes.
+    // The packet list is up as soon as the parser finishes; the DuckDB insert
+    // runs after it, with a gauge in the header. A shot taken before it is done
+    // photographs that gauge, and a filtered one the in-memory answer instead
+    // of the one the manual describes.
     await page.waitForSelector('text=/Showing \\d+ of \\d+ packets/')
-    await page.waitForTimeout(2500)
+    await page.locator('[data-testid="db-load-status"]').waitFor({ state: 'detached', timeout: 60_000 })
+    await page.waitForTimeout(500)
 
     const target = await shot.take(page)
     const path = join(OUT_DIR, `${shot.file}.png`)

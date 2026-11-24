@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useApp } from '../../context/AppContext'
+import { DatabaseLoadStatus } from '../common/LoadProgressBar'
 import { useI18n } from '../../i18n'
 import { LanguageToggle } from './LanguageToggle'
 import { ThemeToggle } from './ThemeToggle'
@@ -14,7 +15,7 @@ import { ThemeToggle } from './ThemeToggle'
  * repository link are reached rarely enough to live behind one menu button.
  */
 export function AppHeader() {
-  const { status, fileName, packets, reset } = useApp()
+  const { status, fileName, packets, reset, dbStatus, dbProgress } = useApp()
   const { t } = useI18n()
   const navigate = useNavigate()
   const isReady = status === 'ready'
@@ -45,6 +46,8 @@ export function AppHeader() {
           <span className="sr-only">— {t.nav.openAnother}</span>
         </button>
       )}
+
+      {isReady && dbStatus === 'loading' && dbProgress && <DatabaseLoadStatus progress={dbProgress} />}
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
         <LanguageToggle />
