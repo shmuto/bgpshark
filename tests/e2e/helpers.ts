@@ -18,11 +18,22 @@ export async function loadSample(page: Page) {
 
 /**
  * Waits for a freshly loaded capture to land on Messages, where it opens and
- * where most specs work.
+ * where most specs work — and for its DuckDB insert to finish.
+ *
+ * The insert runs after the list is on screen, so landing is not the end of
+ * the load: until the header's database gauge is gone, filters run in memory
+ * and the SQL console refuses queries. Specs assert on both, so they start from
+ * the settled state rather than racing the insert.
  */
 export async function openMessagesAfterLoad(page: Page, timeout = 30_000) {
   await page.waitForURL('**/messages', { timeout })
   await expect(page.getByText(/Showing \d+ of \d+ packets/)).toBeVisible()
+  await waitForDatabase(page, timeout)
+}
+
+/** Waits until the capture's background DuckDB insert has finished. */
+export async function waitForDatabase(page: Page, timeout = 30_000) {
+  await expect(page.getByTestId('db-load-status')).toHaveCount(0, { timeout })
 }
 
 /** Loads a capture built in memory, for the cases the sample cannot cover. */

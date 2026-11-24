@@ -6,8 +6,8 @@ import { useI18n } from '../../i18n'
  *
  * It replaces a spinner, and the difference is the point: a spinner looks the
  * same at second two and at minute two, so a slow load and a hung one are
- * indistinguishable. This one says which stage is running and, in the
- * database stage, how many rows are in — so "slow" reads as slow.
+ * indistinguishable. This one says which stage is running, so "slow" reads as
+ * slow.
  *
  * A real `progressbar` with its value exposed, because the value is the
  * information; the end-to-end suite reads it the same way assistive technology
@@ -39,6 +39,45 @@ export function LoadProgressBar({ progress }: { progress: LoadProgress }) {
         <span>{label}</span>
         <span className="font-mono tabular-nums">{percent}%</span>
       </div>
+    </div>
+  )
+}
+
+/**
+ * The DuckDB insert's gauge, small enough for the header.
+ *
+ * The insert runs after the packet list is on screen, so it gets out of the
+ * way: a thin bar and a percentage, with the full label as its accessible
+ * value and its tooltip. It is gone once the capture is in.
+ */
+export function DatabaseLoadStatus({ progress }: { progress: LoadProgress }) {
+  const { locale, t } = useI18n()
+  const percent = Math.round(progress.fraction * 100)
+  const label = formatLoadProgressLabel(progress.stage, progress.done, progress.total, locale)
+
+  return (
+    <div
+      data-testid="db-load-status"
+      title={label}
+      className="hidden shrink-0 items-center gap-2 text-[11px] text-muted sm:flex"
+    >
+      <span>{t.progress.databaseShort}</span>
+      <div
+        role="progressbar"
+        aria-label={t.progress.database}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        aria-valuetext={label}
+        data-stage={progress.stage}
+        className="h-1.5 w-20 overflow-hidden rounded-full border border-hair bg-surface-sunken"
+      >
+        <div
+          className="h-full bg-accent transition-[width] duration-200 ease-out"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+      <span className="font-mono tabular-nums">{percent}%</span>
     </div>
   )
 }

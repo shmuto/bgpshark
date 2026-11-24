@@ -96,10 +96,10 @@ export const ja: Messages = {
     parsing: 'パケットを解析中',
     decoding: 'BGP メッセージをデコード中',
     database: 'DuckDB へ読み込み中',
-    saving: '次回アクセス用に保存中',
-    preparingRows: ' — 行データを準備中',
-    countedRows: (done: number, total: number) =>
-      ` — ${done.toLocaleString('ja-JP')} / ${total.toLocaleString('ja-JP')} 行`,
+    databaseShort: 'DuckDB',
+    preparing: ' — テーブルを準備中',
+    countedPackets: (done: number, total: number) =>
+      ` — ${done.toLocaleString('ja-JP')} / ${total.toLocaleString('ja-JP')} パケット`,
   },
 
   upload: {
@@ -604,6 +604,7 @@ export const ja: Messages = {
   sql: {
     title: 'SQL コンソール',
     duckdbNotInitialized: '⚠ DuckDB が初期化されていません。先に pcap ファイルを読み込んでください。',
+    duckdbLoading: 'このキャプチャを DuckDB に読み込んでいます。完了すると SQL を利用できます。',
     duckdbUnavailable:
       '⚠ このキャプチャを DuckDB に読み込めなかったため SQL は利用できません。他の画面のフィルタはメモリ上で動作します。',
     queryHeading: 'クエリ',

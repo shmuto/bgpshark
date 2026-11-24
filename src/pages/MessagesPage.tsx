@@ -129,7 +129,7 @@ function reachability(
 }
 
 function MessagesView({ linked }: { linked: boolean }) {
-  const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket } = useApp()
+  const { packets, allPackets, linkType, fileName, selectedPacketIndex, selectPacket, dbStatus } = useApp()
   // The rows come from the session chosen in the workspace. Everything that
   // looks *around* a packet — the hold timer, the previous message on the
   // session, links by index — keeps using the whole capture, so narrowing the
@@ -210,6 +210,8 @@ function MessagesView({ linked }: { linked: boolean }) {
   // reachable; after that the user's own clicks own the selection.
   const selectionAppliedRef = useRef(false)
 
+  // SQL filtering waits for the background insert; until then, and if it
+  // fails, the filter runs in memory.
   const {
     query,
     setQuery,
@@ -218,7 +220,7 @@ function MessagesView({ linked }: { linked: boolean }) {
     showParseErrors,
     parseErrors,
     isFiltering,
-  } = useFilter(scopedPackets, { initialQuery: initialFilter })
+  } = useFilter(scopedPackets, { initialQuery: initialFilter, useDuckDB: dbStatus === 'loaded' })
 
 
   // Clear highlight after animation

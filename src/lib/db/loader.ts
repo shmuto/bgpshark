@@ -23,10 +23,13 @@ import type {
 import { formatExtendedCommunity } from '../bgp/extended-communities'
 
 // Helper function to convert Uint8Array to Base64
+// Built a few kilobytes at a time: `fromCharCode` over a whole chunk is far
+// cheaper than appending one character per byte, and the chunk stays well
+// under the engine's limit on call arguments.
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
+  for (let i = 0; i < bytes.byteLength; i += 0x2000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x2000) as unknown as number[])
   }
   return btoa(binary)
 }
@@ -114,12 +117,12 @@ export async function loadPackets(
 }
 
 /**
- * Rows inserted so far, out of every row the capture flattens to.
+ * Packets inserted so far, out of the capture's BGP packets.
  *
- * Rows rather than packets because rows are what the time goes on: a packet of
- * eighteen UPDATEs becomes hundreds of rows, a KEEPALIVE becomes two. It is
- * called once with `done` at zero when the total is known, then after every
- * batch, and a last time with `done === total`.
+ * Packets rather than rows because the load flattens and inserts a chunk at a
+ * time, so the total number of rows is not known until the end. It is called
+ * once with `done` at zero, then after every chunk, and a last time with
+ * `done === total`.
  */
 export type LoadProgressCallback = (done: number, total: number) => void
 
@@ -149,7 +152,8 @@ async function runLoad(packets: BgpPacket[], onProgress?: LoadProgressCallback):
 }
 
 /**
- * Flatten every packet into the rows of the ten tables, then insert each table.
+ * Flatten the packets into the rows of the ten tables and insert them, a
+ * chunk of rows at a time.
  */
 async function insertPackets(
   conn: AsyncDuckDBConnection,
@@ -249,8 +253,35 @@ async function insertPackets(
     formatted: string
   }> = []
 
-  // Process each packet
-  for (const packet of packets) {
+  const tables: Array<[string, unknown[]]> = [
+    ['packets', packetsData],
+    ['messages', messagesData],
+    ['capabilities', capabilitiesData],
+    ['path_attributes', pathAttrsData],
+    ['as_path', asPathData],
+    ['nlri', nlriData],
+    ['withdrawn', withdrawnData],
+    ['communities', communitiesData],
+    ['large_communities', largeCommunitiesData],
+    ['extended_communities', extCommunitiesData],
+  ]
+  const pendingRows = () => tables.reduce((sum, [, rows]) => sum + rows.length, 0)
+
+  // Insert what has been flattened so far and let it go. Holding only one
+  // chunk's rows at a time is the point: flattening the whole capture first
+  // put every row of every table in the JS heap at once — 14.6 million row
+  // objects for a 150MB capture — on top of the parsed packets themselves.
+  const flush = async () => {
+    for (const [tableName, rows] of tables) {
+      await insertRows(conn, tableName, rows)
+      rows.length = 0
+    }
+  }
+
+  const total = packets.length
+  onProgress?.(0, total)
+  for (let index = 0; index < total; index++) {
+    const packet = packets[index]
     packetsData.push({
       frame_index: packet.frameIndex,
       timestamp: packet.timestamp.toISOString(),
@@ -289,31 +320,23 @@ async function insertPackets(
         )
       }
     }
-  }
 
-  const tables: Array<[string, unknown[]]> = [
-    ['packets', packetsData],
-    ['messages', messagesData],
-    ['capabilities', capabilitiesData],
-    ['path_attributes', pathAttrsData],
-    ['as_path', asPathData],
-    ['nlri', nlriData],
-    ['withdrawn', withdrawnData],
-    ['communities', communitiesData],
-    ['large_communities', largeCommunitiesData],
-    ['extended_communities', extCommunitiesData],
-  ]
-
-  const total = tables.reduce((sum, [, rows]) => sum + rows.length, 0)
-  let done = 0
-  onProgress?.(done, total)
-  for (const [tableName, rows] of tables) {
-    await insertRows(conn, tableName, rows, (inserted) => {
-      done += inserted
-      onProgress?.(done, total)
-    })
+    if (pendingRows() >= ROWS_PER_FLUSH) {
+      await flush()
+      onProgress?.(index + 1, total)
+    }
   }
+  await flush()
+  onProgress?.(total, total)
 }
+
+/**
+ * How many flattened rows, across all ten tables, to hold before inserting
+ * them. Large enough that the per-insert overhead (a staging table, an
+ * `INSERT ... SELECT`, a drop) stays small next to the rows it moves; small
+ * enough that the rows never dominate the heap.
+ */
+const ROWS_PER_FLUSH = 250_000
 
 /**
  * How many rows go into one Arrow batch.
@@ -496,8 +519,7 @@ function utf8Data(arrow: Arrow, values: unknown[]): import('apache-arrow').Data<
 async function insertRows(
   conn: AsyncDuckDBConnection,
   tableName: string,
-  data: unknown[],
-  onBatch?: (rowsInserted: number) => void
+  data: unknown[]
 ): Promise<void> {
   if (data.length === 0) return
 
@@ -528,7 +550,6 @@ async function insertRows(
     } finally {
       await conn.query(`DROP TABLE IF EXISTS ${staging}`)
     }
-    onBatch?.(batch.length)
   }
 }
 

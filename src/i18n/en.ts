@@ -90,10 +90,10 @@ export const en = {
     parsing: 'Parsing packets',
     decoding: 'Decoding BGP messages',
     database: 'Loading into DuckDB',
-    saving: 'Saving for next visit',
-    preparingRows: ' — preparing rows',
-    countedRows: (done: number, total: number) =>
-      ` — ${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} rows`,
+    databaseShort: 'DuckDB',
+    preparing: ' — preparing tables',
+    countedPackets: (done: number, total: number) =>
+      ` — ${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} packets`,
   },
 
   upload: {
@@ -604,6 +604,7 @@ export const en = {
   sql: {
     title: 'SQL Console',
     duckdbNotInitialized: '⚠ DuckDB not initialized. Load a pcap file first.',
+    duckdbLoading: 'This capture is still loading into DuckDB. SQL becomes available when it finishes.',
     duckdbUnavailable:
       '⚠ This capture could not be loaded into DuckDB, so SQL is unavailable. Filtering on the other screens still works in-memory.',
     queryHeading: 'Query',

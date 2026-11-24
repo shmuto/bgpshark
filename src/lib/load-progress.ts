@@ -6,44 +6,43 @@
  * looked like when it took two minutes, and why this exists. A gauge answers
  * the question a spinner cannot: is it still moving?
  *
- * The load is a sequence of stages of very different lengths, and only one of
- * them can report progress from inside: the DuckDB insert is asynchronous and
- * goes in batches, so it can say how many rows are in. The parsers are
- * synchronous — the page cannot repaint until they return — so all they can do
- * is announce that they have started. The bar therefore steps through the
- * early stages and moves smoothly through the database one.
+ * There are two gauges, because the load is in two parts. The first is what
+ * stands between the user and the packet list: reading, parsing and decoding.
+ * Those are synchronous — the page cannot repaint until each returns — so all
+ * a stage can do is announce that it has started, and the bar steps through
+ * them. Each owns a slice sized by how long it takes: parsing a 100MB capture
+ * is well under a second, decoding it several seconds.
  *
- * Each stage owns a slice of the bar sized by how long it actually takes. The
- * slices were measured in Chromium on two 18MB captures: 225,000 UPDATEs packed
- * into full segments, and 120,000 UPDATEs one to a frame. Parsing took well
- * under a second on both and decoding one to two; the database took everything
- * else — about three quarters of the load on the sparse capture and over nine
- * tenths on the dense one — and reading and saving next to nothing. They are
- * not exact for every capture, and do not need to be; what matters is that the
- * bar never runs backwards and does not race to a third and then crawl.
+ * The second is the DuckDB insert, which used to be most of the first gauge —
+ * over half of a 50MB load, two thirds on a dense one — and now runs after the
+ * list is on screen. It goes in chunks and can say how many packets are in, so
+ * its gauge, the `database` stage, spans the whole bar on its own.
  */
 
 import { getMessages, type Locale } from '../i18n/locale'
 
-export type LoadStage = 'reading' | 'parsing' | 'decoding' | 'database' | 'saving'
+/** The stages before the packet list can show, then the DuckDB insert after it. */
+export type LoadStage = 'reading' | 'parsing' | 'decoding' | 'database'
 
 export interface LoadProgress {
   stage: LoadStage
   /** The whole load, 0 to 1. */
   fraction: number
-  /** What is happening, in words, e.g. "Loading into DuckDB — 420,000 of 1,600,000 rows". */
+  /** What is happening, in words, e.g. "Loading into DuckDB — 42,000 of 160,000 packets". */
   label: string
   done?: number
   total?: number
 }
 
-/** Where each stage's slice of the bar starts and ends. */
+/**
+ * Where each stage's slice of its bar starts and ends. The first three share
+ * the load gauge; `database` has a gauge of its own.
+ */
 const STAGE_SPAN: Record<LoadStage, [number, number]> = {
-  reading: [0, 0.02],
-  parsing: [0.02, 0.06],
-  decoding: [0.06, 0.15],
-  database: [0.15, 0.98],
-  saving: [0.98, 1],
+  reading: [0, 0.05],
+  parsing: [0.05, 0.2],
+  decoding: [0.2, 1],
+  database: [0, 1],
 }
 
 export function formatLoadProgressLabel(
@@ -58,16 +57,14 @@ export function formatLoadProgressLabel(
     parsing: t.parsing,
     decoding: t.decoding,
     database: t.database,
-    saving: t.saving,
   }
-  // Before the database can count rows it has to empty its tables and flatten
-  // every packet into them, which on a large capture is a couple of seconds
-  // with nothing to count. Saying so beats a label that looks frozen.
+  // Before the database can count packets it has to empty and recreate its
+  // tables, a moment with nothing to count. Saying so beats a bare label.
   const counted =
     total && total > 0
-      ? t.countedRows(done ?? 0, total)
+      ? t.countedPackets(done ?? 0, total)
       : stage === 'database'
-        ? t.preparingRows
+        ? t.preparing
         : ''
   return `${stageLabel[stage]}${counted}`
 }
@@ -75,7 +72,7 @@ export function formatLoadProgressLabel(
 /**
  * Progress at a point inside a stage.
  *
- * `done` and `total` are the stage's own units — rows, for the database — and
+ * `done` and `total` are the stage's own units — packets, for the database — and
  * are left out when the stage cannot measure itself, which places the bar at
  * the start of the stage's slice.
  */

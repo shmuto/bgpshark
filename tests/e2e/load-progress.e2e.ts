@@ -3,8 +3,8 @@ import { announce, buildScenario, type BgpMessageSpec } from '../../src/lib/buil
 import { loadCapture, openMessagesAfterLoad } from './helpers'
 
 /**
- * A capture big enough to take more than one database batch — the loader
- * inserts 50,000 rows at a time, and this flattens to a few hundred thousand —
+ * A capture big enough to take more than one database chunk — the loader
+ * inserts 250,000 rows at a time, and this flattens to a few hundred thousand —
  * but small enough to load in a few seconds. UPDATEs are packed into full
  * segments, the way a real table transfer arrives, which is the shape that
  * made large captures slow in the first place.
@@ -41,58 +41,59 @@ function tableTransfer(updates: number): Buffer {
  * minutes, indistinguishable from a hang. What it owes the user is that it
  * moves, that it moves forwards, and that it says what it is doing.
  *
- * Reading it with a MutationObserver installed before the app loads, rather
- * than polling from the test, is what makes this deterministic: every value
- * React commits is recorded, however quickly the load runs on the machine at
- * hand.
+ * There are two: the load gauge in front of the packet list, and the header's
+ * gauge for the DuckDB insert that runs once the list is up. Each is read with
+ * a MutationObserver installed before the app loads, rather than polled from
+ * the test, which is what makes this deterministic: every value React commits
+ * is recorded, however quickly the load runs on the machine at hand.
  */
-test('loading a capture shows a gauge that only moves forwards', async ({ page }) => {
+test('loading a capture shows gauges that only move forwards', async ({ page }) => {
   await page.addInitScript(() => {
     const seen: Array<{ value: number; text: string; stage: string }> = []
     ;(window as unknown as { __gauge: typeof seen }).__gauge = seen
     new MutationObserver(() => {
-      const bar = document.querySelector('[role="progressbar"]')
-      if (!bar) return
-      const entry = {
-        value: Number(bar.getAttribute('aria-valuenow')),
-        text: bar.getAttribute('aria-valuetext') ?? '',
-        stage: bar.getAttribute('data-stage') ?? '',
+      for (const bar of document.querySelectorAll('[role="progressbar"]')) {
+        const entry = {
+          value: Number(bar.getAttribute('aria-valuenow')),
+          text: bar.getAttribute('aria-valuetext') ?? '',
+          stage: bar.getAttribute('data-stage') ?? '',
+        }
+        const last = [...seen].reverse().find((e) => (e.stage === 'database') === (entry.stage === 'database'))
+        if (!last || last.text !== entry.text || last.value !== entry.value) seen.push(entry)
       }
-      const last = seen[seen.length - 1]
-      if (!last || last.text !== entry.text || last.value !== entry.value) seen.push(entry)
     }).observe(document, { subtree: true, childList: true, attributes: true })
   })
 
   await loadCapture(page, 'table-transfer.pcap', tableTransfer(40_000))
   await openMessagesAfterLoad(page, 60_000)
-  await expect(page.getByRole('progressbar')).toBeHidden()
+  await expect(page.getByRole('progressbar')).toHaveCount(0)
 
   const seen = await page.evaluate(
     () => (window as unknown as { __gauge: Array<{ value: number; text: string; stage: string }> }).__gauge
   )
-  const stages = [...new Set(seen.map((entry) => entry.stage))]
-  const values = seen.map((entry) => entry.value)
+  const load = seen.filter((entry) => entry.stage !== 'database')
+  const database = seen.filter((entry) => entry.stage === 'database')
 
-  expect(stages, 'every stage announces itself, in order').toEqual([
+  expect([...new Set(load.map((entry) => entry.stage))], 'every load stage announces itself, in order').toEqual([
     'reading',
     'parsing',
     'decoding',
-    'database',
-    'saving',
   ])
-  for (let i = 1; i < values.length; i++) {
-    expect(values[i], `the gauge went backwards: ${seen[i - 1].text} → ${seen[i].text}`).toBeGreaterThanOrEqual(
-      values[i - 1]
-    )
+  for (const gauge of [load, database]) {
+    for (let i = 1; i < gauge.length; i++) {
+      expect(gauge[i].value, `a gauge went backwards: ${gauge[i - 1].text} → ${gauge[i].text}`).toBeGreaterThanOrEqual(
+        gauge[i - 1].value
+      )
+    }
   }
 
   // Moving *within* the database stage is the part a spinner could not do:
-  // at least one reading strictly between none and all of the rows.
-  const partway = seen.filter((entry) => {
-    const counted = entry.text.match(/([\d,]+) of ([\d,]+) rows/)
+  // at least one reading strictly between none and all of the packets.
+  const partway = database.filter((entry) => {
+    const counted = entry.text.match(/([\d,]+) of ([\d,]+) packets/)
     if (!counted) return false
     const [done, total] = [counted[1], counted[2]].map((n) => Number(n.replace(/,/g, '')))
     return done > 0 && done < total
   })
-  expect(partway.length, seen.map((entry) => entry.text).join('\n')).toBeGreaterThan(0)
+  expect(partway.length, database.map((entry) => entry.text).join('\n')).toBeGreaterThan(0)
 })
