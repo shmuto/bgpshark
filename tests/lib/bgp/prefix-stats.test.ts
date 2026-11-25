@@ -32,14 +32,19 @@ function attribute(parsed: ParsedPathAttribute): BgpPathAttribute {
   }
 }
 
+/** Where an UPDATE goes when the test does not say: one receiver for every sender. */
+const RECEIVER = '10.255.255.255'
+
 /**
- * One UPDATE from `source`, at a second of the capture chosen by the caller so
- * ordering is explicit rather than a side effect of the array literal.
+ * One UPDATE from `source` to `destination`, at a second of the capture chosen
+ * by the caller so ordering is explicit rather than a side effect of the array
+ * literal.
  */
 function update(
   source: string,
   second: number,
-  fields: Partial<BgpUpdateMessage>
+  fields: Partial<BgpUpdateMessage>,
+  destination = RECEIVER
 ): BgpPacket {
   const message: BgpUpdateMessage = {
     type: 'UPDATE',
@@ -54,7 +59,7 @@ function update(
     frameIndex: second,
     timestamp: new Date(Date.UTC(2024, 0, 1, 0, 0, second)),
     srcIp: source,
-    dstIp: '10.255.255.255',
+    dstIp: destination,
     srcPort: 179,
     dstPort: 50000,
     messages: [message],
@@ -63,18 +68,29 @@ function update(
   }
 }
 
-function announce(source: string, second: number, text: string, asns: number[] = [65001]): BgpPacket {
-  return update(source, second, {
-    nlri: [prefix(text)],
-    pathAttributes: [
-      attribute({ type: 'AS_PATH', segments: [{ type: 'AS_SEQUENCE', asNumbers: asns }] }),
-      attribute({ type: 'NEXT_HOP', address: source }),
-    ],
-  })
+function announce(
+  source: string,
+  second: number,
+  text: string,
+  asns: number[] = [65001],
+  destination = RECEIVER
+): BgpPacket {
+  return update(
+    source,
+    second,
+    {
+      nlri: [prefix(text)],
+      pathAttributes: [
+        attribute({ type: 'AS_PATH', segments: [{ type: 'AS_SEQUENCE', asNumbers: asns }] }),
+        attribute({ type: 'NEXT_HOP', address: source }),
+      ],
+    },
+    destination
+  )
 }
 
-function withdraw(source: string, second: number, text: string): BgpPacket {
-  return update(source, second, { withdrawnRoutes: [prefix(text)] })
+function withdraw(source: string, second: number, text: string, destination = RECEIVER): BgpPacket {
+  return update(source, second, { withdrawnRoutes: [prefix(text)] }, destination)
 }
 
 /** The one row the capture should have produced, or a loud failure. */
@@ -156,6 +172,48 @@ describe('flap counting', () => {
 
     // The second withdraw from .1 is a repeat, and .2 never withdrew at all.
     expect(only(stats).flap).toBe(1)
+  })
+
+  test('a route server passing one withdrawal to every member is a flap per member', () => {
+    // A member (.13) withdraws from the route server (.1), and the server
+    // passes that on to the two members it had sent the route to — from its
+    // one address. Kept by sender alone, the second member's withdrawal read
+    // as a repeat of the first's, and the count was neither the one event
+    // nor the three sessions that lost the route.
+    const stats = aggregatePrefixStats([
+      announce('192.0.2.13', 1, '10.0.12.0/24', [65013], '192.0.2.1'),
+      announce('192.0.2.1', 2, '10.0.12.0/24', [65013], '192.0.2.11'),
+      announce('192.0.2.1', 3, '10.0.12.0/24', [65013], '192.0.2.12'),
+      withdraw('192.0.2.13', 4, '10.0.12.0/24', '192.0.2.1'),
+      withdraw('192.0.2.1', 5, '10.0.12.0/24', '192.0.2.11'),
+      withdraw('192.0.2.1', 6, '10.0.12.0/24', '192.0.2.12'),
+    ])
+
+    expect(only(stats).flap).toBe(3)
+  })
+
+  test('a route server passing a route on is not a flap', () => {
+    const stats = aggregatePrefixStats([
+      announce('192.0.2.13', 1, '10.0.12.0/24', [65013], '192.0.2.1'),
+      announce('192.0.2.1', 2, '10.0.12.0/24', [65013], '192.0.2.11'),
+      announce('192.0.2.1', 3, '10.0.12.0/24', [65013], '192.0.2.12'),
+    ])
+
+    expect(only(stats).flap).toBe(0)
+  })
+
+  test("withdrawing from one member does not take the route from another", () => {
+    // The server's export policy filters the route from .11 only; .12 still
+    // has it, so its later withdrawal is a flap of its own.
+    const stats = aggregatePrefixStats([
+      announce('192.0.2.1', 1, '10.0.12.0/24', [65013], '192.0.2.11'),
+      announce('192.0.2.1', 2, '10.0.12.0/24', [65013], '192.0.2.12'),
+      withdraw('192.0.2.1', 3, '10.0.12.0/24', '192.0.2.11'),
+      announce('192.0.2.1', 4, '10.0.12.0/24', [65013], '192.0.2.12'),
+      withdraw('192.0.2.1', 5, '10.0.12.0/24', '192.0.2.12'),
+    ])
+
+    expect(only(stats).flap).toBe(2)
   })
 
   test('a withdraw with no announce before it still counts', () => {

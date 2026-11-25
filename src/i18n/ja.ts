@@ -167,8 +167,8 @@ export const ja: Messages = {
     morePrefixesFlappedDetail: (flaps: number) =>
       `さらに ${flaps} 回のフラップあり — 経路画面で「フラップ」順に並べ替えると全件確認できます`,
     asPathChangedTitle: (key: string) => `AS_PATH が変化: ${key}`,
-    asPathChangedDetail: (from: string, first: string, last: string) =>
-      `${from} から: ${first} → ${last}`,
+    asPathChangedDetail: (from: string, to: string, first: string, last: string) =>
+      `${from} から ${to} へ: ${first} → ${last}`,
     asPathFromPath: (source: string, pathId: number) => `${source} (Path ID ${pathId})`,
     noAsPath: '(AS_PATH なし)',
     macMovedTitle: (key: string) => `MAC ムーブ検知: ${key}`,
@@ -570,7 +570,7 @@ export const ja: Messages = {
     colLastSeen: '最終観測 (UTC)',
     colFlap: 'フラップ',
     colFlapTitle:
-      '経路が消えた回数です。同じ相手が広告していた経路（キャプチャ開始前の広告を含む）の取り消しを 1 回と数えます。再広告や、取り消し済みの経路の重複した取り消しは数えません。',
+      '経路が消えた回数です。同じセッションで広告されていた経路（キャプチャ開始前の広告を含む）の取り消しを 1 回と数えます。セッションは送信元と宛先の組で区別します。再広告や、取り消し済みの経路の重複した取り消しは数えません。',
     noPrefixesFound: '該当するプレフィックスが見つかりません',
     resizePrefixList: 'プレフィックス一覧の幅を調整',
     routeHistory: (prefix: string | null) =>
@@ -586,6 +586,8 @@ export const ja: Messages = {
     colRdTitle: 'Route Distinguisher — このルートを広告したリーフを識別します',
     colFrom: '送信元',
     colFromTitle: 'このイベントの送信元ピア',
+    colTo: '宛先',
+    colToTitle: 'このイベントの宛先ピアです。ルートサーバーのように、1 つのピアがこの経路を複数の相手に送っている場合に表示します',
     colNextHop: 'Next Hop',
     colMedTitle: 'MULTI_EXIT_DISC — 小さい値が優先（同じ隣接 AS からの経路間のみで比較）',
     colLocalPrefTitle: 'LOCAL_PREF — 大きい値が優先（AS_PATH 長より優先）',

@@ -80,7 +80,12 @@ function attribute(parsed: ParsedPathAttribute): BgpPathAttribute {
   }
 }
 
-function update(src: string, second: number, fields: Partial<BgpUpdateMessage>): BgpPacket {
+function update(
+  src: string,
+  second: number,
+  fields: Partial<BgpUpdateMessage>,
+  dst = '10.255.255.255'
+): BgpPacket {
   const message: BgpUpdateMessage = {
     type: 'UPDATE',
     withdrawnRoutesLength: 0,
@@ -90,21 +95,32 @@ function update(src: string, second: number, fields: Partial<BgpUpdateMessage>):
     nlri: [],
     ...fields,
   }
-  return packet(src, '10.255.255.255', second, [message])
+  return packet(src, dst, second, [message])
 }
 
-function announce(src: string, second: number, text: string, asns: number[] = [65001]): BgpPacket {
-  return update(src, second, {
-    nlri: [prefix(text)],
-    pathAttributes: [
-      attribute({ type: 'AS_PATH', segments: [{ type: 'AS_SEQUENCE', asNumbers: asns }] }),
-      attribute({ type: 'NEXT_HOP', address: src }),
-    ],
-  })
+function announce(
+  src: string,
+  second: number,
+  text: string,
+  asns: number[] = [65001],
+  dst?: string
+): BgpPacket {
+  return update(
+    src,
+    second,
+    {
+      nlri: [prefix(text)],
+      pathAttributes: [
+        attribute({ type: 'AS_PATH', segments: [{ type: 'AS_SEQUENCE', asNumbers: asns }] }),
+        attribute({ type: 'NEXT_HOP', address: src }),
+      ],
+    },
+    dst
+  )
 }
 
-function withdraw(src: string, second: number, text: string): BgpPacket {
-  return update(src, second, { withdrawnRoutes: [prefix(text)] })
+function withdraw(src: string, second: number, text: string, dst?: string): BgpPacket {
+  return update(src, second, { withdrawnRoutes: [prefix(text)] }, dst)
 }
 
 function byId(alerts: DashboardAlert[], prefixOfId: string): DashboardAlert[] {
@@ -242,7 +258,7 @@ describe('route-level alerts', () => {
     expect(changed.title).toBe('AS_PATH changed: 192.168.2.0/24')
     // Prepending reads as a count here and on the routes screen alike, so the
     // number of prepends is the thing on screen rather than something to count.
-    expect(changed.detail).toBe('from 10.10.0.2: 65002 → 65002×3')
+    expect(changed.detail).toBe('from 10.10.0.2 to 10.255.255.255: 65002 → 65002×3')
     expect(changed.filter).toBe('prefix = 192.168.2.0/24')
     expect(changed.packetIndex).toBe(2) // the announcement that differs
     expect(changed.count).toBe(2)
@@ -897,8 +913,34 @@ describe('noise the alert panel must not raise', () => {
     ])
 
     const changed = byId(alerts, 'route-aspath-')[0]
-    expect(changed.detail).toBe('from 10.0.14.1: 65001 → 65003 65001')
+    expect(changed.detail).toBe('from 10.0.14.1 to 10.255.255.255: 65001 → 65003 65001')
     expect(changed.packetIndex).toBe(2)
+  })
+
+  test('a route server sending members different paths is not an AS_PATH change', () => {
+    // Transparent route server .1: each member gets the path its policy
+    // allows — three prepends for .12 — all from the server's one address.
+    const alerts = computeAlerts([
+      announce('192.0.2.1', 0, '203.0.113.0/24', [65013], '192.0.2.11'),
+      announce('192.0.2.1', 1, '203.0.113.0/24', [65013, 65013, 65013], '192.0.2.12'),
+      announce('192.0.2.1', 2, '203.0.113.0/24', [65013], '192.0.2.11'),
+      announce('192.0.2.1', 3, '203.0.113.0/24', [65013, 65013, 65013], '192.0.2.12'),
+    ])
+
+    expect(byId(alerts, 'route-aspath-')).toHaveLength(0)
+  })
+
+  test("a route server changing one member's path is reported against that member", () => {
+    const alerts = computeAlerts([
+      announce('192.0.2.1', 0, '203.0.113.0/24', [65013], '192.0.2.11'),
+      announce('192.0.2.1', 1, '203.0.113.0/24', [65013, 65013, 65013], '192.0.2.12'),
+      announce('192.0.2.1', 2, '203.0.113.0/24', [65014, 65013], '192.0.2.11'),
+    ])
+
+    const changed = byId(alerts, 'route-aspath-')
+    expect(changed).toHaveLength(1)
+    expect(changed[0].detail).toBe('from 192.0.2.1 to 192.0.2.11: 65013 → 65014 65013')
+    expect(changed[0].packetIndex).toBe(2)
   })
 
   test('Connection Collision Resolution is informational, below the real cause', () => {

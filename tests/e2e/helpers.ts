@@ -402,6 +402,50 @@ export function bestPathCapture(): Buffer {
 }
 
 /**
+ * An IXP route server (192.0.2.1, AS 64500) captured on the server itself.
+ *
+ * Member 192.0.2.13 (AS 64513) announces `203.0.113.0/24`; the server passes
+ * it on, transparently — no AS of its own, NEXT_HOP left at the member — to
+ * 192.0.2.11 as it is and to 192.0.2.12 prepended twice, as that member's
+ * policy asks. The member then withdraws it and the server passes that on too.
+ *
+ * Every copy the members receive comes from the server's one address, which is
+ * what made this capture misread when route state was kept by sender alone:
+ * the two members' paths were an "AS_PATH changed", and the second member's
+ * withdrawal was taken for a repeat of the first's.
+ */
+export function routeServerCapture(): Buffer {
+  const server = { ip: '192.0.2.1', as: 64500, routerId: '192.0.2.1', holdTime: 90 }
+  const route = ['203.0.113.0/24']
+  const session = (
+    member: { ip: string; as: number },
+    from: 'a' | 'b',
+    asPath: number[],
+    second: number
+  ) =>
+    buildScenario({
+      a: { ...member, routerId: member.ip, holdTime: 90 },
+      b: server,
+      gap: 100,
+      startTime: new Date(Date.UTC(2026, 0, 1, 0, 0, second)),
+      steps: [
+        ...establish(),
+        { kind: 'send', from, messages: [announce(route, { nextHop: '192.0.2.13', asPath })] },
+        { kind: 'delay', gap: 10_000 },
+        { kind: 'send', from, messages: [{ type: 'UPDATE', withdrawnRoutes: route }] },
+      ],
+    })
+
+  return Buffer.from(
+    mergeCaptures([
+      session({ ip: '192.0.2.13', as: 64513 }, 'a', [64513], 0),
+      session({ ip: '192.0.2.11', as: 64511 }, 'b', [64513], 1),
+      session({ ip: '192.0.2.12', as: 64512 }, 'b', [64513, 64513, 64513], 2),
+    ]).bytes
+  )
+}
+
+/**
  * A router that reloaded, with both ends having agreed how to survive it.
  *
  * The same shape as `s8-graceful-restart`: A drops the connection without a

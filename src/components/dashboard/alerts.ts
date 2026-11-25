@@ -148,20 +148,26 @@ function* groupNotifications(packets: BgpPacket[], locale: Locale): Sliced<Dashb
 interface PathChange {
   /** The peer whose path changed. */
   source: string
+  /** The peer it was announcing the path to. */
+  destination: string
   pathId?: number
-  /** Distinct AS_PATHs that peer announced, in the order they first appeared. */
+  /** Distinct AS_PATHs that session announced, in the order they first appeared. */
   paths: string[]
 }
 
 /**
- * The peer (and ADD-PATH path) whose AS_PATH for a route changed the most.
+ * The session (and ADD-PATH path) whose AS_PATH for a route changed the most.
  *
- * Paths are only compared within one peer's announcements. Two peers sending
- * different paths for the same prefix is ordinary — an iBGP peer's empty
- * AS_PATH next to an eBGP peer's `65001` is the textbook case — and comparing
- * across them reported "(no AS_PATH) → 65001" on every capture with both kinds
- * of session. ADD-PATH Path Identifiers are kept apart for the same reason:
- * several paths from one peer is what ADD-PATH is for.
+ * Paths are only compared within one session's announcements. Two peers
+ * sending different paths for the same prefix is ordinary — an iBGP peer's
+ * empty AS_PATH next to an eBGP peer's `65001` is the textbook case — and
+ * comparing across them reported "(no AS_PATH) → 65001" on every capture with
+ * both kinds of session. The receiver is part of the session for the same
+ * reason: a route server sends each member the path that member's policy
+ * allows — prepended for one, filtered to another — all from one address, and
+ * keyed by the sender alone those read as one peer changing its mind. ADD-PATH
+ * Path Identifiers are kept apart because several paths from one peer is what
+ * ADD-PATH is for.
  */
 function* asPathChange(stat: PrefixStats): Sliced<PathChange | null> {
   // Read off the history's columns rather than its events: this runs over
@@ -170,7 +176,7 @@ function* asPathChange(stat: PrefixStats): Sliced<PathChange | null> {
 
   // Nearly every route is announced by one peer with one path, or by several
   // that each keep to theirs. Settle the commonest case — every announcement
-  // the same peer, path and AS_PATH — without building a key per event. The
+  // the same session, path and AS_PATH — without building a key per event. The
   // decoder shares AS_PATH text between repeats, so the comparison is almost
   // always of one string with itself.
   let firstAt = -1
@@ -186,6 +192,7 @@ function* asPathChange(stat: PrefixStats): Sliced<PathChange | null> {
     if (
       asPath !== history.asPath(firstAt) ||
       history.source(index) !== history.source(firstAt) ||
+      history.destination(index) !== history.destination(firstAt) ||
       history.pathId(index) !== history.pathId(firstAt)
     ) {
       mixed = true
@@ -194,26 +201,28 @@ function* asPathChange(stat: PrefixStats): Sliced<PathChange | null> {
   }
   if (!mixed) return null
 
-  const bySource = new Map<string, PathChange>()
+  const bySession = new Map<string, PathChange>()
   for (let index = firstAt; index < history.length; index++) {
     if (pauseAt(index)) yield
     const asPath = history.asPath(index)
     if (asPath === undefined) continue
     const source = history.source(index)
+    const destination = history.destination(index)
     const pathId = history.pathId(index)
-    // An address never contains `|`, so the bare address cannot collide with
-    // an address-and-path-identifier key.
-    const key = pathId === undefined ? source : `${source}|${pathId}`
-    let entry = bySource.get(key)
+    // An address never contains `>` or `|`, so neither part of the key can
+    // run into the next.
+    const session = `${source}>${destination}`
+    const key = pathId === undefined ? session : `${session}|${pathId}`
+    let entry = bySession.get(key)
     if (!entry) {
-      entry = { source, pathId, paths: [] }
-      bySource.set(key, entry)
+      entry = { source, destination, pathId, paths: [] }
+      bySession.set(key, entry)
     }
     if (!entry.paths.includes(asPath)) entry.paths.push(asPath)
   }
 
   let worst: PathChange | null = null
-  for (const entry of bySource.values()) {
+  for (const entry of bySession.values()) {
     if (entry.paths.length > 1 && (!worst || entry.paths.length > worst.paths.length)) worst = entry
   }
   return worst
@@ -270,7 +279,7 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
   const alerts: DashboardAlert[] = []
 
   // A route that went away at least once. `flap` is already counted per
-  // (route, announcing peer) by aggregatePrefixStats, so a widely announced
+  // (route, session) by aggregatePrefixStats, so a widely announced
   // stable route does not score here.
   const flapping = new Leaders<PrefixStats>(
     ROUTE_ALERT_LIMIT,
@@ -338,8 +347,8 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
     repathed.offer({ stat, change })
   }
 
-  for (const { stat, change: { source, pathId, paths } } of repathed.top) {
-    // The packet worth opening is the one where that peer's path first
+  for (const { stat, change: { source, destination, pathId, paths } } of repathed.top) {
+    // The packet worth opening is the one where that session's path first
     // differed, not the original announcement.
     const history = stat.history.events()
     const change =
@@ -347,6 +356,7 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
         (event) =>
           event.action === 'announce' &&
           event.source === source &&
+          event.destination === destination &&
           event.pathId === pathId &&
           event.asPath !== undefined &&
           event.asPath !== paths[0]
@@ -357,8 +367,11 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
       rule: 'route-aspath',
       severity: 'warning',
       title: t.asPathChangedTitle(stat.key),
+      // Both ends, since the sender alone does not say whose path it was: on a
+      // route server every member's is from the server's address.
       detail: t.asPathChangedDetail(
         from,
+        destination,
         describeAsPath(paths[0], locale),
         describeAsPath(paths[paths.length - 1], locale)
       ),

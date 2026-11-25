@@ -16,6 +16,7 @@ Each version's section here becomes the top of its GitHub Release notes (`.githu
 
 ### Fixed
 
+- **Route servers and route reflectors no longer confuse the route findings.** Route state was kept per sender, so one address sending each neighbour its own copy of a route read as one peer. The members' different paths showed up as *AS_PATH changed*, and a withdrawal passed to several members counted as one flap. Flaps and AS_PATH changes are now counted per session (sender and receiver) on the Routes screen, in the findings and in the SQL *Prefix Flapping* template. The route history gains a **To** column when one peer sends the route to several neighbours. Route state takes two bits per route instead of a byte, so 300 sessions of 200,000 routes fit in less heap than the per-sender state took.
 - A dense capture under the 100 MB limit (22 million announced routes) ran DuckDB out of memory and lost its SQL console. The tables are now compressed and have no primary keys: that capture takes 139 MB instead of failing at 3.1 GB.
 
 ### Performance
