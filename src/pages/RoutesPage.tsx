@@ -403,6 +403,24 @@ export function RoutesPage() {
   const showPathIdColumn =
     selectedHistory?.some((event) => event.pathId !== undefined) ?? false
 
+  /**
+   * Who each event was sent to, shown once some peer in this history sends
+   * the route to more than one neighbour — a route server or a route
+   * reflector. Without it, two of the server's announcements with different
+   * AS_PATHs read as one peer changing its path, when each went to a
+   * different member under that member's policy; on an ordinary peering the
+   * receiver is the other end and the column would only repeat it.
+   */
+  const showToColumn = useMemo(() => {
+    const receivers = new Map<string, string>()
+    for (const event of selectedHistory ?? []) {
+      const known = receivers.get(event.source)
+      if (known === undefined) receivers.set(event.source, event.destination)
+      else if (known !== event.destination) return true
+    }
+    return false
+  }, [selectedHistory])
+
   const matchModes: { value: MatchMode; label: string; hint: string }[] = [
     { value: 'exact', label: rt.matchExact, hint: rt.matchExactHint },
     { value: 'subnets', label: rt.matchSubnets, hint: rt.matchSubnetsHint },
@@ -669,6 +687,9 @@ export function RoutesPage() {
                       </th>
                     )}
                     <th className="px-3 py-1.5 font-medium" title={rt.colFromTitle}>{rt.colFrom}</th>
+                    {showToColumn && (
+                      <th className="px-3 py-1.5 font-medium" title={rt.colToTitle}>{rt.colTo}</th>
+                    )}
                     <th className="px-3 py-1.5 font-medium">{rt.colNextHop}</th>
                     {showMedColumn && (
                       <th
@@ -734,6 +755,9 @@ export function RoutesPage() {
                         <td className="px-3 py-1 font-mono text-muted">{event.rd ?? '-'}</td>
                       )}
                       <td className="px-3 py-1 font-mono text-muted whitespace-nowrap">{event.source}</td>
+                      {showToColumn && (
+                        <td className="px-3 py-1 font-mono text-muted whitespace-nowrap">{event.destination}</td>
+                      )}
                       <td className="px-3 py-1 font-mono text-muted whitespace-nowrap">
                         {event.nextHop || '-'}
                       </td>

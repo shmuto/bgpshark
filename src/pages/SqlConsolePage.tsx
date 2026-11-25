@@ -39,8 +39,9 @@ LIMIT 20`,
   },
   {
     // Counts flaps the way the Routes screen does (see aggregatePrefixStats):
-    // a withdraw from a peer that had the route up, or whose announce came
-    // before the capture began. A re-announce is not a flap, and withdrawing
+    // a withdraw on a session — sender and receiver — that had the route up,
+    // or whose announce came before the capture began. The receiver matters
+    // on a route server, which sends every member's copy from one address. A re-announce is not a flap, and withdrawing
     // an already-withdrawn route is not a second one. Summing announces and
     // withdraws, as this template once did, scored a route four times what
     // the Flap column said for the same capture.
@@ -52,14 +53,14 @@ LIMIT 20`,
     // a NULL test let them through as "[2] …/0", a key no screen knows.
     key: 'prefixFlapping',
     query: `WITH events AS (
-  SELECT n.prefix || '/' || n.prefix_length AS prefix, p.src_ip,
+  SELECT n.prefix || '/' || n.prefix_length AS prefix, p.src_ip, p.dst_ip,
          m.frame_index, m.message_index, 0 AS step, n.id, 'announce' AS action
   FROM nlri n
   JOIN messages m ON m.id = n.message_id
   JOIN packets p ON p.frame_index = m.frame_index
   WHERE n.evpn_route_type IS NULL
   UNION ALL
-  SELECT w.prefix || '/' || w.prefix_length, p.src_ip,
+  SELECT w.prefix || '/' || w.prefix_length, p.src_ip, p.dst_ip,
          m.frame_index, m.message_index, 1, w.id, 'withdraw'
   FROM withdrawn w
   JOIN messages m ON m.id = w.message_id
@@ -69,7 +70,7 @@ LIMIT 20`,
 ordered AS (
   SELECT prefix, action,
          LAG(action) OVER (
-           PARTITION BY prefix, src_ip
+           PARTITION BY prefix, src_ip, dst_ip
            ORDER BY frame_index, message_index, step, id
          ) AS previous
   FROM events

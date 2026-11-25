@@ -56,6 +56,15 @@ export interface PrefixEvent {
    * over iBGP or through a route server they routinely differ.
    */
   source: string
+  /**
+   * The peer this event was sent to. Together with `source` it names the
+   * session the event belongs to, which is the unit a route's state is kept
+   * in: a route server or route reflector sends one route to many neighbours
+   * from one address, and with the sender alone those were one peer — two
+   * members' different paths read as a path change, and one member's
+   * withdrawal hid the next one's.
+   */
+  destination: string
   packetIndex: number
 }
 
@@ -78,7 +87,7 @@ export interface PrefixStats {
   withdrawn: number
   lastSeen: Date
   /**
-   * Times this route went away, summed over the peers announcing it. See
+   * Times this route went away, summed over the sessions announcing it. See
    * `aggregatePrefixStats` for what counts as going away.
    */
   flap: number
@@ -217,6 +226,11 @@ export class RouteHistory {
     return this.store.packets[this.packetIndex(index)].srcIp
   }
 
+  /** The peer the event was sent to. */
+  destination(index: number): string {
+    return this.store.packets[this.packetIndex(index)].dstIp
+  }
+
   /** The announced AS_PATH as text; undefined for a withdraw. */
   asPath(index: number): string | undefined {
     const announcement = this.store.announcement[this.start + index]
@@ -257,6 +271,7 @@ export class RouteHistory {
       // UPDATE, so each route in a block keeps its own.
       pathId: prefix?.pathId,
       source: packet.srcIp,
+      destination: packet.dstIp,
       packetIndex,
     }
   }
@@ -312,17 +327,25 @@ const UP = 1
 const DOWN = 2
 
 /**
- * One peer's view of every route: whether it currently announces it
- * (`UP`), withdrew it (`DOWN`) or never spoke of it (`NEVER_SEEN`), by the
- * route's index in the statistics.
+ * One session direction's view of every route: whether the sender currently
+ * announces it to the receiver (`UP`), withdrew it (`DOWN`) or never spoke of
+ * it (`NEVER_SEEN`), by the route's index in the statistics.
  *
- * A byte per route while the capture's peers can afford it — there is one of
- * these per announcing peer, and they share `DENSE_BUDGET` — and a `Map`
- * past that. The `Map` was all there used to be, keyed by `prefix/length`
+ * Two bits per route while the capture's sessions can afford it — there is
+ * one of these per (sender, receiver), and they share `DENSE_BUDGET` — and a
+ * `Map` past that. The `Map` was all there used to be, keyed by `prefix/length`
  * text, and its lookups were the other half of a 20-second pass over a large
  * table transfer.
+ *
+ * Two bits rather than a byte since route state became per session: a route
+ * server sends every member most of the table, so a capture of one has a
+ * state per member, not one for the server. At a byte per route, 300 members
+ * of 200,000 routes overran the budget and the rest went to `Map`s — 375MB
+ * more heap and 2.4 seconds more than keeping state by sender alone. Packed,
+ * they all fit.
  */
 class RouteStates {
+  /** Four routes to a byte, route `id` in bits `2 * (id & 3)` of byte `id >> 2`. */
   private dense: Uint8Array | null = new Uint8Array(1024)
   private sparse: Map<number, number> | null = null
   private readonly budget: { bytes: number }
@@ -334,24 +357,37 @@ class RouteStates {
 
   get(id: number): number {
     const dense = this.dense
-    if (dense) return id < dense.length ? dense[id] : NEVER_SEEN
+    if (dense) {
+      const at = id >> 2
+      return at < dense.length ? (dense[at] >> ((id & 3) << 1)) & 3 : NEVER_SEEN
+    }
     return this.sparse!.get(id) ?? NEVER_SEEN
   }
 
   set(id: number, state: number): void {
-    if (this.dense && id >= this.dense.length) this.grow(id)
-    if (this.dense) this.dense[id] = state
-    else this.sparse!.set(id, state)
+    if (this.dense && id >> 2 >= this.dense.length) this.grow(id >> 2)
+    const dense = this.dense
+    if (dense) {
+      const at = id >> 2
+      const shift = (id & 3) << 1
+      dense[at] = (dense[at] & ~(3 << shift)) | (state << shift)
+    } else {
+      this.sparse!.set(id, state)
+    }
   }
 
-  private grow(id: number): void {
+  /** Room for byte `at`, or the `Map` if the budget will not stretch to it. */
+  private grow(at: number): void {
     const dense = this.dense!
     let size = dense.length * 2
-    while (size <= id) size *= 2
+    while (size <= at) size *= 2
     if (size - dense.length > this.budget.bytes) {
-      // Over budget: keep the routes this peer has spoken of, and only those.
+      // Over budget: keep the routes this session has spoken of, and only those.
       const sparse = new Map<number, number>()
-      for (let route = 0; route < dense.length; route++) if (dense[route] !== NEVER_SEEN) sparse.set(route, dense[route])
+      for (let route = 0; route < dense.length * 4; route++) {
+        const state = (dense[route >> 2] >> ((route & 3) << 1)) & 3
+        if (state !== NEVER_SEEN) sparse.set(route, state)
+      }
       this.budget.bytes += dense.length
       this.dense = null
       this.sparse = sparse
@@ -364,7 +400,7 @@ class RouteStates {
   }
 }
 
-/** Bytes of `RouteStates` all of one capture's peers may hold between them. */
+/** Bytes of `RouteStates` all of one capture's sessions may hold between them. */
 const DENSE_BUDGET = 64 << 20
 
 /**
@@ -531,10 +567,12 @@ function createAggregator(packets: BgpPacket[]) {
    */
   const statOfPrefix = new SharedTable<BgpPrefix, number>()
   /**
-   * Per announcing peer, whether each route — by its index in `stats` — is
-   * currently announced; absent means never announced.
+   * Per sender, then per receiver, whether each route — by its index in
+   * `stats` — is currently announced on that session; absent means never
+   * announced. Two levels rather than one key joined from both addresses, so
+   * finding a packet's session builds no string.
    */
-  const routeUpByPeer = new Map<string, RouteStates>()
+  const routeUpBySession = new Map<string, Map<string, RouteStates>>()
   const denseBudget = { bytes: DENSE_BUDGET }
   const ipv4Routes = new Ipv4PrefixIndex()
   const asnText = new Map<number, string>()
@@ -745,12 +783,19 @@ function createAggregator(packets: BgpPacket[]) {
   }
 
   const addPacket = (packet: BgpPacket, packetIndex: number) => {
-    // The peer that spoke, which is what makes route state per-session.
-    const source = packet.srcIp
-    let routeUp = routeUpByPeer.get(source)
+    // The session the packet belongs to — who spoke and who to. The sender
+    // alone is not enough: a route server sends every member the routes it
+    // learned, from one address, and each member's copy goes up and down on
+    // its own.
+    let receivers = routeUpBySession.get(packet.srcIp)
+    if (!receivers) {
+      receivers = new Map()
+      routeUpBySession.set(packet.srcIp, receivers)
+    }
+    let routeUp = receivers.get(packet.dstIp)
     if (!routeUp) {
       routeUp = new RouteStates(denseBudget)
-      routeUpByPeer.set(source, routeUp)
+      receivers.set(packet.dstIp, routeUp)
     }
     const { timestamp } = packet
     const ms = timestamp.getTime()
@@ -884,8 +929,11 @@ function sortRange(store: HistoryStore, start: number, end: number, timeOf: (at:
  *
  * Announced and withdrawn are raw event counts — how many times the route was
  * spoken about. Flap is a different question: how many times the route actually
- * went away, counted per (route, announcing peer) pair so that ten peers each
+ * went away, counted per (route, session) pair so that ten peers each
  * announcing a prefix once reads as a stable route rather than as ten flaps.
+ * A session here is one direction of a peering, sender to receiver: a route
+ * server passing one member's withdrawal on to three others is three flaps,
+ * one per member that lost the route, not one for the server's address.
  * One flap is counted on each up→down transition of a pair; the re-announce
  * that follows is not itself a flap, the next withdraw is. A withdraw for a
  * pair that was never seen announced still counts: the capture started

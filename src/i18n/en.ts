@@ -162,8 +162,8 @@ export const en = {
     morePrefixesFlappedDetail: (flaps: number) =>
       `${flaps} further flap${flaps === 1 ? '' : 's'} — sort the Routes screen by Flap to see them all`,
     asPathChangedTitle: (key: string) => `AS_PATH changed: ${key}`,
-    asPathChangedDetail: (from: string, first: string, last: string) =>
-      `from ${from}: ${first} → ${last}`,
+    asPathChangedDetail: (from: string, to: string, first: string, last: string) =>
+      `from ${from} to ${to}: ${first} → ${last}`,
     asPathFromPath: (source: string, pathId: number) => `${source} (path ${pathId})`,
     noAsPath: '(no AS_PATH)',
     macMovedTitle: (key: string) => `MAC moved: ${key}`,
@@ -569,7 +569,7 @@ export const en = {
     colLastSeen: 'Last Seen (UTC)',
     colFlap: 'Flap',
     colFlapTitle:
-      'Times the route went away: withdrawals of a route the same peer had announced (or announced before the capture began). Re-announcing is not a flap, nor is a repeated withdrawal.',
+      'Times the route went away: withdrawals of a route the same session had announced (or announced before the capture began), counted per sender and receiver. Re-announcing is not a flap, nor is a repeated withdrawal.',
     noPrefixesFound: 'No prefixes found',
     resizePrefixList: 'Resize the prefix list',
     routeHistory: (prefix: string | null) =>
@@ -585,6 +585,8 @@ export const en = {
     colRdTitle: 'Route Distinguisher — which leaf advertised this route',
     colFrom: 'From',
     colFromTitle: 'The peer this event arrived from',
+    colTo: 'To',
+    colToTitle: 'The peer this event was sent to — shown when a peer such as a route server sends this route to several neighbours',
     colNextHop: 'Next Hop',
     colMedTitle:
       'MULTI_EXIT_DISC — lower wins, and only between paths from the same neighbouring AS',
