@@ -183,7 +183,18 @@ Measured in headless Chromium on synthetic captures of four sessions (generated 
 | 94 MB, 200 routes per UPDATE, 22 million announcements | 1.2 s (was 1.6 s) | 3.9 s (was 13.6 s) | 1.3 GB (was 1.4 GB) | 17.4 s (was: out of memory) | 139 MB (was > 3.1 GB) |
 | 94 MB, a table transfer cycling through 1.2 million routes, 50 per UPDATE | 4.0 s (was 6.1 s) | 11.1 s (was 39.8 s) | 1.8 GB (was 3.7 GB) | — | — |
 
-The last shape is what a full table looks like and remains the most expensive: about 1.2 million route objects, their keys and their parsed prefixes. `MAX_FILE_SIZE` stays at 100 MB.
+At that time `MAX_FILE_SIZE` stayed at 100 MB: 300 MB of the first shape needed 3.5 GB of heap.
+
+**The 300 MB limit** is measured with `testlab/large-captures.ts` and `testlab/measure-large.ts` (see `testlab/README.md`) on four shapes of four sessions each, just under 300 MB, in headless Chromium against the production build. Each capture is walked through the list, the findings, the filter's suggestions for `prefix = `, the filter `prefix = 20.0.0.0/8`, the Routes screen until sorted, and the SQL console until DuckDB has answered a query. *Heap* is `performance.memory.usedJSHeapSize` after `gc()` twice, at its largest over the stages; *longest task* is from the `longtask` observer, where 0 means none over 50 ms; *renderer* is the tab process's resident memory, which also holds the file, typed arrays and DuckDB's WebAssembly memory. Before → after the changes that raised the limit:
+
+| Capture (300 MB) | Heap at most | Longest task | Renderer at most | List | Findings | Routes | SQL Console ready |
+|------------------|--------------|--------------|------------------|------|----------|--------|-------------------|
+| U: every UPDATE its own /32, AS_PATH and MED | 3.55 → 2.51 GB | 1.65 → 0.21 s | 4.5 → 3.4 GB | 10.7 → 9.5 s | 8.0 → 6.7 s | 1.8 → 1.5 s | 41 → 41 s |
+| R: 200 routes per UPDATE, 70 million announcements | 1.76 → 1.42 GB | 2.24 → 0.15 s | 4.1 → 3.3 GB | 5.6 → 5.6 s | 12.8 → 12.4 s | 0.2 → 0.2 s | 105 → 99 s |
+| T: a table transfer cycling through 1.2 million routes | 2.40 → 1.94 GB | 2.80 → 0.17 s | 6.1 → 4.8 GB | 11.1 → 9.9 s | 27.1 → 22.5 s | 1.0 → 0.5 s | 94 → 89 s |
+| E: EVPN MAC/IP routes and ADD-PATH IPv4 | 2.18 → 2.05 GB | 0.32 → 0.17 s | 5.1 → 3.9 GB | 15.7 → 15.0 s | 6.4 → 5.6 s | 0.3 → 0.3 s | 41 → 37 s |
+
+Every stage completed on every shape, before and after; what changed is that the heap stays under 3 GB, leaving 1 GB of the tab's 4 GB spare, and that no task holds the page for a second. The long tasks were the route history's layout and the route rules' sorts in the findings, and the Routes screen's sort and key map. The SQL Console's load is bound by the DuckDB worker and barely moved. Two things remain heavy: the renderer reaches 4.8 GB while T loads into DuckDB, most of it the worker's, and per-route statistics are still an object, a key and a history per route (2.4 million on U). Only Chromium has been measured.
 
 ### 3.2 Browser Support
 Latest Chrome/Edge, Firefox, and Safari.

@@ -22,7 +22,9 @@ Each version's section here becomes the top of its GitHub Release notes (`.githu
 
 Measured at 300 MB in headless Chromium (`testlab/measure-large.ts`):
 
-- PERF_PLACEHOLDER
+- The heap a capture needs once loaded and explored, at its largest: 3.55 → 2.51 GB when every UPDATE is its own, 2.40 → 1.94 GB for a table transfer of 1.2 million routes, 1.76 → 1.42 GB for 200 routes per UPDATE, 2.18 → 2.05 GB for EVPN with ADD-PATH. Decoded arrays are exactly as long as they are (each kept room for seventeen elements), packets' byte views are made when read, and a route's parsed prefix when first needed.
+- No task holds the page for a second: the longest is 0.21 s, down from 2.8 s. The route history is laid out in slices from chunked columns, the route rules keep a running top five instead of sorting every candidate, and the Routes screen sorts large lists in slices and finds the selected route without building a map of every route.
+- The tab's memory at its largest is 0.9–1.3 GB lower; the SQL console's load reuses its column buffers and works out IPv4 `prefix_bits` without BigInts. Its time is bound by the DuckDB worker and moved little (37–99 s at 300 MB).
 
 Measured earlier, on synthetic ~95 MB captures:
 
