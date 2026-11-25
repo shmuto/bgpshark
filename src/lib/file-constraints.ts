@@ -19,10 +19,12 @@ import { getMessages, type Locale } from '../i18n/locale'
  * 200 routes per UPDATE, 70 million announcements; a table transfer over 1.2
  * million routes; EVPN with ADD-PATH. At 300MB, in headless Chromium, with
  * the list, the findings, the filter, the Routes screen and the SQL console
- * all opened, the worst of them — the first — holds LIVE_PLACEHOLDER of heap once
- * garbage is collected, and no task runs longer than TASK_PLACEHOLDER. The 1GB left of
- * the tab's 4GB is the margin a real browser, with its extensions and its
- * collector running later than a forced one, needs.
+ * all opened, the worst of them — the first — holds 2.5GB of heap once
+ * garbage is collected, and no task runs longer than a fifth of a second.
+ * That keeps 1GB of the tab's 4GB spare, which is the point of the ceiling:
+ * a real browser collects later than a forced `gc()` does, and the file
+ * itself and the DuckDB worker are not in that figure. Only Chromium has been
+ * measured.
  *
  * The ceiling was 100MB while 300MB of that first shape needed 3.5GB, and
  * the findings and the Routes screen held the page for two to three seconds
