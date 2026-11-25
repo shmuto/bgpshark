@@ -1,5 +1,6 @@
 import { yieldToPage } from '../yield-to-page'
 import { BinaryReader } from '../pcap/reader'
+import { DecodedPacket } from '../pcap/byte-view'
 import type { RawPacket } from '../pcap/types'
 import {
   type BgpPacket,
@@ -14,7 +15,7 @@ import { parseNotificationMessage } from './notification'
 import { parseUpdateMessage } from './update'
 import { BgpSessionTracker, endpointKey, type UpdateDecoding } from './session'
 import { getAfiName, getSafiName } from './constants'
-import { NO_WARNINGS, SharedDecodedValues } from './shared-decode'
+import { NO_WARNINGS, SharedDecodedValues, fitted } from './shared-decode'
 
 const BGP_HEADER_LENGTH = 19
 const BGP_MIN_MESSAGE_LENGTH = 19
@@ -182,7 +183,7 @@ function createBgpDecoder() {
       }
 
       if (messages.length > 0) {
-        packets.push({
+        packets.push(new DecodedPacket({
           frameIndex: raw.frameIndex,
           timestamp: raw.timestamp,
           srcIp: raw.srcIp,
@@ -192,7 +193,7 @@ function createBgpDecoder() {
           messages,
           rawData: raw.tcpPayload,
           parseWarnings: packetWarnings.length > 0 ? [...packetWarnings] : NO_WARNINGS,
-        })
+        }))
       }
 
       warnings.push(...packetWarnings)
@@ -324,7 +325,7 @@ function parseBgpMessages(
   // how large this is allowed to grow across segments of the same flow.
   const remainder = payload.slice(reader.offset)
 
-  return { messages, remainder }
+  return { messages: fitted(messages), remainder }
 }
 
 /**

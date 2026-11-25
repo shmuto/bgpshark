@@ -60,6 +60,26 @@ const REST = 16 * WINDOW
 export const NO_PREFIXES: BgpPrefix[] = []
 export const NO_WARNINGS: string[] = []
 
+/**
+ * `items` in an array exactly as long as it is.
+ *
+ * An array grown by `push` from empty reserves room for seventeen elements at
+ * its first push, and V8 never hands the slack back. A decoded UPDATE held six
+ * such arrays, nearly all of one element: its packet's messages, its
+ * attributes, its NLRI, an AS_PATH's segments and their AS numbers, and the
+ * route statistics' AS numbers for the path. On a capture where every UPDATE
+ * is its own, a heap snapshot put their backing stores at a third of the heap
+ * (143MB of 425MB in Node, for 156,000 UPDATEs), and fitting them took 106MB
+ * off it. In Chromium, together with the byte views of `pcap/byte-view.ts`,
+ * it took a 300MB capture of such UPDATEs from 2.6GB to 1.6GB once loaded.
+ * A copy made by `slice` holds what it needs and no more; the array it was
+ * copied from is short-lived garbage, which the young generation collects for
+ * next to nothing.
+ */
+export function fitted<T>(items: T[]): T[] {
+  return items.slice()
+}
+
 /** The bytes as a string, one character per byte, to key a table with. */
 export function bytesKey(tag: string, bytes: Uint8Array): string {
   return tag + String.fromCharCode.apply(null, bytes as unknown as number[])

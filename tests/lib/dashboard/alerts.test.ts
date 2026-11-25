@@ -297,6 +297,22 @@ describe('route-level alerts', () => {
     expect(summary?.title).toBe('2 more prefixes flapped')
   })
 
+  test('ties among the worst keep the order the routes were first seen, and the summary counts the rest', () => {
+    // Eight prefixes flapping once each, all at the same moment: nothing
+    // separates them but the order they appeared in, which is what a full
+    // sort, being stable, kept.
+    const packets: BgpPacket[] = []
+    for (let i = 0; i < 8; i++) packets.push(announce('192.0.2.1', 0, `10.0.${i}.0/24`))
+    for (let i = 0; i < 8; i++) packets.push(withdraw('192.0.2.1', 1, `10.0.${i}.0/24`))
+
+    const alerts = computeAlerts(packets)
+    const rows = byId(alerts, 'route-flap-').filter((alert) => alert.id !== 'route-flap-more')
+    expect(rows.map((alert) => alert.title)).toEqual([0, 1, 2, 3, 4].map((i) => `Route flapping: 10.0.${i}.0/24`))
+    const summary = alerts.find((alert) => alert.id === 'route-flap-more')
+    expect(summary?.title).toBe('3 more prefixes flapped')
+    expect(summary?.count).toBe(3)
+  })
+
   test('a withdrawn route never seen announced flaps but has no path change', () => {
     // The capture started mid-session: the route was up before it began.
     const alerts = computeAlerts([withdraw('192.0.2.1', 0, '10.0.12.0/24')])

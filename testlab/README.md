@@ -82,6 +82,43 @@ export default ({ ROUTER_A, ROUTER_B, buildScenario, establish, keepSide }) => [
 
 Output in `testlab/out/` is gitignored. If a capture turns out to be worth keeping, move its description into `testlab/scenarios.ts` or a test helper rather than committing the pcap.
 
+## Large captures: measuring memory and long tasks
+
+`MAX_FILE_SIZE` (`src/lib/file-constraints.ts`) is set by what a capture near it costs the tab, and that depends far more on the capture's shape than its size. One script writes synthetic captures of four shapes near the limit, and another measures them in the browser:
+
+```bash
+bun run testlab/large-captures.ts                 # U, R and T at 300 MB into testlab/out/large/
+bun run testlab/large-captures.ts U R T E --mb 250
+bunx vite build && bunx vite preview &            # the production build, with the real CSP
+bun run testlab/measure-large.ts                  # every capture in testlab/out/large/
+bun run testlab/measure-large.ts T-300mb.pcap --json /tmp/t.json
+```
+
+| Shape | What it is | What it stresses |
+|-------|------------|------------------|
+| **U** | Every UPDATE its own /32, AS_PATH and MED; a withdrawal every 50 | Nothing repeats, so the most packets and decoded objects per byte |
+| **R** | 200 distinct /24s per UPDATE from 50,000 per session, 50 AS paths, communities | Tens of millions of announcements: route statistics, the `nlri` table |
+| **T** | A table transfer: 50 /24s per UPDATE, each session cycling through 300,000 | Over a million routes: per-route state, the Routes screen |
+| **E** | EVPN MAC/IP routes and ADD-PATH IPv4 (optional) | MP_REACH routes, which are never shared, and per-event Path Identifiers |
+
+Each is four sessions (`10.k.0.1` ↔ `10.k.0.2`, k = 0..3) opening with the handshake, both OPENs and both KEEPALIVEs, then one UPDATE per segment 0.01 ms apart, with a KEEPALIVE each way every 2,000 UPDATEs. The UPDATE count is worked out from a sample so the file lands just under the size asked for.
+
+`measure-large.ts` opens each capture in a fresh headless Chromium (`CHROMIUM_PATH`, or the preinstalled one) and walks it through the screens: the packet list, the findings, the filter box's suggestions for `prefix = `, the filter `prefix = 20.0.0.0/8`, the Routes screen until its list is sorted, and the SQL console until DuckDB holds the capture and has answered a query on `duckdb_memory()`. For each stage it records the wall time; the JS heap at its largest (sampled every 100 ms over the DevTools protocol) and once garbage is collected (`gc()` twice, then `performance.memory.usedJSHeapSize`); the longest task (`PerformanceObserver`, `longtask`); the renderer process's resident memory, which also counts typed arrays, the file itself and DuckDB's WebAssembly memory; and whether the tab crashed. It ends with a Markdown table.
+
+A capture above the current limit is refused by the drop zone, so measuring one means raising `MAX_FILE_SIZE` in a local build only. Do not commit that.
+
+For where the time and memory go, `measure-pipeline.ts` runs the same in-memory stages — parse, decode, route statistics, findings, suggestions, one filter — in Node, where a CPU profile or heap snapshot is easier to take:
+
+```bash
+bun build testlab/measure-pipeline.ts --target=node --outfile=/tmp/pipeline.mjs
+node --expose-gc /tmp/pipeline.mjs testlab/out/large/U-300mb.pcap
+node --expose-gc --cpu-prof --cpu-prof-dir=/tmp/prof /tmp/pipeline.mjs <capture>
+node --expose-gc /tmp/pipeline.mjs <capture> --snapshot /tmp/u.heapsnapshot
+node --max-old-space-size=8000 /tmp/pipeline.mjs --summarize /tmp/u.heapsnapshot
+```
+
+Node does not compress pointers, so its heap is about twice Chromium's for the same objects; compare stages with each other, not with the browser's figures. For a CPU profile in the browser, build with `vite build --minify false` so function names survive.
+
 ## Manual screenshots
 
 The screenshots embedded in the in-app user manual (`public/manual/*.png`) are generated from the scenarios above by driving the live app in Chromium:

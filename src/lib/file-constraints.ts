@@ -11,16 +11,28 @@ import { getMessages, type Locale } from '../i18n/locale'
  * A few minutes of capture on a busy session clears 10MB easily. The ceiling
  * is set by memory, not parse time: what counts is the tab's JS heap (about
  * 4GB at most), and how much a capture takes there depends on how often its
- * values repeat, since repeated attribute lists and prefixes are kept once. In
- * headless Chromium, on UPDATE-heavy synthetic captures, 100MB opens its list
- * in 4–10s with the heap at 0.4–0.7GB when attribute lists repeat from UPDATE
- * to UPDATE; when every UPDATE carries its own prefix, AS_PATH and MED, it opens
- * in about 7s at 1.7GB. 200MB of the latter reaches 3.5GB and stops
- * responding, which is why the ceiling stops at 100MB. See docs/design.md §3.1.
+ * values repeat, since repeated attribute lists and prefixes are kept once.
+ *
+ * So it is measured against the shapes that cost the most per byte, each at
+ * the ceiling (`testlab/large-captures.ts`, `testlab/measure-large.ts`): every
+ * UPDATE its own prefix, AS_PATH and MED, which is the most decoded objects;
+ * 200 routes per UPDATE, 70 million announcements; a table transfer over 1.2
+ * million routes; EVPN with ADD-PATH. At 300MB, in headless Chromium, with
+ * the list, the findings, the filter, the Routes screen and the SQL console
+ * all opened, the worst of them — the first — holds 2.5GB of heap once
+ * garbage is collected, and no task runs longer than a fifth of a second.
+ * That keeps 1GB of the tab's 4GB spare, which is the point of the ceiling:
+ * a real browser collects later than a forced `gc()` does, and the file
+ * itself and the DuckDB worker are not in that figure. Only Chromium has been
+ * measured.
+ *
+ * The ceiling was 100MB while 300MB of that first shape needed 3.5GB, and
+ * the findings and the Routes screen held the page for up to three seconds
+ * at a time; see docs/design.md §3.1 for what changed.
  */
-export const MAX_FILE_SIZE = 100 * 1024 * 1024
+export const MAX_FILE_SIZE = 300 * 1024 * 1024
 
-export const MAX_FILE_SIZE_LABEL = '100MB'
+export const MAX_FILE_SIZE_LABEL = '300MB'
 
 export const ACCEPTED_EXTENSIONS = ['pcap', 'pcapng', 'cap'] as const
 

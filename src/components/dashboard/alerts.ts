@@ -226,6 +226,40 @@ function describeAsPath(path: string, locale: Locale): string {
 }
 
 /**
+ * The first `limit` of the items offered, in `compare` order — what sorting
+ * them all and keeping the head would give, ties in the order offered — and
+ * how many were offered.
+ *
+ * The route rules list five routes and sum up the rest, and they used to sort
+ * every candidate to find the five. On a table transfer nearly every route is
+ * a candidate — over a million routes that flapped, and as many whose path
+ * changed — and each list was built and sorted in one go, a task the rest of
+ * the findings' slicing could not break up. Keeping the leaders as the
+ * routes go by is a comparison or two per route, holds five rather than a
+ * million, and the loop can pause.
+ */
+class Leaders<T> {
+  readonly top: T[] = []
+  count = 0
+
+  constructor(
+    private readonly limit: number,
+    private readonly compare: (a: T, b: T) => number
+  ) {}
+
+  offer(item: T): void {
+    this.count++
+    const top = this.top
+    // Offered last, so it goes after everything it ties with.
+    if (top.length === this.limit && this.compare(item, top[top.length - 1]) >= 0) return
+    let at = top.length
+    while (at > 0 && this.compare(item, top[at - 1]) < 0) at--
+    top.splice(at, 0, item)
+    if (top.length > this.limit) top.pop()
+  }
+}
+
+/**
  * Routes moving while every session stays up — the case the panel used to call
  * "no issues detected" at someone who came in looking for a missing route.
  *
@@ -238,11 +272,20 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
   // A route that went away at least once. `flap` is already counted per
   // (route, announcing peer) by aggregatePrefixStats, so a widely announced
   // stable route does not score here.
-  const flapping = stats
-    .filter((stat) => stat.flap >= 1)
-    .sort((a, b) => b.flap - a.flap || b.lastSeenMs - a.lastSeenMs)
+  const flapping = new Leaders<PrefixStats>(
+    ROUTE_ALERT_LIMIT,
+    (a, b) => b.flap - a.flap || b.lastSeenMs - a.lastSeenMs
+  )
+  let flaps = 0
+  for (let index = 0; index < stats.length; index++) {
+    if (pauseAt(index)) yield
+    const stat = stats[index]
+    if (stat.flap < 1) continue
+    flaps += stat.flap
+    flapping.offer(stat)
+  }
 
-  for (const stat of flapping.slice(0, ROUTE_ALERT_LIMIT)) {
+  for (const stat of flapping.top) {
     const history = stat.history.events()
     const withdraws = history.filter((event) => event.action === 'withdraw')
     // flap >= 1 guarantees a withdraw; the fallback only keeps the types honest.
@@ -262,14 +305,13 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
     })
   }
 
-  if (flapping.length > ROUTE_ALERT_LIMIT) {
-    const rest = flapping.slice(ROUTE_ALERT_LIMIT)
-    const restFlaps = rest.reduce((sum, stat) => sum + stat.flap, 0)
+  if (flapping.count > ROUTE_ALERT_LIMIT) {
+    const restFlaps = flaps - flapping.top.reduce((sum, stat) => sum + stat.flap, 0)
     alerts.push({
       id: 'route-flap-more',
       rule: 'route-flap',
       severity: 'warning',
-      title: t.morePrefixesFlappedTitle(rest.length),
+      title: t.morePrefixesFlappedTitle(flapping.count - ROUTE_ALERT_LIMIT),
       detail: t.morePrefixesFlappedDetail(restFlaps),
       timestamp: null,
       filter: 'type=UPDATE',
@@ -282,19 +324,21 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
   // More than one AS_PATH for the same route: a reroute, a prepend change, or
   // a leak. Which of those it is only the AS numbers can say, so the row shows
   // the first path and the latest one.
-  const repathed: { stat: PrefixStats; change: PathChange }[] = []
+  const repathed = new Leaders<{ stat: PrefixStats; change: PathChange }>(
+    ROUTE_ALERT_LIMIT,
+    (a, b) => b.change.paths.length - a.change.paths.length || b.stat.lastSeenMs - a.stat.lastSeenMs
+  )
+  let repaths = 0
   for (let index = 0; index < stats.length; index++) {
     if (pauseAt(index)) yield
     const stat = stats[index]
     const change = yield* asPathChange(stat)
-    if (change !== null) repathed.push({ stat, change })
+    if (change === null) continue
+    repaths += change.paths.length
+    repathed.offer({ stat, change })
   }
-  repathed.sort(
-      (a, b) =>
-        b.change.paths.length - a.change.paths.length || b.stat.lastSeenMs - a.stat.lastSeenMs
-    )
 
-  for (const { stat, change: { source, pathId, paths } } of repathed.slice(0, ROUTE_ALERT_LIMIT)) {
+  for (const { stat, change: { source, pathId, paths } } of repathed.top) {
     // The packet worth opening is the one where that peer's path first
     // differed, not the original announcement.
     const history = stat.history.events()
@@ -356,19 +400,18 @@ function* computeRouteAlerts(stats: PrefixStats[], locale: Locale): Sliced<Dashb
     })
   }
 
-  if (repathed.length > ROUTE_ALERT_LIMIT) {
-    const rest = repathed.slice(ROUTE_ALERT_LIMIT)
+  if (repathed.count > ROUTE_ALERT_LIMIT) {
     alerts.push({
       id: 'route-aspath-more',
       rule: 'route-aspath',
       severity: 'warning',
-      title: t.moreAsPathChangedTitle(rest.length),
+      title: t.moreAsPathChangedTitle(repathed.count - ROUTE_ALERT_LIMIT),
       detail: t.moreAsPathChangedDetail,
       timestamp: null,
       filter: 'type=UPDATE',
       // Counted like the rows above (paths seen per route), for the same
       // reason as the flap summary.
-      count: rest.reduce((sum, { change }) => sum + change.paths.length, 0),
+      count: repaths - repathed.top.reduce((sum, { change }) => sum + change.paths.length, 0),
     })
   }
 

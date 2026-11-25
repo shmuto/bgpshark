@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { pauseAt, PAUSE_EVERY, runInSlices, runToEnd, type Sliced } from '../../src/lib/sliced'
+import { pauseAt, PAUSE_EVERY, runInSlices, runToEnd, sortWork, type Sliced } from '../../src/lib/sliced'
 import { parsePcap, parsePcapWork, parsePcapng, parsePcapngWork } from '../../src/lib/pcap'
 import { buildScenario } from '../../src/lib/build'
 import { announce } from '../../src/lib/build/presets'
@@ -75,5 +75,39 @@ describe('reading a capture in slices', () => {
     const sample = readFileSync(new URL('../../public/sample.pcapng', import.meta.url))
     const pcapng = sample.buffer.slice(sample.byteOffset, sample.byteOffset + sample.byteLength) as ArrayBuffer
     expect(await runInSlices(parsePcapngWork(pcapng))).toEqual(parsePcapng(pcapng))
+  })
+})
+
+describe('sortWork', () => {
+  // The Routes screen sorts large lists with this instead of
+  // Array.prototype.sort, so it must give exactly what that would.
+  test('gives what a stable native sort gives, at every size around a run', () => {
+    let seed = 1
+    const random = () => (seed = (seed * 48271) % 2147483647) / 2147483647
+    for (const size of [0, 1, 2, 4095, 4096, 4097, 8192 + 3, 50_000]) {
+      // Few distinct values, so ties are everywhere and stability shows.
+      const items = Array.from({ length: size }, (_, index) => ({ value: Math.floor(random() * 20), index }))
+      const compare = (a: { value: number }, b: { value: number }) => a.value - b.value
+      const sorted = runToEnd(sortWork(items, compare))
+      const expected = [...items].sort(compare)
+      expect(sorted.length).toBe(expected.length)
+      expect(sorted.every((item, at) => item === expected[at])).toBe(true)
+    }
+  })
+
+  test('pauses while merging, and leaves its input alone', async () => {
+    const items = Array.from({ length: 20_000 }, (_, index) => 20_000 - index)
+    const copy = [...items]
+    let pauses = 0
+    const work = sortWork(items, (a, b) => a - b)
+    let step = work.next()
+    while (!step.done) {
+      pauses++
+      step = work.next()
+    }
+    expect(pauses).toBeGreaterThan(20_000 / 4096)
+    expect(step.value).toEqual([...items].sort((a, b) => a - b))
+    expect(items).toEqual(copy)
+    expect(await runInSlices(sortWork(items, (a, b) => a - b))).toEqual(step.value)
   })
 })

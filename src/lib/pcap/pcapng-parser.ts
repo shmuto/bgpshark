@@ -2,6 +2,7 @@ import { BinaryReader } from './reader'
 import { pauseAt, runToEnd, type Sliced } from '../sliced'
 import { tcpFlagsFor } from './shared-values'
 import { BgpFlowDetector } from './bgp-detect'
+import { CapturedFrame } from './byte-view'
 import { parseIpv6Header, type Ipv6Result } from './ipv6'
 import type {
   PcapGlobalHeader,
@@ -434,7 +435,7 @@ function parsePacketData(
     const actualPayload = Math.max(0, Math.min(payloadLength, reader.remaining()))
 
     // Add to generic packets
-    result.genericPacket = {
+    result.genericPacket = new CapturedFrame({
       frameIndex,
       timestamp,
       capturedLength,
@@ -448,7 +449,7 @@ function parsePacketData(
       dstPort,
       tcpFlags: flags,
       payloadLength: actualPayload,
-    }
+    })
 
     // BGP on port 179, or a flow the detector recognized by its message
     // marker (non-standard ports; see bgp-detect.ts).
@@ -478,7 +479,7 @@ function parsePacketData(
     const udpLength = reader.readUint16()
     reader.skip(2) // Checksum
 
-    result.genericPacket = {
+    result.genericPacket = new CapturedFrame({
       frameIndex,
       timestamp,
       capturedLength,
@@ -491,10 +492,10 @@ function parsePacketData(
       srcPort,
       dstPort,
       payloadLength: udpLength - 8,
-    }
+    })
   } else {
     // Other protocols (ICMP, etc.)
-    result.genericPacket = {
+    result.genericPacket = new CapturedFrame({
       frameIndex,
       timestamp,
       capturedLength,
@@ -505,7 +506,7 @@ function parsePacketData(
       protocol: getProtocolName(protocol),
       protocolNumber: protocol,
       payloadLength: ipPayloadLength,
-    }
+    })
   }
 
   return result

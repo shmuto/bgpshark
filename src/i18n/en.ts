@@ -562,6 +562,7 @@ export const en = {
     showAllPeersTitle: 'Show routes from every peer',
     fromPeers: (peers: string) => `from ${peers} ✕`,
     prefixesCount: (count: number) => `${count} prefixes`,
+    sorting: 'sorting...',
     colPrefix: 'Prefix',
     colAnnounced: 'Announced',
     colWithdrawn: 'Withdrawn',

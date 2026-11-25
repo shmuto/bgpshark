@@ -36,6 +36,62 @@ function makeBatch() {
 }
 
 describe('arrow columns', () => {
+  test('a reset batch reuses its buffers without carrying anything over', () => {
+    // The loader resets each table's batch after sending it and writes the
+    // next chunk into the same buffers, so nothing of the first chunk — a
+    // value, a set bit, a dictionary entry — may show through in the second.
+    const batch = tableBatch('t', () => {
+      const keys = new DictionaryKeys<string>()
+      return {
+        n: new NumberColumn(),
+        i: new Int32Column(),
+        b: new BoolColumn(),
+        s: new TextColumn(),
+        d: new StringDictionaryColumn(),
+        k: new DictionaryColumn(keys),
+        l: new TextListColumn(),
+        t: new TimestampColumn(),
+      }
+    })
+    const write = (count: number, tag: string) => {
+      const c = batch.columns
+      for (let r = 0; r < count; r++) {
+        const row = batch.rows++
+        // The first chunk fills the odd rows, the second the even ones, so a
+        // validity bit left set would show as a value where the second wrote none.
+        if (r % 2 === (tag === 'first' ? 0 : 1)) continue
+        c.n.set(row, r + 0.5)
+        c.i.set(row, r)
+        c.b.set(row, tag === 'first')
+        c.s.set(row, `${tag}${r}`)
+        c.d.set(row, `${tag}${r % 3}`)
+        const entry = c.k.keys.set(row, `${tag}-${r % 2}`)
+        if (entry >= 0) c.k.add(entry, `${tag}-key`)
+        c.l.set(row, [tag, String(r)])
+        c.t.set(row, 1_700_000_000_000 + r)
+      }
+    }
+    write(3000, 'first')
+    roundTrip(batch)
+    batch.reset()
+    write(5, 'second')
+    const rows = roundTrip(batch).map((r) => ({ ...r, l: r.l ? [...r.l] : r.l, t: r.t === null ? null : Number(r.t) }))
+    const expected = (r: number) =>
+      r % 2 === 1
+        ? { n: null, i: null, b: null, s: null, d: null, k: null, l: null, t: null }
+        : {
+            n: r + 0.5,
+            i: r,
+            b: false,
+            s: `second${r}`,
+            d: `second${r % 3}`,
+            k: 'second-key',
+            l: ['second', String(r)],
+            t: 1_700_000_000_000 + r,
+          }
+    expect(rows).toEqual([0, 1, 2, 3, 4].map(expected))
+  })
+
   test('values come back as written, with NULL for whatever a row left out', () => {
     const batch = makeBatch()
     const c = batch.columns
