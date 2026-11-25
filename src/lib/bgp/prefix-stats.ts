@@ -490,7 +490,13 @@ export async function prefixStatsForAsync(
   // a large table transfer, so it is sliced too: in one go it held the page
   // for two to three seconds once the packets were done.
   const stats = await runInSlices(aggregator.finish(), () => signal?.aborted === true || statsByPackets.has(packets))
-  if (!stats) return statsByPackets.get(packets) ?? null
+  // Worked out synchronously while this waited: keep that copy, so everyone
+  // holds the same array. Checked even when the work never paused — the await
+  // above still hands the event loop over once, and a screen computing the
+  // statistics in that gap had its result replaced by this one.
+  const meantime = statsByPackets.get(packets)
+  if (meantime) return meantime
+  if (!stats) return null
   statsByPackets.set(packets, stats)
   return stats
 }

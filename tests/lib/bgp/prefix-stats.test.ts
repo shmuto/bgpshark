@@ -659,4 +659,16 @@ describe('prefixStatsForAsync', () => {
     const sync = prefixStatsFor(packets)
     expect(await pending).toBe(sync)
   })
+
+  test('uses a result computed synchronously even when it never paused', async () => {
+    // Too few packets to fill a slice, so the work finishes in one go — and
+    // still awaits once, on the sliced finish. A synchronous caller in that
+    // gap used to have its result overwritten by this one: two copies of the
+    // same statistics, which is how the test above failed on a fast runner.
+    const packets = [announce('10.0.0.2', 1, '10.0.12.0/24'), withdraw('10.0.0.2', 2, '10.0.12.0/24')]
+    const pending = prefixStatsForAsync(packets)
+    const sync = prefixStatsFor(packets)
+    expect(await pending).toBe(sync)
+    expect(prefixStatsFor(packets)).toBe(sync)
+  })
 })
