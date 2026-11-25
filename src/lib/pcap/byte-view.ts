@@ -4,13 +4,13 @@
  *
  * Every frame of a capture kept a `Uint8Array` over its bytes in the file
  * (`GenericPacket.frameBytes`), and every BGP packet another over its TCP
- * payload (`BgpPacket.rawData`). A view is cheap to make but not to keep: in
- * Chromium each is an object of about 70 bytes, so the two were some 140 bytes
- * of every packet — over 300MB of a 300MB capture of small UPDATEs — to hold
- * bytes that are read for one packet at a time: the one open in the detail
- * pane, or the ones being written out to a file. Keeping where the bytes are
- * instead costs three small integers and a reference to the file's buffer,
- * which the views kept alive anyway.
+ * payload (`BgpPacket.rawData`). A view is cheap to make but not to keep —
+ * 96 bytes each in a Node heap snapshot — and these hold bytes that are read
+ * for one packet at a time: the one open in the detail pane, or the ones
+ * being written out to a file. Keeping where the bytes are instead costs
+ * three small integers and a reference to the file's buffer, which the views
+ * kept alive anyway. On a capture of 156,000 small UPDATEs that saved 150
+ * bytes a packet in Node; a 300MB capture of them is 2.4 million packets.
  *
  * Each read makes a new view, so `packet.rawData !== packet.rawData`; read it
  * once into a local where that matters. Nothing reads it in a loop over every

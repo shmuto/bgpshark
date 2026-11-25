@@ -232,10 +232,11 @@ function describeAsPath(path: string, locale: Locale): string {
  *
  * The route rules list five routes and sum up the rest, and they used to sort
  * every candidate to find the five. On a table transfer nearly every route is
- * a candidate: a million routes that flapped, a million whose path changed,
- * each sorted in one go, which held the page for over a second apiece once
- * the rest of the findings had been sliced. Keeping the leaders as the routes
- * go by is a comparison or two per route, and the loop can pause.
+ * a candidate — over a million routes that flapped, and as many whose path
+ * changed — and each list was built and sorted in one go, a task the rest of
+ * the findings' slicing could not break up. Keeping the leaders as the
+ * routes go by is a comparison or two per route, holds five rather than a
+ * million, and the loop can pause.
  */
 class Leaders<T> {
   readonly top: T[] = []

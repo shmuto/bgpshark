@@ -8,6 +8,8 @@ Each version's section here becomes the top of its GitHub Release notes (`.githu
 
 ### Changed
 
+- **Captures up to 300 MB** (was 100 MB). Measured on four synthetic shapes at 300 MB, every screen opens, the SQL console included, with the heap under 3 GB once garbage is collected and no task over a second; see the Performance section and `docs/design.md` §3.1.
+- On a capture with more than 50,000 routes, **Routes** first lists them in capture order, with *sorting...* beside the count, until they are sorted.
 - **DuckDB is loaded only for the SQL console.** It is no longer started at page load or filled in the background; the capture is inserted when the SQL console opens. Every other screen, filtering included, works without it.
 - **Filtering always runs in memory.** On captures over 20,000 packets it waits for typing to pause and runs in slices, so typing never freezes.
 - **`!=` and `not contains` are the complement of `=` and `contains`**, as in Wireshark: `prefix != 10.0.0.0/8` now also matches OPENs and KEEPALIVEs on small captures, as it already did on large ones.
@@ -18,7 +20,11 @@ Each version's section here becomes the top of its GitHub Release notes (`.githu
 
 ### Performance
 
-Measured on synthetic ~95 MB captures in headless Chromium:
+Measured at 300 MB in headless Chromium (`testlab/measure-large.ts`):
+
+- PERF_PLACEHOLDER
+
+Measured earlier, on synthetic ~95 MB captures:
 
 - Findings appear in 3–11 s instead of 5–40 s, and the heap peaks at 0.65–1.8 GB instead of 0.9–3.7 GB. The worst case was a table transfer cycling through 1.2 million routes.
 - Decoding shares repeated prefixes across a full table (up to about a million). Route statistics find IPv4 routes without building a text key per announcement.
@@ -26,6 +32,7 @@ Measured on synthetic ~95 MB captures in headless Chromium:
 
 ### Development
 
+- `testlab/large-captures.ts` writes synthetic captures of four shapes near the size limit, and `testlab/measure-large.ts` walks them through every screen of the production build, recording time, heap, longest task and renderer memory per stage. `testlab/measure-pipeline.ts` runs the in-memory stages in Node for CPU profiles and heap snapshots. See `testlab/README.md`.
 - `bun run pcap` builds a capture file from a preset or a capture description (`.ts` / `.json`), writes it to `testlab/out/`, and with `--dump` lists every frame as the app's parsers decode it. `bun run pcap --new <file>` writes a starter description.
 - `src/lib/build` gains `establish()`, `mergeCaptures()`, `keepSide()` and the shared `ROUTER_A` / `ROUTER_B` peers, and each built capture records which peer sent every frame.
 - `bun run pcap` also takes existing `.pcap` / `.pcapng` files, and `src/lib/build` can now build what a clean session cannot: verbatim bytes inside a session (`{ type: 'RAW' }`, `bgpMessage`, `hex`), packets that are not a session (`buildPackets`, with UDP, ICMP and raw IP frames), and edits to any capture (`readCapture`, `dropFrames`, `shiftTime`, `overwriteBytes`, `snapFrames`, `patchRecord`, …).
