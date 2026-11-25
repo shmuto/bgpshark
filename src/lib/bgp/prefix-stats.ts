@@ -9,10 +9,11 @@
  * can be tested without a browser.
  */
 import { yieldToPage } from '../yield-to-page'
+import { pauseAt, runInSlices, runToEnd, type Sliced } from '../sliced'
 import type { AsPathAttribute, BgpPacket, BgpPathAttribute, BgpPrefix, BgpUpdateMessage } from './types'
 import { formatEvpnIdentity } from './evpn'
-import { formatPrefix, parseBgpPrefix, type ParsedPrefix } from '../net/prefix'
-import { SharedTable } from './shared-decode'
+import { formatPrefix, ipv4Bits, parseBgpPrefix, type ParsedPrefix } from '../net/prefix'
+import { SharedTable, fitted } from './shared-decode'
 import { Ipv4PrefixIndex, ipv4PrefixAddress } from '../net/ipv4-index'
 
 export interface PrefixEvent {
@@ -130,15 +131,19 @@ interface HistoryStore {
   packetIndex: Int32Array
   /** Index into `announcements`; -1 for a withdraw. */
   announcement: Int32Array
-  /** Index into `distinctPrefixes`, or -1 when the prefix carries nothing beyond the route's key. */
-  distinct: Int32Array
+  /**
+   * Index into `distinctPrefixes`, or -1 when the prefix carries nothing
+   * beyond the route's key. Null when no event's does — no ADD-PATH, no EVPN —
+   * which is most captures: four bytes an event saved, a quarter of the store.
+   */
+  distinct: Int32Array | null
   distinctPrefixes: BgpPrefix[]
   announcements: Announcement[]
 }
 
 /** The event's prefix if it carries a Path Identifier or an RD; see `HistoryStore`. */
 function distinctPrefix(store: HistoryStore, at: number): BgpPrefix | undefined {
-  const distinct = store.distinct[at]
+  const distinct = store.distinct ? store.distinct[at] : -1
   return distinct < 0 ? undefined : store.distinctPrefixes[distinct]
 }
 
@@ -232,18 +237,37 @@ export class RouteHistory {
   }
 }
 
-/** An `Int32Array` that grows as it is appended to. */
+const CHUNK_BITS = 16
+const CHUNK = 1 << CHUNK_BITS
+const CHUNK_MASK = CHUNK - 1
+
+/**
+ * Int32s appended one at a time, held in chunks of `CHUNK` so that growing
+ * never copies.
+ *
+ * The column was one `Int32Array` doubled when full, and the aggregator keeps
+ * four of them in step, one entry each per announce or withdraw. On a 300MB
+ * capture of 66 million announcements all four doubled to 128 million entries
+ * in the same packet: 2GB allocated and 1GB copied in one go, which held the
+ * page for 0.7 seconds, and left a quarter to a half of each column unused.
+ */
 class Int32Column {
-  data = new Int32Array(1024)
+  private readonly chunks: Int32Array[] = []
+  private current: Int32Array = new Int32Array(0)
   length = 0
 
   push(value: number): void {
-    if (this.length === this.data.length) {
-      const grown = new Int32Array(this.data.length * 2)
-      grown.set(this.data)
-      this.data = grown
+    const at = this.length & CHUNK_MASK
+    if (at === 0) {
+      this.current = new Int32Array(CHUNK)
+      this.chunks.push(this.current)
     }
-    this.data[this.length++] = value
+    this.current[at] = value
+    this.length++
+  }
+
+  get(index: number): number {
+    return this.chunks[index >>> CHUNK_BITS][index & CHUNK_MASK]
   }
 }
 
@@ -328,6 +352,25 @@ export function prefixStatsFor(packets: BgpPacket[]): PrefixStats[] {
   return stats
 }
 
+/**
+ * Each statistics array's routes by key, from the indexes that built it.
+ *
+ * The Routes screen used to build a `Map` from key to route for every visit,
+ * to find the selected one; for 2.4 million routes that was about 1.8
+ * seconds, in one go, and 60MB more of heap. The aggregator already finds a
+ * route by its prefix — by address for IPv4, by key otherwise — so the
+ * statistics keep those, and a lookup costs one probe.
+ */
+const lookups = new WeakMap<PrefixStats[], (key: string) => number>()
+
+/** The route whose key is `key` in `stats`, from `prefixStatsFor` or `aggregatePrefixStats`. */
+export function routeStatsByKey(stats: PrefixStats[], key: string): PrefixStats | undefined {
+  const lookup = lookups.get(stats)
+  if (!lookup) return stats.find((stat) => stat.key === key)
+  const id = lookup(key)
+  return id >= 0 ? stats[id] : undefined
+}
+
 /** Whether `prefixStatsFor` already has these packets' statistics. */
 export function hasPrefixStats(packets: BgpPacket[]): boolean {
   return statsByPackets.has(packets)
@@ -371,7 +414,11 @@ export async function prefixStatsForAsync(
       sliceStart = performance.now()
     }
   }
-  const stats = aggregator.finish()
+  // Laying out the history is a pass over every event, tens of millions on
+  // a large table transfer, so it is sliced too: in one go it held the page
+  // for two to three seconds once the packets were done.
+  const stats = await runInSlices(aggregator.finish(), () => signal?.aborted === true || statsByPackets.has(packets))
+  if (!stats) return statsByPackets.get(packets) ?? null
   statsByPackets.set(packets, stats)
   return stats
 }
@@ -396,7 +443,7 @@ const NO_HISTORY = new RouteHistory(
     packets: [],
     packetIndex: new Int32Array(0),
     announcement: new Int32Array(0),
-    distinct: new Int32Array(0),
+    distinct: null,
     distinctPrefixes: [],
     announcements: [],
   },
@@ -478,7 +525,7 @@ function createAggregator(packets: BgpPacket[]) {
         all.push(text)
       }
     }
-    const unique = new Set(all).size === all.length ? all : [...new Set(all)]
+    const unique = new Set(all).size === all.length ? fitted(all) : [...new Set(all)]
     const result = { text: all.join(' '), asns: unique }
     return consult ? pathTexts.set(path, result) : result
   }
@@ -488,7 +535,11 @@ function createAggregator(packets: BgpPacket[]) {
   const eventStat = new Int32Column()
   const eventPacket = new Int32Column()
   const eventAnnouncement = new Int32Column()
-  const eventDistinct = new Int32Column()
+  /**
+   * Made at the first event whose prefix is distinct (see `HistoryStore`),
+   * with -1 for every event before it; until then, every event's is -1.
+   */
+  let eventDistinct: Int32Column | null = null
   const distinctPrefixes: BgpPrefix[] = []
 
   const gather = (attributes: BgpPathAttribute[]): Gathered => {
@@ -657,7 +708,15 @@ function createAggregator(packets: BgpPacket[]) {
     eventStat.push(statId)
     eventPacket.push(packetIndex)
     eventAnnouncement.push(announcementIndex)
-    eventDistinct.push(prefix.pathId !== undefined || prefix.evpn ? distinctPrefixes.push(prefix) - 1 : -1)
+    if (prefix.pathId !== undefined || prefix.evpn) {
+      if (!eventDistinct) {
+        eventDistinct = new Int32Column()
+        for (let event = 0; event < eventStat.length - 1; event++) eventDistinct.push(-1)
+      }
+      eventDistinct.push(distinctPrefixes.push(prefix) - 1)
+    } else {
+      eventDistinct?.push(-1)
+    }
   }
 
   const addPacket = (packet: BgpPacket, packetIndex: number) => {
@@ -708,27 +767,32 @@ function createAggregator(packets: BgpPacket[]) {
     }
   }
 
-  const finish = (): PrefixStats[] => {
+  function* finish(): Sliced<PrefixStats[]> {
     // Lay each route's events side by side, in the order they were recorded:
     // a counting sort on the route, which keeps that order within each one.
     const total = eventStat.length
     const offsets = new Int32Array(stats.length + 1)
-    for (let event = 0; event < total; event++) offsets[eventStat.data[event] + 1]++
+    for (let event = 0; event < total; event++) {
+      offsets[eventStat.get(event) + 1]++
+      if (pauseAt(event)) yield
+    }
     for (let statId = 0; statId < stats.length; statId++) offsets[statId + 1] += offsets[statId]
     const cursor = offsets.slice(0, stats.length)
     const store: HistoryStore = {
       packets,
       packetIndex: new Int32Array(total),
       announcement: new Int32Array(total),
-      distinct: new Int32Array(total),
+      distinct: eventDistinct ? new Int32Array(total) : null,
       distinctPrefixes,
       announcements,
     }
+    const distinct = eventDistinct as Int32Column | null
     for (let event = 0; event < total; event++) {
-      const at = cursor[eventStat.data[event]]++
-      store.packetIndex[at] = eventPacket.data[event]
-      store.announcement[at] = eventAnnouncement.data[event]
-      store.distinct[at] = eventDistinct.data[event]
+      const at = cursor[eventStat.get(event)]++
+      store.packetIndex[at] = eventPacket.get(event)
+      store.announcement[at] = eventAnnouncement.get(event)
+      if (distinct) store.distinct![at] = distinct.get(event)
+      if (pauseAt(event)) yield
     }
 
     // Sort history by timestamp. Packets come in capture order, so a history is
@@ -744,12 +808,35 @@ function createAggregator(packets: BgpPacket[]) {
         }
       }
       stats[statId].history = new RouteHistory(store, start, end - start)
+      if (pauseAt(statId)) yield
     }
 
+    lookups.set(stats, routeLookup(stats, ipv4Routes, statIds))
     return stats
   }
 
   return { addPacket, finish }
+}
+
+/**
+ * A route's index in `stats` by its key, from the aggregator's two indexes.
+ *
+ * Made out here, not inside `createAggregator`, so that it holds the two
+ * indexes and nothing else: a closure keeps the whole scope it was made in,
+ * and made in there it kept every working column of the aggregation alive
+ * for as long as the statistics — on a 300MB capture of 66 million
+ * announcements, nearly 2GB of heap that should have been garbage.
+ */
+function routeLookup(stats: PrefixStats[], ipv4Routes: Ipv4PrefixIndex, statIds: Map<string, number>): (key: string) => number {
+  return (key) => {
+    // An IPv4 route's key is its prefix's text and length, as `statFor`
+    // read them; anything else is in `statIds` under its key.
+    const slash = key.indexOf('/')
+    const address = slash > 0 ? ipv4Bits(key.slice(0, slash)) : -1
+    if (address < 0) return statIds.get(key) ?? -1
+    const id = ipv4Routes.get(address | 0, Number(key.slice(slash + 1)))
+    return id >= 0 && stats[id].key === key ? id : -1
+  }
 }
 
 /** Sort one route's events by time, keeping the recorded order among equal times. */
@@ -759,11 +846,11 @@ function sortRange(store: HistoryStore, start: number, end: number, timeOf: (at:
   order.sort((a, b) => timeOf(a) - timeOf(b))
   const packetIndex = order.map((at) => store.packetIndex[at])
   const announcement = order.map((at) => store.announcement[at])
-  const distinct = order.map((at) => store.distinct[at])
+  const distinct = store.distinct ? order.map((at) => store.distinct![at]) : null
   for (let i = 0; i < order.length; i++) {
     store.packetIndex[start + i] = packetIndex[i]
     store.announcement[start + i] = announcement[i]
-    store.distinct[start + i] = distinct[i]
+    if (distinct) store.distinct![start + i] = distinct[i]
   }
 }
 
@@ -786,5 +873,5 @@ export function aggregatePrefixStats(packets: BgpPacket[]): PrefixStats[] {
   for (let packetIndex = 0; packetIndex < packets.length; packetIndex++) {
     aggregator.addPacket(packets[packetIndex], packetIndex)
   }
-  return aggregator.finish()
+  return runToEnd(aggregator.finish())
 }

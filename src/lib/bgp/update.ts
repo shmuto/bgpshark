@@ -6,6 +6,7 @@ import { parseExtendedCommunities } from './extended-communities'
 import {
   NO_PREFIXES,
   bytesKey,
+  fitted,
   isShareableAttribute,
   type SharedDecodedValues,
 } from './shared-decode'
@@ -121,7 +122,7 @@ function parsePathAttributeBlock(
       break
     }
   }
-  const reconciled = reconcileAs4Path(pathAttributes)
+  const reconciled = reconcileAs4Path(fitted(pathAttributes))
 
   if (
     key !== undefined &&
@@ -237,7 +238,7 @@ function parsePrefixes(
     )
   }
 
-  return prefixes.length > 0 ? prefixes : NO_PREFIXES
+  return prefixes.length > 0 ? fitted(prefixes) : NO_PREFIXES
 }
 
 function decodePrefix(afi: number, octets: Uint8Array, prefixLength: number, pathId: number | undefined): BgpPrefix {
@@ -624,11 +625,11 @@ function parseAsPath(reader: BinaryReader, is4byte: boolean): ParsedPathAttribut
 
     segments.push({
       type: typeNames[segType] ?? 'AS_SEQUENCE',
-      asNumbers,
+      asNumbers: fitted(asNumbers),
     })
   }
 
-  return { type: 'AS_PATH', segments }
+  return { type: 'AS_PATH', segments: fitted(segments) }
 }
 
 function parseCommunities(reader: BinaryReader, length: number): ParsedPathAttribute {
@@ -654,7 +655,7 @@ function parseCommunities(reader: BinaryReader, length: number): ParsedPathAttri
     }
   }
 
-  return { type: 'COMMUNITIES', communities }
+  return { type: 'COMMUNITIES', communities: fitted(communities) }
 }
 
 function parseLargeCommunities(reader: BinaryReader, length: number): ParsedPathAttribute {
@@ -669,7 +670,7 @@ function parseLargeCommunities(reader: BinaryReader, length: number): ParsedPath
     })
   }
 
-  return { type: 'LARGE_COMMUNITIES', communities }
+  return { type: 'LARGE_COMMUNITIES', communities: fitted(communities) }
 }
 
 function parseMpReachNlri(
@@ -709,17 +710,17 @@ function parseMpReachNlri(
   reader.readUint8()
 
   // Parse NLRI
-  const nlri: BgpPrefix[] = []
   // The rest of the attribute is one NLRI block. EVPN frames its entries by
   // route type rather than by prefix length, so it needs its own reader.
-  nlri.push(
-    ...(safi === SAFI_EVPN
+  // Either reader's array is used as it is: copying it into another, by push,
+  // left room for half as many again in every MP_REACH_NLRI.
+  const nlri: BgpPrefix[] =
+    safi === SAFI_EVPN
       ? evpnPrefixes(reader, reader.remaining(), warnings)
       : parsePrefixes(reader, reader.remaining(), warnings, {
           afi,
           addPath: negotiatedAddPath(decoding, afi, safi),
-        }))
-  )
+        })
 
   return {
     type: 'MP_REACH_NLRI',

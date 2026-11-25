@@ -68,3 +68,55 @@ export async function runInSlices<T>(
   }
   return step.value
 }
+
+/**
+ * How many items each run of `sortWork` sorts with `Array.prototype.sort`
+ * before the runs are merged. Small enough that one run is a millisecond or
+ * two; large enough that only a handful of merge passes follow.
+ */
+const SORT_RUN = 4096
+
+/**
+ * A sorted copy of `items`, as `[...items].sort(compare)` would give it —
+ * stable, so equal items keep their order — that can pause.
+ *
+ * `Array.prototype.sort` cannot be interrupted, and the Routes screen sorts
+ * every route of the capture: on a 300MB capture of one-off routes that is
+ * 2.4 million of them, about a second in one go. Here runs of `SORT_RUN` are
+ * sorted natively, and the runs are merged pairwise, pausing every few
+ * hundred items, until one is left. Merging stable runs in order is itself
+ * stable, so the result is the native sort's, item for item.
+ */
+export function* sortWork<T>(items: readonly T[], compare: (a: T, b: T) => number): Sliced<T[]> {
+  const n = items.length
+  let from: T[] = new Array<T>(n)
+  for (let start = 0; start < n; start += SORT_RUN) {
+    const run = items.slice(start, start + SORT_RUN).sort(compare)
+    for (let i = 0; i < run.length; i++) from[start + i] = run[i]
+    yield
+  }
+  if (n <= SORT_RUN) return from
+
+  let to: T[] = new Array<T>(n)
+  let steps = 0
+  for (let width = SORT_RUN; width < n; width *= 2) {
+    for (let left = 0; left < n; left += 2 * width) {
+      const middle = Math.min(left + width, n)
+      const end = Math.min(left + 2 * width, n)
+      let i = left
+      let j = middle
+      let out = left
+      while (i < middle && j < end) {
+        // Ties take the left run's item: it came first.
+        to[out++] = compare(from[j], from[i]) < 0 ? from[j++] : from[i++]
+        if (pauseAt(++steps)) yield
+      }
+      while (i < middle) to[out++] = from[i++]
+      while (j < end) to[out++] = from[j++]
+    }
+    const swap = from
+    from = to
+    to = swap
+  }
+  return from
+}

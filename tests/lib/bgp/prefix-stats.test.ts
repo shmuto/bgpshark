@@ -4,6 +4,7 @@ import {
   hasPrefixStats,
   prefixStatsFor,
   prefixStatsForAsync,
+  routeStatsByKey,
   type PrefixStats,
 } from '../../../src/lib/bgp/prefix-stats'
 import type {
@@ -278,6 +279,37 @@ describe('the rest of the row', () => {
     expect(history.hasSourceIn(new Set(['192.0.2.2']))).toBe(true)
     expect(history.hasSourceIn(new Set(['198.51.100.1']))).toBe(false)
     expect(JSON.parse(JSON.stringify(history))).toEqual(JSON.parse(JSON.stringify(events)))
+  })
+
+  test('Path Identifiers that first appear after plain routes land on the right events', () => {
+    // The column that keeps them is only made at the first one, so every
+    // event before it — over a chunk's worth here — must still read as none.
+    const plain = Array.from({ length: 70_000 }, (_, i) => announce('192.0.2.1', 1, `10.${i >> 8}.${i & 255}.0/24`))
+    const tagged = update('192.0.2.2', 2, {
+      nlri: [{ ...prefix('10.0.12.0/24'), pathId: 7 }],
+      pathAttributes: [attribute({ type: 'AS_PATH', segments: [{ type: 'AS_SEQUENCE', asNumbers: [65002] }] })],
+    })
+    const stats = aggregatePrefixStats([...plain, tagged, announce('192.0.2.1', 3, '10.0.12.0/24')])
+
+    const route = routeStatsByKey(stats, '10.0.12.0/24')!
+    expect(route.history.events().map((event) => event.pathId)).toEqual([undefined, 7, undefined])
+    expect(routeStatsByKey(stats, '10.1.0.0/24')!.history.pathId(0)).toBeUndefined()
+  })
+
+  test('a route is found by its key, and only by its key', () => {
+    const stats = aggregatePrefixStats([
+      announce('192.0.2.1', 1, '10.0.12.0/24'),
+      announce('192.0.2.1', 2, '10.0.12.0/23'),
+      update('192.0.2.1', 3, {
+        pathAttributes: [
+          attribute({ type: 'MP_REACH_NLRI', afi: 2, afiName: 'IPv6', safi: 1, safiName: 'Unicast', nextHop: '2001:db8::1', nlri: [prefix('2001:db8::/32')] }),
+        ],
+      }),
+    ])
+    for (const stat of stats) expect(routeStatsByKey(stats, stat.key)).toBe(stat)
+    expect(routeStatsByKey(stats, '10.0.12.0/22')).toBeUndefined()
+    expect(routeStatsByKey(stats, '10.0.12.0')).toBeUndefined()
+    expect(routeStatsByKey(stats, '2001:db8::/48')).toBeUndefined()
   })
 
   test('last seen is the most recent event, whichever kind it was', () => {

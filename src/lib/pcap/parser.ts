@@ -2,6 +2,7 @@ import { BinaryReader } from './reader'
 import { pauseAt, runToEnd, type Sliced } from '../sliced'
 import { tcpFlagsFor } from './shared-values'
 import { BgpFlowDetector } from './bgp-detect'
+import { CapturedFrame } from './byte-view'
 import { parseIpv6Header } from './ipv6'
 import {
   type PcapGlobalHeader,
@@ -132,7 +133,7 @@ export function* parsePcapWork(buffer: ArrayBuffer): Sliced<PcapParseResult> {
           }
 
           // Add to allPackets
-          allPackets.push({
+          allPackets.push(new CapturedFrame({
             frameIndex: packetIndex,
             timestamp,
             capturedLength: packetHeader.capturedLength,
@@ -146,7 +147,7 @@ export function* parsePcapWork(buffer: ArrayBuffer): Sliced<PcapParseResult> {
             dstPort: tcpResult.dstPort,
             tcpFlags: tcpResult.flags,
             payloadLength: tcpResult.payload.length,
-          })
+          }))
 
           // BGP on port 179, or a flow the detector recognized by its
           // message marker (non-standard ports; see bgp-detect.ts).
@@ -178,7 +179,7 @@ export function* parsePcapWork(buffer: ArrayBuffer): Sliced<PcapParseResult> {
           // Handle UDP
           const udpResult = parseUdpHeader(packetReader, warnings, packetIndex)
           if (udpResult) {
-            allPackets.push({
+            allPackets.push(new CapturedFrame({
               frameIndex: packetIndex,
               timestamp,
               capturedLength: packetHeader.capturedLength,
@@ -191,11 +192,11 @@ export function* parsePcapWork(buffer: ArrayBuffer): Sliced<PcapParseResult> {
               srcPort: udpResult.srcPort,
               dstPort: udpResult.dstPort,
               payloadLength: udpResult.payloadLength,
-            })
+            }))
           }
         } else {
           // Other protocols (ICMP, etc.)
-          allPackets.push({
+          allPackets.push(new CapturedFrame({
             frameIndex: packetIndex,
             timestamp,
             capturedLength: packetHeader.capturedLength,
@@ -206,7 +207,7 @@ export function* parsePcapWork(buffer: ArrayBuffer): Sliced<PcapParseResult> {
             protocol: getProtocolName(ipResult.protocol),
             protocolNumber: ipResult.protocol,
             payloadLength: ipResult.payloadLength,
-          })
+          }))
         }
       } catch (e) {
         warnings.push(`Packet ${packetIndex}: parse error - ${e instanceof Error ? e.message : String(e)}`)

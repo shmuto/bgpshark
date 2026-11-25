@@ -7,7 +7,8 @@ import { useIsCompact } from '../hooks/useMediaQuery'
 import { BackToList, PaneDivider } from '../components/common'
 import { useSplitPane } from '../hooks/useSplitPane'
 import { useVirtualRows } from '../hooks/useVirtualRows'
-import { prefixStatsFor, type PrefixEvent, type PrefixStats } from '../lib/bgp/prefix-stats'
+import { prefixStatsFor, routeStatsByKey, type PrefixEvent, type PrefixStats } from '../lib/bgp/prefix-stats'
+import { runInSlices, sortWork } from '../lib/sliced'
 import { contains, equals, parsePrefix, type ParsedPrefix } from '../lib/net/prefix'
 import { formatDelta, formatTimeOfDayUtc } from '../lib/format-time'
 import { collapsePrepends, formatAsPath } from '../lib/bgp/as-path-display'
@@ -64,6 +65,17 @@ function routeFilter(key: string): string | null {
 
 /** How long the search box waits for typing to pause before applying it. */
 const SEARCH_DEBOUNCE_MS = 200
+
+/**
+ * From how many routes the list is sorted in slices rather than in one go.
+ *
+ * Sorting is the one pass this screen makes over every route each time it
+ * opens or a header is clicked. Below this it is a few milliseconds; a 300MB
+ * capture can hold 2.4 million routes, and sorting those in one go held the
+ * page for about a second. Above it the list shows in capture order, saying
+ * it is being sorted, until the sorted one is ready (`sortWork`).
+ */
+const SYNC_SORT_MAX_ROUTES = 50_000
 
 function isSortColumn(value: string | null): value is SortColumn {
   return value !== null && value in DEFAULT_DIRECTION
@@ -213,7 +225,7 @@ export function RoutesPage() {
     }
   }, [peerFilteredPrefixes, search, matchMode])
 
-  const sortedPrefixes = useMemo(() => {
+  const compareRoutes = useMemo(() => {
     const factor = sortDirection === 'asc' ? 1 : -1
 
     /**
@@ -228,7 +240,7 @@ export function RoutesPage() {
     const tiebreak = (a: PrefixStats, b: PrefixStats) =>
       b.eventCount - a.eventCount || a.key.localeCompare(b.key)
 
-    return [...filteredPrefixes].sort((a, b) => {
+    return (a: PrefixStats, b: PrefixStats): number => {
       switch (sortColumn) {
         case 'prefix':
           // Numeric order, so 10.0.9.0/24 comes before 10.0.12.0/24 rather than
@@ -243,13 +255,42 @@ export function RoutesPage() {
         default:
           return (a[sortColumn] - b[sortColumn]) * factor || tiebreak(a, b)
       }
+    }
+  }, [sortColumn, sortDirection])
+
+  const largeList = filteredPrefixes.length > SYNC_SORT_MAX_ROUTES
+  const syncSorted = useMemo(
+    () => (largeList ? null : [...filteredPrefixes].sort(compareRoutes)),
+    [largeList, filteredPrefixes, compareRoutes]
+  )
+  // The sliced sort's answer, tagged with what it sorted, so that a list
+  // sorted for another search or column is never shown as this one.
+  const [slicedSort, setSlicedSort] = useState<{
+    input: PrefixStats[]
+    compare: typeof compareRoutes
+    sorted: PrefixStats[]
+  } | null>(null)
+  useEffect(() => {
+    if (!largeList) return
+    const controller = new AbortController()
+    void runInSlices(sortWork(filteredPrefixes, compareRoutes), controller.signal).then((sorted) => {
+      if (sorted) setSlicedSort({ input: filteredPrefixes, compare: compareRoutes, sorted })
     })
-  }, [filteredPrefixes, sortColumn, sortDirection])
+    return () => controller.abort()
+  }, [largeList, filteredPrefixes, compareRoutes])
+  const slicedSorted =
+    slicedSort && slicedSort.input === filteredPrefixes && slicedSort.compare === compareRoutes
+      ? slicedSort.sorted
+      : null
+  const sorting = largeList && slicedSorted === null
+  const sortedPrefixes = syncSorted ?? slicedSorted ?? filteredPrefixes
 
   // Only the rows near the viewport are mounted: a busy capture holds tens of
   // thousands of routes, and asking the browser to lay all of them out is what
   // made arriving on this screen hang.
-  useAutoSelectFirst(!isCompact, selectedPrefix, sortedPrefixes[0]?.key, setSelectedPrefix)
+  // Not until the list is sorted: the first row in capture order is not the
+  // one the reader would be shown first.
+  useAutoSelectFirst(!isCompact, selectedPrefix, sorting ? undefined : sortedPrefixes[0]?.key, setSelectedPrefix)
   const rows = useVirtualRows(sortedPrefixes.length)
 
   const toggleSort = (column: SortColumn) => {
@@ -261,12 +302,11 @@ export function RoutesPage() {
   }
 
   // Get selected prefix stats. Looked up rather than scanned for, so a capture
-  // with tens of thousands of routes does not walk the list on every render.
-  const statsByPrefix = useMemo(
-    () => new Map(prefixStats.map(stat => [stat.key, stat])),
-    [prefixStats]
+  // with millions of routes does not walk the list on every render.
+  const selectedPrefixStats = useMemo(
+    () => (selectedPrefix ? routeStatsByKey(prefixStats, selectedPrefix) ?? null : null),
+    [prefixStats, selectedPrefix]
   )
-  const selectedPrefixStats = selectedPrefix ? statsByPrefix.get(selectedPrefix) ?? null : null
   // The route statistics keep their history as columns (see `RouteHistory`);
   // the selected route's is put back together as events once, here.
   const selectedHistory = useMemo(() => selectedPrefixStats?.history.events() ?? null, [selectedPrefixStats])
@@ -485,7 +525,10 @@ export function RoutesPage() {
                 {rt.fromPeers(peerFilter.join(', '))}
               </button>
             )}
-            <span className="text-xs text-muted ml-auto">{rt.prefixesCount(filteredPrefixes.length)}</span>
+            <span className="text-xs text-muted ml-auto">
+              {sorting && <span className="mr-2">{rt.sorting}</span>}
+              {rt.prefixesCount(filteredPrefixes.length)}
+            </span>
           </div>
           <div ref={rows.containerRef} onScroll={rows.onScroll} className="flex-1 overflow-auto">
             <table className="w-full text-xs">

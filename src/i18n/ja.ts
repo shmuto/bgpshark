@@ -563,6 +563,7 @@ export const ja: Messages = {
     showAllPeersTitle: 'すべてのピアからの経路を表示',
     fromPeers: (peers: string) => `送信元: ${peers} ✕`,
     prefixesCount: (count: number) => `${count} プレフィックス`,
+    sorting: '並べ替え中...',
     colPrefix: 'プレフィックス',
     colAnnounced: '広告',
     colWithdrawn: '取り消し',

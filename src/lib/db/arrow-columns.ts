@@ -77,6 +77,11 @@ class Validity {
     this.present++
   }
 
+  clear(): void {
+    this.bitmap.fill(0)
+    this.present = 0
+  }
+
   /** The bitmap for `length` rows, and how many of them are NULL. */
   take(length: number): { nullBitmap: Uint8Array; nullCount: number } {
     const bytes = (length + 7) >> 3
@@ -93,6 +98,11 @@ class Validity {
 export class NumberColumn {
   private data = new Float64Array(INITIAL_ROWS)
   private validity = new Validity()
+
+  /** Every row NULL again. Values left in `data` sit under a cleared bit, which Arrow does not read. */
+  clear(): void {
+    this.validity.clear()
+  }
 
   set(row: number, value: number | null | undefined): void {
     if (typeof value !== 'number' || !Number.isFinite(value)) return
@@ -120,6 +130,10 @@ export class NumberColumn {
 export class Int32Column {
   private data = new Int32Array(INITIAL_ROWS)
   private validity = new Validity()
+
+  clear(): void {
+    this.validity.clear()
+  }
 
   set(row: number, value: number | null | undefined): void {
     if (typeof value !== 'number' || !Number.isFinite(value)) return
@@ -152,6 +166,10 @@ export class TimestampColumn {
   private halves = new Int32Array(INITIAL_ROWS * 2)
   private validity = new Validity()
 
+  clear(): void {
+    this.validity.clear()
+  }
+
   set(row: number, ms: number | null | undefined): void {
     if (typeof ms !== 'number' || !Number.isFinite(ms)) return
     if (2 * row + 1 >= this.halves.length) this.halves = grow(this.halves, 2 * row + 2)
@@ -175,6 +193,12 @@ export class TimestampColumn {
 export class BoolColumn {
   private bits = new Uint8Array(INITIAL_ROWS >> 3)
   private validity = new Validity()
+
+  /** Unlike the number columns, the value bits are cleared too: `set` only ever turns one on. */
+  clear(): void {
+    this.bits.fill(0)
+    this.validity.clear()
+  }
 
   set(row: number, value: boolean | null | undefined): void {
     if (typeof value !== 'boolean') return
@@ -217,6 +241,11 @@ class Offsets {
     if (this.filled < length) this.end(length - 1, this.offsets[this.filled])
     return this.offsets.subarray(0, length + 1)
   }
+
+  /** No rows. The first offset is never written, so it is still 0. */
+  clear(): void {
+    this.filled = 0
+  }
 }
 
 /**
@@ -231,6 +260,12 @@ export class TextColumn {
   private used = 0
   private validity = new Validity()
   private static encoder = new TextEncoder()
+
+  clear(): void {
+    this.offsets.clear()
+    this.used = 0
+    this.validity.clear()
+  }
 
   set(row: number, value: string | null | undefined): void {
     if (typeof value !== 'string') return
@@ -302,6 +337,11 @@ export class DictionaryKeys<K> {
     return this.entries.size
   }
 
+  clear(): void {
+    this.entries.clear()
+    this.validity.clear()
+  }
+
   take(length: number): { nullBitmap: Uint8Array; nullCount: number; data: Int32Array } {
     return { ...this.validity.take(length), data: atLeast(this.indices, length).subarray(0, length) }
   }
@@ -322,6 +362,12 @@ export class DictionaryColumn<K = string> {
 
   constructor(keys: DictionaryKeys<K> = new DictionaryKeys<K>()) {
     this.keys = keys
+  }
+
+  /** Clears the shared keys too, which may be cleared more than once: that is harmless. */
+  clear(): void {
+    this.keys.clear()
+    this.values.clear()
   }
 
   /** The value of dictionary entry `entry`, as returned by `keys.set`. */
@@ -361,6 +407,13 @@ export class TextListColumn {
   private items = new TextColumn()
   private itemCount = 0
   private validity = new Validity()
+
+  clear(): void {
+    this.offsets.clear()
+    this.items.clear()
+    this.itemCount = 0
+    this.validity.clear()
+  }
 
   set(row: number, values: readonly string[] | null | undefined): void {
     if (!Array.isArray(values)) return
@@ -407,10 +460,20 @@ export function tableBatch<C extends Record<string, Column>>(name: string, colum
     name,
     columns: columns(),
     rows: 0,
-    // Fresh buffers rather than cleared ones: the previous batch's buffers may
-    // still be on their way to the worker inside its IPC message.
+    /**
+     * Empty the batch for the next chunk, keeping its buffers.
+     *
+     * Each chunk used to get fresh buffers, on the reasoning that the last
+     * chunk's might still be on their way to the worker. They are not:
+     * `batchToIpc` writes them into one new buffer (Arrow's IPC writer joins
+     * the schema, metadata and bodies with a copy — `joinUint8Arrays` in
+     * `apache-arrow/util/buffer`), and that copy is what is sent. Fresh
+     * buffers meant every chunk regrew each of its columns by doubling, from
+     * 1,024 rows up to as many as the chunk held, leaving every smaller copy
+     * behind as garbage.
+     */
     reset() {
-      batch.columns = columns()
+      for (const column of Object.values(batch.columns)) column.clear()
       batch.rows = 0
     },
   }

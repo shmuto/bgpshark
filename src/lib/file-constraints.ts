@@ -18,9 +18,9 @@ import { getMessages, type Locale } from '../i18n/locale'
  * in about 7s at 1.7GB. 200MB of the latter reaches 3.5GB and stops
  * responding, which is why the ceiling stops at 100MB. See docs/design.md §3.1.
  */
-export const MAX_FILE_SIZE = 100 * 1024 * 1024
+export const MAX_FILE_SIZE = 300 * 1024 * 1024
 
-export const MAX_FILE_SIZE_LABEL = '100MB'
+export const MAX_FILE_SIZE_LABEL = '300MB'
 
 export const ACCEPTED_EXTENSIONS = ['pcap', 'pcapng', 'cap'] as const
 

@@ -232,6 +232,17 @@ export function bitKey(prefix: ParsedPrefix): string {
 
 /** Bit key for a prefix the BGP parser produced, or null if it is not an address. */
 export function bgpPrefixBitKey(prefix: BgpPrefix): string | null {
+  // IPv4, nearly every route, read as a number: the same key `bitKey` makes,
+  // without the parsed prefix and three BigInts it takes to get there. The
+  // SQL console's load works out a key for every distinct prefix of every
+  // chunk — some fifty million on a 300MB table transfer — and those were
+  // most of the garbage the load left behind.
+  const address = ipv4Bits(prefix.prefix)
+  if (address >= 0) {
+    const length = prefix.length
+    if (length > 32) return null
+    return length === 0 ? '4:' : `4:${(address >>> (32 - length)).toString(2).padStart(length, '0')}`
+  }
   const parsed = parseBgpPrefix(prefix)
   return parsed ? bitKey(parsed) : null
 }

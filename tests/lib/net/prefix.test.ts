@@ -1,6 +1,8 @@
 import { describe, test, expect } from 'bun:test'
 import type { BgpPrefix } from '../../../src/lib/bgp/types'
 import {
+  bgpPrefixBitKey,
+  bitKey,
   compilePrefixQuery,
   contains,
   equals,
@@ -148,5 +150,29 @@ describe('compilePrefixQuery', () => {
     expect(matches({ prefix: '2001:db8:1::', length: 48 })).toBe(true)
     expect(matches({ prefix: '2001:db9::', length: 48 })).toBe(false)
     expect(matches({ prefix: '10.0.0.0', length: 8 })).toBe(false)
+  })
+})
+
+describe('bgpPrefixBitKey', () => {
+  // The IPv4 fast path must make exactly the key the general one does, or the
+  // SQL console's prefix_bits would stop matching its own address keys.
+  const general = (prefix: BgpPrefix) => {
+    const parsed = parseBgpPrefix(prefix)
+    return parsed ? bitKey(parsed) : null
+  }
+
+  test('matches the general key for IPv4 prefixes of every length', () => {
+    const addresses = ['0.0.0.0', '10.0.12.0', '10.0.12.5', '128.0.0.0', '192.168.255.255', '255.255.255.255']
+    for (const prefix of addresses) {
+      for (let length = 0; length <= 33; length++) {
+        expect(bgpPrefixBitKey({ prefix, length })).toBe(general({ prefix, length }))
+      }
+    }
+  })
+
+  test('falls back for IPv6 and anything that is not an address', () => {
+    expect(bgpPrefixBitKey({ prefix: '2001:db8::', length: 32 })).toBe(general({ prefix: '2001:db8::', length: 32 }))
+    expect(bgpPrefixBitKey({ prefix: '[2] 00:0c:29:aa:bb:cc', length: 0 })).toBeNull()
+    expect(bgpPrefixBitKey({ prefix: '10.0.0', length: 24 })).toBeNull()
   })
 })
