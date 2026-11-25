@@ -42,6 +42,26 @@ Legend: **✔** answered on screen · **◑** answerable with manual search or S
 | S13 | `s13-evpn-mac-move` | Fabric host drops out in bursts | ✔ | Findings + Messages (`mac =`) + Routes |
 | S14 | `s14-open-unanswered` | TCP connects, peer never sends BGP | ✔ | Findings + session list |
 
+Current coverage: **13/14 ✔**, **1/14 ◑** (S5 policy-level route leak), **0 ✘**.
+
+### Alert rule ↔ scenario verification matrix
+
+When changing an alert rule in `src/components/dashboard/alerts.ts`, check both its expected triggers (**Must fire**) and its false-positive exclusions (**Must stay quiet**; full rule spec in [`design.md` §2.1.14](design.md#2114-alert-rules-srccomponentsdashboardalertsts)):
+
+| Alert rule | Must fire | Must stay quiet (false-positive guards) |
+|------------|-----------|-----------------------------------------|
+| Transport (refused / unanswered SYN) | S1 | S14 (TCP connects & BGP OPEN sent → *Accepted, no BGP*) |
+| NOTIFICATION | S3, S6 | — |
+| Session flapping | S3, S11 | S8 (suppressed by Graceful Restart) |
+| Graceful restart | S8 | S3, S11 (non-GR flaps / teardowns) |
+| Silent teardown | S11 (RST & FIN) | S3 (NOTIFICATION present), S8 (GR restart), S14 (never established) |
+| One direction | S12 | All bidirectional captures (S2–S11, S13, S14) |
+| Accepted, no BGP | S14 | S1 (SYN refused → transport alert) |
+| Withdrawn burst | S10 | Steady-state / normal sessions (S2, S4, S5, S7) |
+| Route flapping | S10, S13 | Stable routes (S2, S4, S5, S7) |
+| AS_PATH changed | S10 | S4 (different peers, not same session), S5 (constant path) |
+| MAC moved | S13 | Non-EVPN / single-VTEP captures |
+
 ## Scenario details
 
 ### S1 — `s1-tcp-refused` · Neighbor stays Idle and no BGP is exchanged
@@ -58,7 +78,7 @@ Legend: **✔** answered on screen · **◑** answerable with manual search or S
 
 ### S4 — `s4-bestpath` · Traffic leaves by the wrong upstream
 - **Want:** All announcements for a prefix side by side with AS_PATH, LOCAL_PREF, MED, ORIGIN, NEXT_HOP, and communities.
-- **✔ Verdict:** **Routes → prefix** displays every announcement per peer with those columns (showing `-` for absent attributes, distinct from `0`, and hiding `ORIGIN` unless values disagree). `med` and `local_pref` also support range comparisons in the filter bar across both backends.
+- **✔ Verdict:** **Routes → prefix** displays every announcement per peer with those columns (showing `-` for absent attributes, distinct from `0`, and hiding `ORIGIN` unless values disagree). `med` and `local_pref` also support range comparisons in the filter bar.
 
 ### S5 — `s5-route-leak` · Customer announcing more than it should
 - **Want:** Full AS_PATH per prefix and all routes carrying an unexpected AS.
