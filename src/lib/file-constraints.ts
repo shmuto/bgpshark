@@ -27,7 +27,7 @@ import { getMessages, type Locale } from '../i18n/locale'
  * measured.
  *
  * The ceiling was 100MB while 300MB of that first shape needed 3.5GB, and
- * the findings and the Routes screen held the page for two to three seconds
+ * the findings and the Routes screen held the page for up to three seconds
  * at a time; see docs/design.md §3.1 for what changed.
  */
 export const MAX_FILE_SIZE = 300 * 1024 * 1024
