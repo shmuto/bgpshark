@@ -306,4 +306,4 @@ The app is an SPA with a thin header (capture name, language, theme, and a menu 
 - **TCP reassembly cap:** Reassembly buffers per directional flow are capped at `BGP_MAX_MESSAGE_LENGTH`; flows exceeding this limit are treated as desynced and dropped with a warning.
 - **Link layers:** Ethernet II (link type 1) and Linux cooked capture / SLL (113), with 802.1Q and QinQ VLAN tags stripped.
 - **Transport:** IPv4 and IPv6 over TCP (port 179, plus non-standard ports detected by BGP message marker).
-- **File size:** Capped at 100 MB per capture (`src/lib/file-constraints.ts`). The binding constraint is memory — the parsed packets in the JS heap, plus DuckDB WASM once the SQL Console is opened — not parse time; see §3.1 for what larger captures cost.
+- **File size:** Capped at 300 MB per capture (`src/lib/file-constraints.ts`). The binding constraint is memory — the parsed packets in the JS heap, plus DuckDB WASM once the SQL Console is opened — not parse time. The ceiling is set so that the costliest synthetic shapes keep the heap under 3 GB with every screen opened, leaving 1 GB of the tab's 4 GB spare; see §3.1 for the figures. Only Chromium has been measured.
