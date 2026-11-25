@@ -84,7 +84,7 @@ Output in `testlab/out/` is gitignored. If a capture turns out to be worth keepi
 
 ## Large captures: measuring memory and long tasks
 
-`MAX_FILE_SIZE` (`src/lib/file-constraints.ts`) is set by what a capture near it costs the tab, and that depends far more on the capture's shape than its size. Two scripts measure it, against synthetic captures of four shapes:
+`MAX_FILE_SIZE` (`src/lib/file-constraints.ts`) is set by what a capture near it costs the tab, and that depends far more on the capture's shape than its size. One script writes synthetic captures of four shapes near the limit, and another measures them in the browser:
 
 ```bash
 bun run testlab/large-captures.ts                 # U, R and T at 300 MB into testlab/out/large/

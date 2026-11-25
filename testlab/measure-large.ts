@@ -1,6 +1,6 @@
 /**
  * Load large captures into the production build and record what each screen
- * costs: time, JS heap and the longest task.
+ * costs: time, JS heap, the longest task and the renderer's memory.
  *
  *   bun run testlab/large-captures.ts              # write the captures first
  *   bunx vite build && bunx vite preview &         # serve the production build (real CSP)
@@ -19,12 +19,13 @@
  *              `duckdb_memory()` has answered
  *
  * For each stage it records the wall time, the heap at its largest (sampled
- * every 100ms over the DevTools protocol, which answers while the page is
- * busy), the heap in use once garbage is collected (`gc()` twice, then
- * `performance.memory.usedJSHeapSize`), and the longest task the page's own
- * `longtask` observer saw. A crashed tab is reported as such rather than as a
- * timeout. The DuckDB worker is a separate heap and not in these figures; the
- * `duckdb_memory()` answer says what it holds.
+ * every 100ms over the DevTools protocol, so between tasks rather than inside
+ * one), the heap in use once garbage is collected (`gc()` twice, then
+ * `performance.memory.usedJSHeapSize`), the longest task the page's own
+ * `longtask` observer saw, and the renderer process's largest resident
+ * memory. A crashed tab is reported as such rather than as a timeout. The
+ * DuckDB worker's heap and WebAssembly memory are not in the heap figures,
+ * only in the renderer's; the `duckdb_memory()` answer says what DuckDB holds.
  *
  * Captures above the size limit in `src/lib/file-constraints.ts` are refused
  * by the drop zone, so measuring one means raising the limit in a local build
