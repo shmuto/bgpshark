@@ -124,9 +124,15 @@ type PrefixBatch = Batches['nlri']
 
 /**
  * How many rows, across all ten tables, to gather before sending them. Large
- * enough that the per-chunk overhead (a staging table per table, one
- * `INSERT ... SELECT` statement) stays small next to the rows it moves; small
- * enough that a chunk's buffers never dominate the heap.
+ * enough that the per-chunk overhead (an append per table) stays small next
+ * to the rows it moves; small enough that a chunk's buffers never dominate
+ * the heap.
+ *
+ * Measured on a 300MB capture of 70 million rows, where the load is the
+ * worker's appends and little else: a million rows per chunk finished in 90
+ * seconds rather than 98, but the tab's memory peaked about 1.1GB higher, at
+ * 4.7GB, with each chunk four times the size on both sides of the worker.
+ * Not worth it.
  */
 const ROWS_PER_FLUSH = 250_000
 
