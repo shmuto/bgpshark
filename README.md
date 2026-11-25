@@ -34,7 +34,7 @@ bun run dev        # http://localhost:5173/bgpshark/
 ### Scripts
 
 ```bash
-bun test           # Run unit tests (tests/lib)
+bun test           # Run unit tests (tests/lib, tests/testlab)
 bun run test:e2e   # Run Playwright end-to-end tests in Chromium (tests/e2e)
 bun run build      # Type-check and build to dist/
 bun run preview    # Serve the production build locally
@@ -114,7 +114,7 @@ Everything runs in the browser tab. The packet list appears as soon as decoding 
 | `src/context/` | App-wide state: the loaded capture, and the workspace's sessions, findings and selection |
 | `src/hooks/` | React hooks for analysis, filtering, theme, split panes, and column settings |
 | `src/i18n/` | UI strings and Japanese NOTIFICATION hints |
-| `testlab/` | ContainerLab topology, fault scenario generator (`scenarios.ts`), screenshot script |
+| `testlab/` | ContainerLab topology, fault scenarios (`scenarios.ts`), one-off capture CLI (`pcap.ts`), large-capture benchmarks, screenshot & OG image scripts |
 | `docs/` | Architecture diagrams, technical design, DuckDB decision record, troubleshooting scenario assessment |
 
 ## Documentation & test lab

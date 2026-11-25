@@ -31,7 +31,7 @@
 |--------------|------|
 | 全体の構成と、各モジュールの役割 | **この文書** |
 | 機能やアラートルールの正確な仕様、性能目標 | [`design.md`](design.md) |
-| DuckDB WASM を採用した理由、フレーム番号だけを返す理由 | [`design-duckdb-wasm.md`](design-duckdb-wasm.md) |
+| DuckDB WASM を採用した理由、SQL Console 専用にした経緯、パケットを再構築しない理由 | [`design-duckdb-wasm.md`](design-duckdb-wasm.md) |
 | 現時点でどの BGP 障害を診断できるか | [`troubleshooting-scenarios.md`](troubleshooting-scenarios.md) |
 | アプリの使い方 | アプリ内マニュアル（[`src/pages/manual/manual.ja.md`](../src/pages/manual/manual.ja.md)） |
 | キャプチャやスクリーンショットの生成方法 | [`testlab/README.md`](../testlab/README.md) |
@@ -54,7 +54,7 @@ flowchart LR
         worker["DuckDB WASM<br/>Web Worker"]
         idb[("IndexedDB<br/>直近のキャプチャ")]
         ls[("localStorage<br/>テーマ・言語・<br/>ペイン幅・列設定")]
-        app <-- "Arrow IPC で投入、<br/>フレーム番号を受け取る" --> worker
+        app <-- "Arrow IPC で投入、<br/>SQL の結果行を受け取る" --> worker
         app <--> idb
         app <--> ls
     end
@@ -104,7 +104,7 @@ flowchart TB
 
     subgraph infra["基盤"]
         direction LR
-        db["lib/db<br/>DuckDB の起動 · スキーマ<br/>Arrow ローダー · フィルタの SQL 変換"]
+        db["lib/db<br/>DuckDB の起動 · スキーマ<br/>Arrow ローダー · executeRawSql"]
         storage["lib/storage<br/>IndexedDB"]
         sliced["lib/sliced<br/>時間分割で実行する generator"]
     end
@@ -115,7 +115,7 @@ flowchart TB
     wsctx --> rules & bgp
     usefilter --> filter & sliced
     rules --> bgp & sliced
-    bgp --> pcap & net
+    bgp --> pcap & net & sliced
     filter --> net
     db --> net
     build --> pcap & bgp & net
@@ -127,7 +127,7 @@ flowchart TB
 | UI | レイアウト、操作、URL のクエリによる画面状態（`?filter=`、`?frame=` など） | バイト列の解析や findings の計算を自分で行うこと |
 | 状態管理 | 読み込んだキャプチャ、読み込みの進み具合、ワークスペースの選択セッションと時間範囲 | 導出に必要な範囲を超えて、デコード結果を複製して持つこと |
 | ドメインロジック | デコード、フィルタの意味、アラートルール、キャプチャの生成 | React を読み込むこと |
-| 基盤 | DuckDB、IndexedDB、時間分割の実行 | データの意味を決めること（DuckDB はフレーム番号を選ぶだけ） |
+| 基盤 | DuckDB、IndexedDB、時間分割の実行 | データの意味を決めること（DuckDB は SQL Console からの照会専用で、パケットを再構築しない） |
 
 アラートルールが `src/components/dashboard/` にあるのは、以前ダッシュボード画面がルールを持っていた名残です。画面はなくなり、findings は各ビューの横に表示されるようになりました。ルール自体は今も `BgpPacket[]` を受け取るだけの関数です。
 
@@ -404,9 +404,9 @@ erDiagram
     }
 ```
 
-図には主な列だけを載せています。全列は SQL Console の横のスキーマ一覧で確認できます。この一覧も同じ DDL から作っています。符号なし 32 ビットの項目（ASN、MED、LOCAL_PREF）は `BIGINT` にしています。DuckDB の `INTEGER` は符号付きだからです。
+図には主な列だけを載せています。全列は SQL Console の横のスキーマ一覧で確認できます。この一覧も同じ DDL から作っています。図中の `PK` は論理的な結合キーを示しており、メモリ節約のため DuckDB 上に主キー制約やセカンダリインデックスは作成しません。符号なし 32 ビットの項目（ASN、MED、LOCAL_PREF）は `BIGINT` にしています。DuckDB の `INTEGER` は符号付きだからです。
 
-**行の投入方法**（`src/lib/db/loader.ts`）: ローダーはまず全テーブルを作り直します。次にパケットを一定量ずつ Arrow の列バッファへ直接書き込みます。それを Arrow IPC のストリームに手作業で組み立て、作業用テーブルへ投入します。最後に列名を指定した `INSERT … SELECT` で本テーブルへ写します。投入は順番待ちにしており、2 つが重なることはありません。Arrow の高水準ビルダーと DuckDB の JSON 読み込み機能は使いません。本番 CSP が `new Function` と拡張機能のダウンロードを禁止しているためです。
+**行の投入方法**（`src/lib/db/loader.ts`）: ローダーはまず全テーブルを作り直し、実テーブルの列順を検証します（`checkColumnOrder`）。次にパケットを一定量ずつ（`ROWS_PER_FLUSH = 250,000`）再利用可能な Arrow の列バッファへ直接書き込み（繰り返す文字列は辞書エンコード）、Arrow IPC ストリームを手作業で組み立てて `insertArrowFromIPCStream` で各テーブルへ直接追記します。ワーカーが前のチャンクを追記しているあいだに、メインスレッドで次のチャンクの平坦化を先行実行します。直接追記は列を位置で結び付けるため、`src/lib/db/load-batches.ts` の列順は `SCHEMA_SQL` と一致している必要があります（`tests/lib/db/load-batches.test.ts` でも検証）。投入は順番待ちにしており、2 つが重なることはありません。Arrow の高水準ビルダーと DuckDB の JSON 読み込み機能は使いません。本番 CSP が `new Function` と拡張機能のダウンロードを禁止しているためです。
 
 ---
 
@@ -428,7 +428,7 @@ flowchart TB
     gr -. "抑止" .-> flap
     work --> notif["NOTIFICATION<br/>送信元 → 宛先、コード、サブコード別"]
     work --> flap["Session flapping<br/>同じペアで OPEN が 4 回以上"]
-    work --> route["キャプチャ全体のルール<br/>withdrawn burst · route flapping<br/>AS_PATH changed · MAC moved<br/>（経路系は prefixStatsFor を使用）"]
+    work --> route["キャプチャ全体のルール<br/>withdrawn burst · route flapping<br/>AS_PATH changed · MAC moved<br/>（prefixStatsFor でセッション単位に集計）"]
 
     transport & setup & silent & gr & notif & flap & route --> sort["sortAlerts<br/>重大度 → 件数 → 新しさ"]
     sort --> cache[("WeakMap キャッシュ<br/>パケット配列 × 言語ごと")]
@@ -505,7 +505,7 @@ flowchart TB
     push["main への push<br/>deploy.yml"] --> checks
     tag["v* タグの push<br/>release.yml"] --> checks
 
-    subgraph checks["checks.yml（両ワークフローで共通）"]
+    subgraph checks["checks.yml（3 つのワークフローで共通）"]
         direction LR
         subgraph job1["ジョブ: check"]
             direction TB
@@ -546,6 +546,7 @@ CI の e2e テストは**本番ビルド**に対して実行します。開発�
 | ローダーの列がスキーマと同じ順序 | `checkColumnOrder`、`tests/lib/db/load-batches.test.ts` | `schema.ts` や `load-batches.ts` の変更 |
 | `!=` は `=` の補集合 | `tests/lib/filter`、`prefix-matching.e2e.ts` | フィルタの項目や演算子の変更 |
 | デコード済みのメッセージは読み取り専用 | 取り決め（`shared-decode.ts`） | `BgpPacket` に触れるすべてのコード |
+| 経路フラップと AS_PATH 変化はセッション `(sender, receiver)` 単位で集計 | `tests/lib/bgp/prefix-stats.test.ts`、`tests/e2e/route-server.e2e.ts` | `prefix-stats.ts`、`alerts.ts`、SQL の *Prefix Flapping* テンプレート |
 | Findings は DuckDB なしで動く | ルールは `BgpPacket[]` だけを受け取る | 新しいアラートルールや集計 |
 | アラートルールが仕様の表と一致する | `design.md` §2.1.14 と `testlab/scenarios.ts` | ルールの追加・変更 |
 | 英語版と日本語版のマニュアルで見出しの ID が一致する | `tests/e2e/manual.e2e.ts` | マニュアルの編集 |

@@ -29,7 +29,7 @@ DuckDB WASM provides columnar in-browser storage and full SQL with no server com
 
 ### Key lessons
 
-- **Select, do not reconstitute:** The SQL tables are a flattened projection that cannot losslessly represent every nested capability or attribute. Returning only `frameIndex` values prevents data loss when filters are active (`design.md` §4.3).
+- **Link back, do not reconstitute:** The SQL tables are a flattened projection that cannot losslessly represent every nested capability or attribute. Originally, returning only `frameIndex` values prevented data loss when DuckDB backed filtering; today the same rule applies to the SQL Console—SQL results link back to the parsed `BgpPacket[]` through `frame_index` rather than rebuilding packets from rows (`design.md` §4.3).
 - **CSP applies to database features, not just static assets:**
   - Loading via `read_json_auto` failed in production because DuckDB's JSON reader is a dynamically downloaded extension blocked by `connect-src 'self'`.
   - Loading via literal `VALUES` avoided the network but spent ~0.1 ms per row parsing SQL (nearly 2 minutes for an 18 MB / 1.6M-row capture).
@@ -39,6 +39,25 @@ DuckDB WASM provides columnar in-browser storage and full SQL with no server com
 ## Revision: DuckDB serves only the SQL Console
 
 Large captures used to be filtered by SQL once their packets had been inserted, which happened in the background after every load. Measured on synthetic ~95 MB captures, that insert held the main thread for several seconds while the findings were being worked out beside it, and it failed outright on the dense capture above; meanwhile one in-memory filter pass over 100 MB takes 0.1–0.7 s, and runs in slices. So filtering was moved entirely into memory (`useFilter`), the filter-to-SQL compiler was removed, and DuckDB is started and filled only when the SQL Console is opened. That also ended the dual-backend rule that every filter change had to be made twice, and a known difference between the two backends on negation.
+
+```mermaid
+flowchart LR
+    subgraph before["Before: eager load + dual filter backend"]
+        direction TB
+        bLoad["Capture loaded"] --> bBg["Background DuckDB insert<br/>(staging tables, uncompressed)"]
+        bFilter["Filter query"] -- "small" --> bMem["In-memory evaluator"]
+        bFilter -- "large + loaded" --> bSql["filter-to-SQL → DuckDB<br/>(frame_index out)"]
+        bBg --> bSql
+        bBg --> bCon["SQL Console"]
+    end
+
+    subgraph after["Current: on-demand SQL Console only"]
+        direction TB
+        aLoad["Capture loaded"] --> aMem["In-memory AST evaluator<br/>(sliced > 20k packets)"]
+        aLoad -. "only when SQL Console opens" .-> aDuck["Compressed DuckDB catalog<br/>direct Arrow IPC append"]
+        aDuck --> aCon["SQL Console (executeRawSql)<br/>links back via frame_index"]
+    end
+```
 
 ## Trade-offs accepted
 

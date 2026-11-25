@@ -249,7 +249,7 @@ UPDATEs without MED or LOCAL_PREF do not match comparisons on those fields. Note
 
 Route churn appears directly in the **Findings**: route flapping and AS_PATH changes, each listing the prefixes involved, and withdrawal bursts:
 
-![Findings for route flapping and AS_PATH changes, expanded to their prefixes,, ending in "Burst of withdrawn prefixes — 60 prefixes withdrawn within 10s"](manual/s10-churn-alerts.png)
+![Findings for route flapping and AS_PATH changes, expanded to their prefixes, ending in "Burst of withdrawn prefixes — 60 prefixes withdrawn within 10s"](manual/s10-churn-alerts.png)
 
 Next, open **Routes**, sort by **Flap** (click twice for highest first), and select the top prefix:
 

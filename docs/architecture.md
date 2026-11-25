@@ -31,7 +31,7 @@ English | [日本語](architecture.ja.md)
 |----------|----------|
 | How is it put together? Which module does what? | **This document** |
 | What exactly must a feature or alert rule do? Performance targets? | [`design.md`](design.md) |
-| Why DuckDB WASM, and why does it only select frame indexes? | [`design-duckdb-wasm.md`](design-duckdb-wasm.md) |
+| Why DuckDB WASM was adopted, why it serves only the SQL Console, and why it never rebuilds packets | [`design-duckdb-wasm.md`](design-duckdb-wasm.md) |
 | Which BGP faults can an operator diagnose today? | [`troubleshooting-scenarios.md`](troubleshooting-scenarios.md) |
 | How do I use the app? | In-app manual ([`src/pages/manual/manual.md`](../src/pages/manual/manual.md)) |
 | How do I generate captures and screenshots? | [`testlab/README.md`](../testlab/README.md) |
@@ -54,7 +54,7 @@ flowchart LR
         worker["DuckDB WASM<br/>Web Worker"]
         idb[("IndexedDB<br/>last capture file")]
         ls[("localStorage<br/>theme, language,<br/>pane widths, columns")]
-        app <-- "Arrow IPC in,<br/>frame indexes out" --> worker
+        app <-- "Arrow IPC in,<br/>SQL result rows out" --> worker
         app <--> idb
         app <--> ls
     end
@@ -104,7 +104,7 @@ flowchart TB
 
     subgraph infra["Infrastructure"]
         direction LR
-        db["lib/db<br/>DuckDB lifecycle · schema<br/>Arrow loader · filter-to-SQL"]
+        db["lib/db<br/>DuckDB lifecycle · schema<br/>Arrow loader · executeRawSql"]
         storage["lib/storage<br/>IndexedDB"]
         sliced["lib/sliced<br/>time-sliced generators"]
     end
@@ -115,7 +115,7 @@ flowchart TB
     wsctx --> rules & bgp
     usefilter --> filter & sliced
     rules --> bgp & sliced
-    bgp --> pcap & net
+    bgp --> pcap & net & sliced
     filter --> net
     db --> net
     build --> pcap & bgp & net
@@ -127,7 +127,7 @@ flowchart TB
 | UI | Layout, interaction, URL query state (`?filter=`, `?frame=`, …) | Parse bytes or compute findings itself |
 | State | The loaded capture, load progress, the workspace's scope and window | Hold copies of decoded data beyond what it derives |
 | Domain logic | Decoding, filter semantics, alert rules, capture synthesis | Import React (alert rules live under `components/dashboard/` for history, but are pure functions) |
-| Infrastructure | DuckDB, IndexedDB, time slicing | Decide what data *means* — DuckDB only selects frame indexes |
+| Infrastructure | DuckDB, IndexedDB, time slicing | Decide what data *means* — DuckDB serves ad-hoc SQL only and never rebuilds packets |
 
 The alert rules sit under `src/components/dashboard/` because the dashboard screen once owned them. The screen is gone (its findings now sit beside every view), but the rules are still plain functions over `BgpPacket[]`.
 
@@ -404,9 +404,9 @@ erDiagram
     }
 ```
 
-Only key columns are shown; the SQL Console's schema sidebar lists every column, read from the same DDL. Unsigned 32-bit protocol fields (ASN, MED, LOCAL_PREF) are `BIGINT`, because DuckDB's `INTEGER` is signed.
+Only key columns are shown; the SQL Console's schema sidebar lists every column, read from the same DDL. `PK` in the diagram marks the logical join key—no primary-key constraints or secondary indexes are created in DuckDB to save memory. Unsigned 32-bit protocol fields (ASN, MED, LOCAL_PREF) are `BIGINT`, because DuckDB's `INTEGER` is signed.
 
-**How rows get in** (`src/lib/db/loader.ts`): the loader drops and recreates every table, then flattens packets chunk by chunk straight into Arrow column buffers, hand-assembles an Arrow IPC stream, inserts it into a staging table, and copies it over with a named-column `INSERT … SELECT`. Loads are queued so two never overlap. Arrow's high-level builders and DuckDB's JSON reader are avoided because the production CSP forbids `new Function` and remote extension downloads.
+**How rows get in** (`src/lib/db/loader.ts`): the loader drops and recreates every table, checks live table column order (`checkColumnOrder`), then flattens packets chunk by chunk (`ROWS_PER_FLUSH = 250,000`) straight into reusable Arrow column buffers (with dictionary encoding for repeated text), hand-assembles an Arrow IPC stream, and appends it directly to each target table via `insertArrowFromIPCStream`—pipelining the next chunk's flattening while the worker appends the previous one. Direct append binds columns by position, so `src/lib/db/load-batches.ts` lists columns in `SCHEMA_SQL` order (also pinned by `tests/lib/db/load-batches.test.ts`). Loads are queued so two never overlap. Arrow's high-level builders and DuckDB's JSON reader are avoided because the production CSP forbids `new Function` and remote extension downloads.
 
 ---
 
@@ -428,7 +428,7 @@ flowchart TB
     gr -. "suppresses" .-> flap
     work --> notif["NOTIFICATION<br/>by sender → receiver, code, subcode"]
     work --> flap["Session flapping<br/>≥ 4 OPENs per pair"]
-    work --> route["Capture-wide rules<br/>withdrawn burst · route flapping<br/>AS_PATH changed · MAC moved<br/>(route rules read prefixStatsFor)"]
+    work --> route["Capture-wide rules<br/>withdrawn burst · route flapping<br/>AS_PATH changed · MAC moved<br/>(per-session via prefixStatsFor)"]
 
     transport & setup & silent & gr & notif & flap & route --> sort["sortAlerts<br/>severity → count → recency"]
     sort --> cache[("WeakMap cache<br/>per packets array × locale")]
@@ -505,7 +505,7 @@ flowchart TB
     push["Push to main<br/>deploy.yml"] --> checks
     tag["Push tag v*<br/>release.yml"] --> checks
 
-    subgraph checks["checks.yml (shared by both workflows)"]
+    subgraph checks["checks.yml (shared by all three workflows)"]
         direction LR
         subgraph job1["job: check"]
             direction TB
@@ -546,6 +546,7 @@ The e2e suite runs against the **production build** in CI, because the dev serve
 | Loader columns are in schema order | `checkColumnOrder`, `tests/lib/db/load-batches.test.ts` | Any change to `schema.ts` or `load-batches.ts` |
 | `!=` is the complement of `=` | `tests/lib/filter`, `prefix-matching.e2e.ts` | Any change to filter fields or operators |
 | Decoded messages are read-only | Convention (`shared-decode.ts`) | Any code that touches `BgpPacket` |
+| Route flaps and AS_PATH changes are counted per session `(sender, receiver)` | `tests/lib/bgp/prefix-stats.test.ts`, `tests/e2e/route-server.e2e.ts` | `prefix-stats.ts`, `alerts.ts`, SQL *Prefix Flapping* template |
 | Findings work without DuckDB | Rules take `BgpPacket[]` only | New alert rules and aggregations |
 | Alert rules match the spec table | `design.md` §2.1.14 + `testlab/scenarios.ts` | Adding or changing a rule |
 | EN / JA manual headings share anchor IDs | `tests/e2e/manual.e2e.ts` | Editing the manual |

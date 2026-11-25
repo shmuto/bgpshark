@@ -34,7 +34,7 @@ bun run dev        # http://localhost:5173/bgpshark/
 ### 主なスクリプト
 
 ```bash
-bun test           # ユニットテストを実行 (tests/lib)
+bun test           # ユニットテストを実行 (tests/lib, tests/testlab)
 bun run test:e2e   # Chromium 上で Playwright E2E テストを実行 (tests/e2e)
 bun run build      # 型チェックおよび dist/ への本番ビルド
 bun run preview    # 本番ビルドをローカルで配信
@@ -114,7 +114,7 @@ flowchart LR
 | `src/context/` | アプリ全体の状態（読み込んだキャプチャ、ワークスペースのセッション・検出結果・選択状態） |
 | `src/hooks/` | 解析・フィルタ・テーマ・分割ペイン・列設定などの React フック |
 | `src/i18n/` | UI 文言と NOTIFICATION の日本語ヒント |
-| `testlab/` | ContainerLab トポロジ、障害シナリオ生成スクリプト（`scenarios.ts`）、スクリーンショット生成 |
+| `testlab/` | ContainerLab トポロジ、障害シナリオ生成（`scenarios.ts`）、単発キャプチャ CLI（`pcap.ts`）、大容量ベンチマーク、スクリーンショット・OG 画像生成 |
 | `docs/` | アーキテクチャ図、技術設計書、DuckDB の設計判断記録、トラブルシューティングシナリオ評価 |
 
 ## ドキュメントとテストラボ
