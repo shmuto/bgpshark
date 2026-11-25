@@ -14,7 +14,7 @@
  *   findings   the findings column stops saying they are being worked out
  *   suggest    `prefix = ` typed into the filter box offers a CIDR
  *   filter     `prefix = 20.0.0.0/8` applied, the list settled
- *   routes     the Routes screen shows its route list
+ *   routes     the Routes screen shows its route list, sorted
  *   sql        the SQL console has the capture in DuckDB, and a query on
  *              `duckdb_memory()` has answered
  *
@@ -246,6 +246,8 @@ async function measureCapture(path: string, url: string, executablePath: string 
       // The heading renders with the sorted list, not before it; the findings
       // column can say "N prefixes" too, so that text alone is no sign.
       await page.locator('#routes-prefix-statistics').waitFor()
+      // A long list is sorted in slices after it first shows.
+      await page.getByText('sorting...').waitFor({ state: 'detached' })
       await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0))))
     })
 

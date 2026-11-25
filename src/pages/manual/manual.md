@@ -6,7 +6,7 @@ All processing runs locally in your browser. Captures are never uploaded, no ext
 
 ## Loading a capture
 
-Drop a file anywhere in the window, or select one from the start screen. `.pcap`, `.pcapng`, and `.cap` files up to 100 MB are supported, and the format is detected automatically.
+Drop a file anywhere in the window, or select one from the start screen. `.pcap`, `.pcapng`, and `.cap` files up to 300 MB are supported, and the format is detected automatically.
 
 Large captures take a few seconds to load while a progress bar tracks each stage. The packet list opens as soon as the capture is decoded. The capture is imported into DuckDB only when you open **SQL**, with a small **DuckDB** gauge in the header until it finishes; for a large table transfer that can take several seconds. Every other screen, filtering included, works without it.
 
@@ -69,7 +69,7 @@ Capabilities are compared per address family (AFI/SAFI), with mismatches listed 
 
 ### Routes
 
-Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. **Flap** counts the times the route went away: each withdrawal of a route the same peer had announced (or had announced before the capture began). Re-announcing is not a flap, and neither is withdrawing a route that is already withdrawn, so in the sample capture 1.1.1.1/32, announced 6 times and withdrawn twice, has 2 flaps. The SQL console's *Prefix Flapping* template counts the same way. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs (on a wide screen the top prefix is opened for you). The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
+Lists every announced or withdrawn prefix with announce count, withdraw count, last-seen timestamp, and **Flap** count. **Flap** counts the times the route went away: each withdrawal of a route the same peer had announced (or had announced before the capture began). Re-announcing is not a flap, and neither is withdrawing a route that is already withdrawn, so in the sample capture 1.1.1.1/32, announced 6 times and withdrawn twice, has 2 flaps. The SQL console's *Prefix Flapping* template counts the same way. Sort by **Flap** to spot unstable routes, and click a prefix to view its full announcement history and AS_PATHs (on a wide screen the top prefix is opened for you). On a capture with more than 50,000 routes the list first appears in capture order, with *sorting...* beside the count until it is sorted. The search applies as you type; clicking a history row opens **Messages** filtered to that prefix with the UPDATE selected.
 
 The search box supports three match modes:
 

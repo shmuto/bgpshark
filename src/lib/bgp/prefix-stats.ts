@@ -91,6 +91,42 @@ export interface PrefixStats {
 }
 
 /**
+ * A route's statistics as the aggregator builds them, with `parsed` worked out
+ * the first time it is read.
+ *
+ * Only the Routes screen reads it, to sort by prefix or search by one, and
+ * most visits do neither. Worked out for every route up front it was an
+ * object and a BigInt per route, some 40 bytes: 100MB of a 300MB capture
+ * whose UPDATEs each carry their own prefix. The first prefix seen stands in
+ * for the route until then; every prefix of a route parses to the same thing.
+ */
+class RouteStats implements PrefixStats {
+  key: string
+  asns: readonly string[] = NO_ASNS
+  announced = 0
+  withdrawn = 0
+  lastSeen: Date
+  flap = 0
+  lastSeenMs: number
+  eventCount = 0
+  history: RouteHistory = NO_HISTORY
+  private readonly prefix: BgpPrefix
+  private parsedPrefix: ParsedPrefix | null | undefined = undefined
+
+  constructor(key: string, prefix: BgpPrefix, timestamp: Date, ms: number) {
+    this.key = key
+    this.prefix = prefix
+    this.lastSeen = timestamp
+    this.lastSeenMs = ms
+  }
+
+  get parsed(): ParsedPrefix | null {
+    if (this.parsedPrefix === undefined) this.parsedPrefix = parseBgpPrefix(this.prefix)
+    return this.parsedPrefix
+  }
+}
+
+/**
  * What an UPDATE says about every route it announces, gathered once per UPDATE
  * and shared by the history of every route it carries — and by every UPDATE
  * with the same attributes, see `createAggregator`.
@@ -658,18 +694,7 @@ function createAggregator(packets: BgpPacket[]) {
 
   /** A new route's statistics, by its index in `stats`. */
   const addStat = (key: string, prefix: BgpPrefix, timestamp: Date, ms: number): number => {
-    stats.push({
-      key,
-      parsed: parseBgpPrefix(prefix),
-      asns: NO_ASNS,
-      announced: 0,
-      withdrawn: 0,
-      lastSeen: timestamp,
-      flap: 0,
-      lastSeenMs: ms,
-      eventCount: 0,
-      history: NO_HISTORY,
-    })
+    stats.push(new RouteStats(key, prefix, timestamp, ms))
     return stats.length - 1
   }
 

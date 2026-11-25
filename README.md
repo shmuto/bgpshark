@@ -9,7 +9,7 @@ Inspect OPEN, UPDATE, NOTIFICATION, KEEPALIVE, and ROUTE-REFRESH messages withou
 
 ## Features
 
-- **pcap / pcapng support** — Auto-detected (`.pcap`, `.pcapng`, `.cap` up to 100 MB). Handles Ethernet and Linux SLL link types, strips 802.1Q / QinQ tags, reassembles TCP segments, and supports IPv4/IPv6 transport as well as BGP on non-standard ports.
+- **pcap / pcapng support** — Auto-detected (`.pcap`, `.pcapng`, `.cap` up to 300 MB). Handles Ethernet and Linux SLL link types, strips 802.1Q / QinQ tags, reassembles TCP segments, and supports IPv4/IPv6 transport as well as BGP on non-standard ports.
 - **Full BGP decoding** — OPEN capabilities, UPDATE path attributes (AS_PATH, communities, large/extended communities, MP_REACH/MP_UNREACH including IPv6 NLRI, ADD-PATH), NOTIFICATION error codes with decoded data fields and troubleshooting hints, Hold Timer silence analysis, and ROUTE-REFRESH diffs.
 - **EVPN decoding** — Decodes MAC/IP Advertisement and Inclusive Multicast routes (RD, MAC, VNI, ESI) and identifies other EVPN route types.
 - **Investigation workspace** — Every view shares a sessions list and a findings list that folds alerts by kind (one hard reset across three sessions is one finding, not sixteen rows). Pick a session to narrow every view to it.

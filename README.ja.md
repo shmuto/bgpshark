@@ -9,7 +9,7 @@ Wireshark を起動することなく、OPEN・UPDATE・NOTIFICATION・KEEPALIVE
 
 ## 主な機能
 
-- **pcap / pcapng 対応** — `.pcap` / `.pcapng` / `.cap`（最大 100 MB）を自動判別。Ethernet および Linux SLL リンクタイプに対応し、802.1Q / QinQ タグの除去、TCP セグメントの再構成、IPv4 / IPv6 トランスポート、非標準ポート上の BGP 検出を行います。
+- **pcap / pcapng 対応** — `.pcap` / `.pcapng` / `.cap`（最大 300 MB）を自動判別。Ethernet および Linux SLL リンクタイプに対応し、802.1Q / QinQ タグの除去、TCP セグメントの再構成、IPv4 / IPv6 トランスポート、非標準ポート上の BGP 検出を行います。
 - **完全な BGP デコード** — OPEN ケイパビリティ、UPDATE パス属性（AS_PATH、コミュニティ、Large / Extended コミュニティ、IPv6 NLRI を含む MP_REACH / MP_UNREACH、ADD-PATH）、NOTIFICATION のエラーコード・data フィールド解析とトラブルシューティングヒント、Hold Timer 満了時の無応答時間分析、ROUTE-REFRESH の前後差分表示に対応しています。
 - **EVPN デコード** — MAC/IP Advertisement および Inclusive Multicast ルート（RD・MAC・VNI・ESI）をデコードし、その他の EVPN ルートタイプも識別します。
 - **調査ワークスペース** — すべての画面の左側に、セッション一覧と検出事項を表示します。検出事項は種類ごとにまとめます（3 セッションでの 1 回の Hard Reset は、16 行ではなく 1 件として表示します）。セッションを選ぶと、すべての画面がそのセッションに絞られます。
